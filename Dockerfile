@@ -2,7 +2,7 @@ FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 
 # Copy csproj and restore
-COPY HomelabBot.sln .
+COPY HomelabBot.slnx .
 COPY src/HomelabBot/HomelabBot.csproj src/HomelabBot/
 RUN dotnet restore
 
