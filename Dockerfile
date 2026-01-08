@@ -8,7 +8,7 @@ RUN dotnet restore
 
 # Copy everything and build
 COPY . .
-RUN dotnet publish src/HomelabBot -c Release -o /app --no-restore
+RUN dotnet publish src/HomelabBot -c Release -o /app
 
 # Runtime image
 FROM mcr.microsoft.com/dotnet/aspnet:10.0
