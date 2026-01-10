@@ -12,6 +12,7 @@ public sealed class KernelService
     private readonly Kernel _kernel;
     private readonly ILogger<KernelService> _logger;
     private readonly ConversationService _conversationService;
+    private readonly IChatCompletionService _chatService;
 
     public const string SystemPrompt = """
         You are HomeLabBot, a chill and helpful assistant for managing a homelab infrastructure.
@@ -79,8 +80,34 @@ public sealed class KernelService
         builder.Plugins.AddFromObject(ntfyPlugin, "Ntfy");
 
         _kernel = builder.Build();
+        _chatService = _kernel.GetRequiredService<IChatCompletionService>();
         _logger.LogInformation("Kernel initialized with model {Model} and {PluginCount} plugins",
             config.Value.OpenRouterModel, 9);
+    }
+
+    public async Task<string> GenerateThreadTitleAsync(string userMessage, CancellationToken ct = default)
+    {
+        try
+        {
+            var history = new ChatHistory();
+            history.AddSystemMessage("Generate a very short thread title (max 5 words) for this conversation. Just the title, no quotes or punctuation.");
+            history.AddUserMessage(userMessage);
+
+            var response = await _chatService.GetChatMessageContentAsync(history, cancellationToken: ct);
+            var title = response.Content?.Trim().Trim('"', '\'') ?? "Chat";
+
+            // Ensure max length for Discord (100 chars)
+            if (title.Length > 50)
+            {
+                title = title[..47] + "...";
+            }
+
+            return title;
+        }
+        catch
+        {
+            return "Chat";
+        }
     }
 
     public async Task<string> ProcessMessageAsync(ulong threadId, string userMessage, CancellationToken ct = default)

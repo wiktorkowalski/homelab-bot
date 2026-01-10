@@ -25,9 +25,86 @@ public sealed class LokiPlugin
     }
 
     [KernelFunction]
-    [Description("Executes a LogQL query against Loki. Returns matching log entries.")]
+    [Description("Lists available log labels in Loki. Use this to discover what labels are available for querying.")]
+    public async Task<string> ListLabels()
+    {
+        _logger.LogDebug("Listing Loki labels...");
+
+        try
+        {
+            var response = await _httpClient.GetAsync($"{_baseUrl}/loki/api/v1/labels");
+            response.EnsureSuccessStatusCode();
+
+            var result = await response.Content.ReadFromJsonAsync<LokiLabelsResponse>();
+
+            if (result?.Data == null || result.Data.Count == 0)
+            {
+                return "No labels found.";
+            }
+
+            var sb = new StringBuilder();
+            sb.AppendLine("**Available Loki Labels**\n");
+
+            foreach (var label in result.Data.OrderBy(l => l))
+            {
+                sb.AppendLine($"- `{label}`");
+            }
+
+            sb.AppendLine("\nUse these labels in queries like: `{label_name=\"value\"}`");
+
+            return sb.ToString();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error listing labels");
+            return $"Error listing labels: {ex.Message}";
+        }
+    }
+
+    [KernelFunction]
+    [Description("Lists values for a specific label. Useful to see what containers/services are available.")]
+    public async Task<string> ListLabelValues([Description("Label name (e.g., 'container_name', 'compose_service', 'job')")] string labelName)
+    {
+        _logger.LogDebug("Listing values for label {Label}...", labelName);
+
+        try
+        {
+            var response = await _httpClient.GetAsync($"{_baseUrl}/loki/api/v1/label/{labelName}/values");
+            response.EnsureSuccessStatusCode();
+
+            var result = await response.Content.ReadFromJsonAsync<LokiLabelsResponse>();
+
+            if (result?.Data == null || result.Data.Count == 0)
+            {
+                return $"No values found for label '{labelName}'.";
+            }
+
+            var sb = new StringBuilder();
+            sb.AppendLine($"**Values for `{labelName}`** ({result.Data.Count})\n");
+
+            foreach (var value in result.Data.OrderBy(v => v).Take(50))
+            {
+                sb.AppendLine($"- {value}");
+            }
+
+            if (result.Data.Count > 50)
+            {
+                sb.AppendLine($"\n... and {result.Data.Count - 50} more");
+            }
+
+            return sb.ToString();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error listing label values");
+            return $"Error listing label values: {ex.Message}";
+        }
+    }
+
+    [KernelFunction]
+    [Description("Executes a LogQL query against Loki. Returns matching log entries. Use ListLabels first to discover available labels.")]
     public async Task<string> QueryLogs(
-        [Description("LogQL query expression (e.g., '{container_name=\"traefik\"}')")] string query,
+        [Description("LogQL query expression (e.g., '{compose_service=\"traefik\"}' or '{container_name=~\".*traefik.*\"}')")] string query,
         [Description("Maximum number of log entries to return (default 100)")] int limit = 100)
     {
         _logger.LogDebug("Executing LogQL query: {Query}", query);
@@ -102,80 +179,101 @@ public sealed class LokiPlugin
     }
 
     [KernelFunction]
-    [Description("Gets recent logs for a specific Docker container.")]
+    [Description("Gets recent logs for a specific Docker container. Tries multiple label patterns to find logs.")]
     public async Task<string> GetContainerLogs(
-        [Description("Container name")] string containerName,
+        [Description("Container name (will try multiple label patterns like compose_service, container_name)")] string containerName,
         [Description("Time range like '1h', '30m', '15m' (default 1h)")] string since = "1h")
     {
         _logger.LogDebug("Getting logs for container {Container} since {Since}", containerName, since);
 
-        var query = $"{{container_name=\"{containerName}\"}}";
         var duration = ParseDuration(since);
+        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() * 1_000_000;
+        var start = DateTimeOffset.UtcNow.Subtract(duration).ToUnixTimeMilliseconds() * 1_000_000;
 
-        try
+        // Try different label patterns that Docker/Loki might use
+        var labelPatterns = new[]
         {
-            var encodedQuery = Uri.EscapeDataString(query);
-            var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() * 1_000_000;
-            var start = DateTimeOffset.UtcNow.Subtract(duration).ToUnixTimeMilliseconds() * 1_000_000;
+            $"{{compose_service=\"{containerName}\"}}",
+            $"{{container_name=\"{containerName}\"}}",
+            $"{{container_name=~\".*{containerName}.*\"}}",
+            $"{{compose_service=~\".*{containerName}.*\"}}"
+        };
 
-            var url = $"{_baseUrl}/loki/api/v1/query_range?query={encodedQuery}&start={start}&end={now}&limit=100";
-            var response = await _httpClient.GetAsync(url);
-            response.EnsureSuccessStatusCode();
-
-            var result = await response.Content.ReadFromJsonAsync<LokiQueryResponse>();
-
-            if (result?.Data?.Result == null || result.Data.Result.Count == 0)
+        foreach (var query in labelPatterns)
+        {
+            try
             {
-                return $"No logs found for container '{containerName}' in the last {since}.";
-            }
+                var encodedQuery = Uri.EscapeDataString(query);
+                var url = $"{_baseUrl}/loki/api/v1/query_range?query={encodedQuery}&start={start}&end={now}&limit=100";
+                var response = await _httpClient.GetAsync(url);
 
-            var sb = new StringBuilder();
-            sb.AppendLine($"**Logs for {containerName}** (last {since}):\n```");
-
-            var allLogs = new List<(DateTime Timestamp, string Message)>();
-
-            foreach (var stream in result.Data.Result)
-            {
-                if (stream.Values != null)
+                if (!response.IsSuccessStatusCode)
                 {
-                    foreach (var value in stream.Values)
+                    continue;
+                }
+
+                var result = await response.Content.ReadFromJsonAsync<LokiQueryResponse>();
+
+                if (result?.Data?.Result == null || result.Data.Result.Count == 0)
+                {
+                    continue;
+                }
+
+                var allLogs = new List<(DateTime Timestamp, string Message)>();
+
+                foreach (var stream in result.Data.Result)
+                {
+                    if (stream.Values != null)
                     {
-                        if (value.Length >= 2)
+                        foreach (var value in stream.Values)
                         {
-                            var timestamp = ParseNanoseconds(value[0].ToString() ?? "0");
-                            var message = value[1].ToString() ?? "";
-                            allLogs.Add((timestamp, message));
+                            if (value.Length >= 2)
+                            {
+                                var timestamp = ParseNanoseconds(value[0].ToString() ?? "0");
+                                var message = value[1].ToString() ?? "";
+                                allLogs.Add((timestamp, message));
+                            }
                         }
                     }
                 }
+
+                if (allLogs.Count == 0)
+                {
+                    continue;
+                }
+
+                var sb = new StringBuilder();
+                sb.AppendLine($"**Logs for {containerName}** (last {since}):\n```");
+
+                var sortedLogs = allLogs
+                    .OrderByDescending(l => l.Timestamp)
+                    .Take(50)
+                    .Reverse()
+                    .ToList();
+
+                foreach (var log in sortedLogs)
+                {
+                    var time = log.Timestamp.ToString("HH:mm:ss");
+                    sb.AppendLine($"[{time}] {log.Message}");
+                }
+
+                sb.AppendLine("```");
+
+                if (allLogs.Count > 50)
+                {
+                    sb.AppendLine($"Showing 50 of {allLogs.Count} log entries.");
+                }
+
+                return sb.ToString();
             }
-
-            var sortedLogs = allLogs
-                .OrderByDescending(l => l.Timestamp)
-                .Take(50)
-                .Reverse() // Show oldest first within the 50
-                .ToList();
-
-            foreach (var log in sortedLogs)
+            catch
             {
-                var time = log.Timestamp.ToString("HH:mm:ss");
-                sb.AppendLine($"[{time}] {log.Message}");
+                // Try next pattern
+                continue;
             }
-
-            sb.AppendLine("```");
-
-            if (allLogs.Count > 50)
-            {
-                sb.AppendLine($"Showing 50 of {allLogs.Count} log entries.");
-            }
-
-            return sb.ToString();
         }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error getting container logs for {Container}", containerName);
-            return $"Error getting logs: {ex.Message}";
-        }
+
+        return $"No logs found for container '{containerName}' in the last {since}. Try using ListLabels and ListLabelValues to discover available labels.";
     }
 
     [KernelFunction]
@@ -318,5 +416,11 @@ public sealed class LokiPlugin
     {
         public Dictionary<string, string>? Stream { get; set; }
         public List<JsonElement[]>? Values { get; set; }
+    }
+
+    private sealed class LokiLabelsResponse
+    {
+        public string Status { get; set; } = "";
+        public List<string> Data { get; set; } = [];
     }
 }

@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text;
 using HomelabBot.Configuration;
+using HomelabBot.Services;
 using Microsoft.Extensions.Options;
 using Microsoft.SemanticKernel;
 
@@ -13,22 +14,23 @@ public sealed class GrafanaPlugin
     private readonly HttpClient _httpClient;
     private readonly ILogger<GrafanaPlugin> _logger;
     private readonly string _baseUrl;
-    private readonly string _apiKey;
+    private readonly string _externalUrl;
 
     public GrafanaPlugin(
         IHttpClientFactory httpClientFactory,
         IOptions<GrafanaConfiguration> config,
+        UrlService urlService,
         ILogger<GrafanaPlugin> logger)
     {
         _httpClient = httpClientFactory.CreateClient("Default");
         _logger = logger;
         _baseUrl = config.Value.Host.TrimEnd('/');
-        _apiKey = config.Value.ApiKey;
+        _externalUrl = urlService.GetExternalUrl("grafana", _baseUrl);
 
-        if (!string.IsNullOrEmpty(_apiKey))
+        if (!string.IsNullOrEmpty(config.Value.ApiKey))
         {
             _httpClient.DefaultRequestHeaders.Authorization =
-                new AuthenticationHeaderValue("Bearer", _apiKey);
+                new AuthenticationHeaderValue("Bearer", config.Value.ApiKey);
         }
     }
 
@@ -123,7 +125,7 @@ public sealed class GrafanaPlugin
             }
 
             // Generate dashboard URL
-            sb.AppendLine($"\n🔗 URL: {_baseUrl}/d/{uid}");
+            sb.AppendLine($"\n🔗 URL: {_externalUrl}/d/{uid}");
 
             return sb.ToString();
         }
@@ -147,21 +149,21 @@ public sealed class GrafanaPlugin
         var from = DateTimeOffset.UtcNow.Subtract(duration).ToUnixTimeMilliseconds();
         var to = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
-        var url = $"{_baseUrl}/render/d-solo/{uid}";
+        var renderUrl = $"{_externalUrl}/render/d-solo/{uid}";
         if (panelId.HasValue)
         {
-            url += $"?panelId={panelId}";
+            renderUrl += $"?panelId={panelId}";
         }
         else
         {
-            url = $"{_baseUrl}/render/d/{uid}";
+            renderUrl = $"{_externalUrl}/render/d/{uid}";
         }
 
-        url += $"&from={from}&to={to}&width=800&height=400&tz=UTC";
+        renderUrl += $"&from={from}&to={to}&width=800&height=400&tz=UTC";
 
         // Note: Grafana rendering requires the image renderer plugin
         // Return the URL for now - actual image fetching would need more setup
-        return $"Dashboard screenshot URL: {url}\n\nNote: Direct rendering requires Grafana Image Renderer plugin. You can view the dashboard at: {_baseUrl}/d/{uid}?from={from}&to={to}";
+        return $"Dashboard screenshot URL: {renderUrl}\n\nNote: Direct rendering requires Grafana Image Renderer plugin. You can view the dashboard at: {_externalUrl}/d/{uid}?from={from}&to={to}";
     }
 
     [KernelFunction]

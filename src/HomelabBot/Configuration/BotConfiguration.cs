@@ -6,9 +6,10 @@ public sealed class BotConfiguration
 
     public required string DiscordToken { get; init; }
     public required string OpenRouterApiKey { get; init; }
-    public string OpenRouterModel { get; init; } = "google/gemini-flash-1.5";
+    public string OpenRouterModel { get; init; } = "google/gemini-3-flash-preview";
     public string OpenRouterEndpoint { get; init; } = "https://openrouter.ai/api/v1";
     public List<ulong> DedicatedChannels { get; init; } = [];
+    public Dictionary<string, string> ExternalUrls { get; init; } = [];
 }
 
 public sealed class MikroTikConfiguration

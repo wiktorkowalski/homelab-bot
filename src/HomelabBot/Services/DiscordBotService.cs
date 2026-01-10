@@ -156,14 +156,15 @@ public sealed class DiscordBotService : BackgroundService
         {
             // Create/get thread if not already in one
             DiscordChannel responseChannel = e.Channel;
+            DiscordThreadChannel? newThread = null;
             if (!e.Channel.IsThread && !isDedicatedChannel)
             {
-                // Create a thread for the conversation
-                var thread = await e.Message.CreateThreadAsync(
-                    $"Chat with {e.Author.Username}",
+                // Create a thread for the conversation (temp name, will update after)
+                newThread = await e.Message.CreateThreadAsync(
+                    "...",
                     AutoArchiveDuration.Hour);
-                responseChannel = thread;
-                conversationId = thread.Id;
+                responseChannel = newThread;
+                conversationId = newThread.Id;
             }
 
             // Show typing indicator
@@ -188,6 +189,13 @@ public sealed class DiscordBotService : BackgroundService
 
             // Send response (split if too long)
             await SendResponseAsync(responseChannel, response);
+
+            // Generate and set thread title for new threads
+            if (newThread != null)
+            {
+                var title = await _kernelService.GenerateThreadTitleAsync(content);
+                await newThread.ModifyAsync(t => t.Name = title);
+            }
         }
         catch (Exception ex)
         {

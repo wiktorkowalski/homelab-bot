@@ -64,6 +64,7 @@ try
     builder.Services.AddSingleton<NtfyPlugin>();
 
     // Services
+    builder.Services.AddSingleton<UrlService>();
     builder.Services.AddSingleton<ConversationService>();
     builder.Services.AddSingleton<ConfirmationService>();
     builder.Services.AddSingleton<KernelService>();
