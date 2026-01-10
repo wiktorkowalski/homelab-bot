@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using HomelabBot.Configuration;
 using HomelabBot.Plugins;
 using Microsoft.Extensions.Options;
@@ -94,7 +95,8 @@ public sealed class KernelService
             history.AddUserMessage(userMessage);
 
             var response = await _chatService.GetChatMessageContentAsync(history, cancellationToken: ct);
-            var title = response.Content?.Trim().Trim('"', '\'') ?? "Chat";
+            var title = StripThinkingBlocks(response.Content ?? "").Trim().Trim('"', '\'');
+            if (string.IsNullOrEmpty(title)) title = "Chat";
 
             // Ensure max length for Discord (100 chars)
             if (title.Length > 50)
@@ -133,6 +135,7 @@ public sealed class KernelService
                 ct);
 
             var responseText = response.Content ?? "I couldn't generate a response.";
+            responseText = StripThinkingBlocks(responseText);
             _conversationService.AddAssistantMessage(threadId, responseText);
 
             return responseText;
@@ -142,5 +145,30 @@ public sealed class KernelService
             _logger.LogError(ex, "Error processing message for thread {ThreadId}", threadId);
             return $"Error processing your request: {ex.Message}";
         }
+    }
+
+    private static string StripThinkingBlocks(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            return text;
+        }
+
+        // Strip various thinking block formats used by different models
+        // <think>...</think>, <thinking>...</thinking>, <reasoning>...</reasoning>
+        var patterns = new[]
+        {
+            @"<think>[\s\S]*?</think>",
+            @"<thinking>[\s\S]*?</thinking>",
+            @"<reasoning>[\s\S]*?</reasoning>",
+            @"<reflection>[\s\S]*?</reflection>"
+        };
+
+        foreach (var pattern in patterns)
+        {
+            text = Regex.Replace(text, pattern, "", RegexOptions.IgnoreCase);
+        }
+
+        return text.Trim();
     }
 }
