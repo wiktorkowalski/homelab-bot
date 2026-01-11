@@ -159,6 +159,7 @@ public class HomeLabCommands : ApplicationCommandModule
         [Choice("Loki", "loki")]
         [Choice("Home Assistant", "homeassistant")]
         [Choice("Alerts", "alerts")]
+        [Choice("Grafana", "grafana")]
         string scope = "all")
     {
         await ctx.DeferAsync();
@@ -226,13 +227,22 @@ public class HomeLabCommands : ApplicationCommandModule
                     4. Remember common alert patterns and their meaning
                     Use RememberFact for each discovery.
                     """,
+                "grafana" => """
+                    Explore Grafana dashboards:
+                    1. List all available dashboards with their UIDs
+                    2. Check Grafana health status
+                    3. Group dashboards by folder
+                    4. Remember dashboard names and UIDs for quick access
+                    Use RememberFact for each discovery.
+                    """,
                 _ => """
                     Do a comprehensive homelab discovery:
                     1. List Docker containers (count running/stopped)
                     2. Check Prometheus targets status
-                    3. List Loki labels available
-                    4. Check for any active alerts
-                    5. Get TrueNAS pool health summary
+                    3. List Grafana dashboards available
+                    4. List Loki labels available
+                    5. Check for any active alerts
+                    6. Get TrueNAS pool health summary
                     For each area, use RememberFact to save key findings.
                     Provide a summary of the homelab state.
                     """
