@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using HomelabBot.Configuration;
 using HomelabBot.Plugins;
@@ -13,7 +15,9 @@ public sealed class KernelService
     private readonly Kernel _kernel;
     private readonly ILogger<KernelService> _logger;
     private readonly ConversationService _conversationService;
+    private readonly TelemetryService _telemetryService;
     private readonly IChatCompletionService _chatService;
+    private readonly string _modelId;
 
     public const string SystemPrompt = """
         You are HomeLabBot, a chill and helpful assistant for managing a homelab infrastructure.
@@ -67,6 +71,7 @@ public sealed class KernelService
         IOptions<BotConfiguration> config,
         ILogger<KernelService> logger,
         ConversationService conversationService,
+        TelemetryService telemetryService,
         DockerPlugin dockerPlugin,
         PrometheusPlugin prometheusPlugin,
         AlertmanagerPlugin alertmanagerPlugin,
@@ -81,6 +86,8 @@ public sealed class KernelService
     {
         _logger = logger;
         _conversationService = conversationService;
+        _telemetryService = telemetryService;
+        _modelId = config.Value.OpenRouterModel;
 
         var builder = Kernel.CreateBuilder();
 
@@ -137,8 +144,13 @@ public sealed class KernelService
 
     public async Task<string> ProcessMessageAsync(ulong threadId, string userMessage, CancellationToken ct = default)
     {
+        var sw = Stopwatch.StartNew();
         var history = _conversationService.GetOrCreateHistory(threadId, SystemPrompt);
         _conversationService.AddUserMessage(threadId, userMessage);
+
+        var historyJson = JsonSerializer.Serialize(history.Select(m => new { m.Role, Content = m.Content }));
+        var interaction = await _telemetryService.LogInteractionStartAsync(
+            threadId, _modelId, userMessage, historyJson, ct);
 
         var chatService = _kernel.GetRequiredService<IChatCompletionService>();
 
@@ -157,14 +169,31 @@ public sealed class KernelService
                 _kernel,
                 ct);
 
+            sw.Stop();
             var responseText = response.Content ?? "I couldn't generate a response.";
             responseText = StripThinkingBlocks(responseText);
             _conversationService.AddAssistantMessage(threadId, responseText);
+
+            int? promptTokens = null;
+            int? completionTokens = null;
+            if (response.Metadata?.TryGetValue("Usage", out var usage) == true && usage is not null)
+            {
+                var usageDict = usage as IDictionary<string, object>;
+                if (usageDict?.TryGetValue("PromptTokens", out var pt) == true)
+                    promptTokens = Convert.ToInt32(pt);
+                if (usageDict?.TryGetValue("CompletionTokens", out var cpt) == true)
+                    completionTokens = Convert.ToInt32(cpt);
+            }
+
+            await _telemetryService.LogInteractionCompleteAsync(
+                interaction.Id, responseText, promptTokens, completionTokens, sw.ElapsedMilliseconds, ct);
 
             return responseText;
         }
         catch (Exception ex)
         {
+            sw.Stop();
+            await _telemetryService.LogInteractionErrorAsync(interaction.Id, ex.Message, sw.ElapsedMilliseconds, ct);
             _logger.LogError(ex, "Error processing message for thread {ThreadId}", threadId);
             return $"Error processing your request: {ex.Message}";
         }

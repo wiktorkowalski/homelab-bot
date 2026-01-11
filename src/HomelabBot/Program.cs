@@ -81,8 +81,12 @@ try
     builder.Services.AddSingleton<UrlService>();
     builder.Services.AddSingleton<ConversationService>();
     builder.Services.AddSingleton<ConfirmationService>();
+    builder.Services.AddSingleton<TelemetryService>();
     builder.Services.AddSingleton<KernelService>();
     builder.Services.AddHostedService<DiscordBotService>();
+
+    // API Controllers
+    builder.Services.AddControllers();
 
     // Health checks
     builder.Services.AddHealthChecks();
@@ -96,7 +100,16 @@ try
         await db.Database.MigrateAsync();
     }
 
+    // Static files for Admin Dashboard
+    app.UseDefaultFiles();
+    app.UseStaticFiles();
+
+    // API endpoints
+    app.MapControllers();
     app.MapHealthChecks("/health");
+
+    // SPA fallback
+    app.MapFallbackToFile("index.html");
 
     await app.RunAsync();
 }

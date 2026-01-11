@@ -18,6 +18,14 @@ public sealed class HomelabDbContext : DbContext
 
     public DbSet<Pattern> Patterns => Set<Pattern>();
 
+    public DbSet<Conversation> Conversations => Set<Conversation>();
+
+    public DbSet<ConversationMessage> ConversationMessages => Set<ConversationMessage>();
+
+    public DbSet<LlmInteraction> LlmInteractions => Set<LlmInteraction>();
+
+    public DbSet<ToolCallLog> ToolCallLogs => Set<ToolCallLog>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<Knowledge>(entity =>
@@ -43,6 +51,37 @@ public sealed class HomelabDbContext : DbContext
         modelBuilder.Entity<Pattern>(entity =>
         {
             entity.HasIndex(p => p.Symptom);
+        });
+
+        modelBuilder.Entity<Conversation>(entity =>
+        {
+            entity.HasIndex(c => c.ThreadId).IsUnique();
+        });
+
+        modelBuilder.Entity<ConversationMessage>(entity =>
+        {
+            entity.HasOne(m => m.Conversation)
+                .WithMany(c => c.Messages)
+                .HasForeignKey(m => m.ConversationId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<LlmInteraction>(entity =>
+        {
+            entity.HasIndex(i => i.ThreadId);
+            entity.HasIndex(i => i.Timestamp);
+            entity.HasOne(i => i.Conversation)
+                .WithMany()
+                .HasForeignKey(i => i.ConversationId)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<ToolCallLog>(entity =>
+        {
+            entity.HasOne(t => t.LlmInteraction)
+                .WithMany(i => i.ToolCalls)
+                .HasForeignKey(t => t.LlmInteractionId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
     }
 }
