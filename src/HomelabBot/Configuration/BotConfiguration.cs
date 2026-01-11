@@ -74,3 +74,13 @@ public sealed class NtfyConfiguration
     public string Host { get; init; } = "http://ntfy:80";
     public string DefaultTopic { get; init; } = "alerts";
 }
+
+public sealed class LangfuseConfiguration
+{
+    public const string SectionName = "Langfuse";
+
+    public bool Enabled { get; init; }
+    public string Endpoint { get; init; } = "http://langfuse:3000/api/public/otel/v1/traces";
+    public string PublicKey { get; init; } = string.Empty;
+    public string SecretKey { get; init; } = string.Empty;
+}

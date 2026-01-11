@@ -1,8 +1,12 @@
+using System.Text;
 using HomelabBot.Configuration;
 using HomelabBot.Data;
 using HomelabBot.Plugins;
 using HomelabBot.Services;
 using Microsoft.EntityFrameworkCore;
+using OpenTelemetry.Exporter;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
 using Serilog;
 
 Log.Logger = new LoggerConfiguration()
@@ -49,6 +53,34 @@ try
 
     builder.Services.AddOptions<NtfyConfiguration>()
         .Bind(builder.Configuration.GetSection(NtfyConfiguration.SectionName));
+
+    builder.Services.AddOptions<LangfuseConfiguration>()
+        .Bind(builder.Configuration.GetSection(LangfuseConfiguration.SectionName));
+
+    // Langfuse/OpenTelemetry
+    var langfuseConfig = builder.Configuration.GetSection(LangfuseConfiguration.SectionName).Get<LangfuseConfiguration>();
+    if (langfuseConfig?.Enabled == true)
+    {
+        Log.Information("Langfuse telemetry enabled, endpoint: {Endpoint}", langfuseConfig.Endpoint);
+
+        // Enable Semantic Kernel sensitive diagnostics (prompts, responses, tool calls)
+        AppContext.SetSwitch("Microsoft.SemanticKernel.Experimental.GenAI.EnableOTelDiagnosticsSensitive", true);
+
+        builder.Services.AddOpenTelemetry()
+            .ConfigureResource(resource => resource.AddService("homelab-bot"))
+            .WithTracing(tracing =>
+            {
+                tracing
+                    .AddSource("Microsoft.SemanticKernel*")
+                    .AddOtlpExporter(options =>
+                    {
+                        options.Endpoint = new Uri(langfuseConfig.Endpoint);
+                        options.Protocol = OtlpExportProtocol.HttpProtobuf;
+                        options.Headers = $"Authorization=Basic {Convert.ToBase64String(
+                            Encoding.UTF8.GetBytes($"{langfuseConfig.PublicKey}:{langfuseConfig.SecretKey}"))}";
+                    });
+            });
+    }
 
     // Database
     var dataPath = Environment.GetEnvironmentVariable("DATA_PATH") ?? "data";

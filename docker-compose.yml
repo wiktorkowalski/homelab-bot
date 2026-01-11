@@ -16,6 +16,10 @@ services:
       - TrueNAS__ApiKey=${TRUENAS_API_KEY}
       - HomeAssistant__AccessToken=${HA_ACCESS_TOKEN}
       - Grafana__ApiKey=${GRAFANA_API_KEY}
+      - Langfuse__Enabled=${LANGFUSE_ENABLED:-false}
+      - Langfuse__Endpoint=${LANGFUSE_ENDPOINT:-}
+      - Langfuse__PublicKey=${LANGFUSE_PUBLIC_KEY:-}
+      - Langfuse__SecretKey=${LANGFUSE_SECRET_KEY:-}
     networks:
       - monitoring
     healthcheck:
