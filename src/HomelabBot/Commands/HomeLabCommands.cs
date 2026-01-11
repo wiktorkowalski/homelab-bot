@@ -183,8 +183,9 @@ public class HomeLabCommands : ApplicationCommandModule
                     Explore network infrastructure:
                     1. Check MikroTik router status and interfaces
                     2. Note interface traffic levels and any issues
-                    3. Check for any WoL-capable devices you find
-                    4. Remember gateway IPs, interface names, and network topology
+                    3. List DHCP leases to see connected devices
+                    4. List WiFi clients and their signal strength
+                    5. Remember gateway IPs, interface names, device counts, and network topology
                     Use RememberFact for each discovery.
                     """,
                 "storage" => """
@@ -197,10 +198,10 @@ public class HomeLabCommands : ApplicationCommandModule
                     """,
                 "monitoring" => """
                     Explore monitoring stack:
-                    1. Check Prometheus targets and their status
-                    2. List Grafana dashboards available
-                    3. Note which services are being scraped
-                    4. Remember target count, scrape endpoints, and dashboard names
+                    1. Get Prometheus targets to see all monitored services
+                    2. Note which targets are up vs down
+                    3. Get node stats for host resource usage
+                    4. Remember target count, health status, and key metrics
                     Use RememberFact for each discovery.
                     """,
                 "loki" => """
@@ -213,10 +214,11 @@ public class HomeLabCommands : ApplicationCommandModule
                     """,
                 "homeassistant" => """
                     Explore Home Assistant:
-                    1. List available entities/devices
-                    2. Note entity types (lights, switches, sensors, etc.)
-                    3. Group entities by room/area if visible
-                    4. Remember entity IDs and their friendly names for alias storage
+                    1. List available entities by domain (light, switch, sensor, etc.)
+                    2. List available automations
+                    3. Note entity types and their current states
+                    4. Group entities by room/area if visible
+                    5. Remember entity IDs, friendly names, and automation names for alias storage
                     Use RememberFact for each discovery.
                     """,
                 "alerts" => """

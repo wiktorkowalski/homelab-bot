@@ -171,6 +171,59 @@ public sealed class PrometheusPlugin
     }
 
     [KernelFunction]
+    [Description("Gets the status of all Prometheus scrape targets. Shows which services are being monitored and their health.")]
+    public async Task<string> GetTargets()
+    {
+        _logger.LogDebug("Getting Prometheus targets...");
+
+        try
+        {
+            var response = await _httpClient.GetAsync($"{_baseUrl}/api/v1/targets");
+            response.EnsureSuccessStatusCode();
+
+            var result = await response.Content.ReadFromJsonAsync<PrometheusTargetsResponse>();
+
+            if (result?.Data?.ActiveTargets == null || result.Data.ActiveTargets.Count == 0)
+            {
+                return "No active targets found.";
+            }
+
+            var sb = new StringBuilder();
+            var targets = result.Data.ActiveTargets;
+            var upCount = targets.Count(t => t.Health == "up");
+            var downCount = targets.Count(t => t.Health == "down");
+
+            sb.AppendLine($"**Prometheus Targets ({targets.Count} total)**");
+            sb.AppendLine($"✅ Up: {upCount} | ❌ Down: {downCount}\n");
+
+            var grouped = targets
+                .GroupBy(t => t.Labels?.GetValueOrDefault("job") ?? "unknown")
+                .OrderBy(g => g.Key);
+
+            foreach (var group in grouped)
+            {
+                var allUp = group.All(t => t.Health == "up");
+                var icon = allUp ? "✅" : "⚠️";
+                sb.AppendLine($"{icon} **{group.Key}** ({group.Count()} targets)");
+
+                foreach (var target in group)
+                {
+                    var status = target.Health == "up" ? "✅" : "❌";
+                    var instance = target.Labels?.GetValueOrDefault("instance") ?? target.ScrapeUrl ?? "unknown";
+                    sb.AppendLine($"   {status} {instance}");
+                }
+            }
+
+            return sb.ToString();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting Prometheus targets");
+            return $"Error getting targets: {ex.Message}";
+        }
+    }
+
+    [KernelFunction]
     [Description("Gets resource metrics for a specific Docker container (CPU, memory usage).")]
     public async Task<string> GetContainerMetrics([Description("Container name")] string containerName)
     {
@@ -282,5 +335,23 @@ public sealed class PrometheusPlugin
     {
         public Dictionary<string, string>? Metric { get; set; }
         public JsonElement[]? Value { get; set; }
+    }
+
+    private sealed class PrometheusTargetsResponse
+    {
+        public string Status { get; set; } = "";
+        public PrometheusTargetsData? Data { get; set; }
+    }
+
+    private sealed class PrometheusTargetsData
+    {
+        public List<PrometheusTarget> ActiveTargets { get; set; } = [];
+    }
+
+    private sealed class PrometheusTarget
+    {
+        public Dictionary<string, string>? Labels { get; set; }
+        public string? ScrapeUrl { get; set; }
+        public string Health { get; set; } = "";
     }
 }
