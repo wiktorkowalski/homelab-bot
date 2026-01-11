@@ -6,6 +6,8 @@ namespace HomelabBot.Services;
 
 public sealed class TelemetryService
 {
+    private static readonly AsyncLocal<int?> CurrentInteractionId = new();
+
     private readonly IDbContextFactory<HomelabDbContext> _dbFactory;
     private readonly ILogger<TelemetryService> _logger;
 
@@ -16,6 +18,10 @@ public sealed class TelemetryService
         _dbFactory = dbFactory;
         _logger = logger;
     }
+
+    public int? ActiveInteractionId => CurrentInteractionId.Value;
+
+    public void SetActiveInteraction(int? interactionId) => CurrentInteractionId.Value = interactionId;
 
     public async Task<LlmInteraction> LogInteractionStartAsync(
         ulong threadId,

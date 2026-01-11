@@ -70,6 +70,7 @@ public sealed class KernelService
     public KernelService(
         IOptions<BotConfiguration> config,
         ILogger<KernelService> logger,
+        ILogger<TelemetryFunctionFilter> filterLogger,
         ConversationService conversationService,
         TelemetryService telemetryService,
         DockerPlugin dockerPlugin,
@@ -111,6 +112,10 @@ public sealed class KernelService
         builder.Plugins.AddFromObject(investigationPlugin, "Investigation");
 
         _kernel = builder.Build();
+
+        // Add telemetry filter for tool call logging
+        _kernel.FunctionInvocationFilters.Add(new TelemetryFunctionFilter(telemetryService, filterLogger));
+
         _chatService = _kernel.GetRequiredService<IChatCompletionService>();
         _logger.LogInformation("Kernel initialized with model {Model} and {PluginCount} plugins",
             config.Value.OpenRouterModel, 11);
@@ -151,6 +156,9 @@ public sealed class KernelService
         var historyJson = JsonSerializer.Serialize(history.Select(m => new { m.Role, Content = m.Content }));
         var interaction = await _telemetryService.LogInteractionStartAsync(
             threadId, _modelId, userMessage, historyJson, ct);
+
+        // Set active interaction for tool call logging
+        _telemetryService.SetActiveInteraction(interaction.Id);
 
         var chatService = _kernel.GetRequiredService<IChatCompletionService>();
 
@@ -196,6 +204,10 @@ public sealed class KernelService
             await _telemetryService.LogInteractionErrorAsync(interaction.Id, ex.Message, sw.ElapsedMilliseconds, ct);
             _logger.LogError(ex, "Error processing message for thread {ThreadId}", threadId);
             return $"Error processing your request: {ex.Message}";
+        }
+        finally
+        {
+            _telemetryService.SetActiveInteraction(null);
         }
     }
 
