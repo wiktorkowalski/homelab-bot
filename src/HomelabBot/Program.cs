@@ -1,6 +1,8 @@
 using HomelabBot.Configuration;
+using HomelabBot.Data;
 using HomelabBot.Plugins;
 using HomelabBot.Services;
+using Microsoft.EntityFrameworkCore;
 using Serilog;
 
 Log.Logger = new LoggerConfiguration()
@@ -48,6 +50,14 @@ try
     builder.Services.AddOptions<NtfyConfiguration>()
         .Bind(builder.Configuration.GetSection(NtfyConfiguration.SectionName));
 
+    // Database
+    var dataPath = Environment.GetEnvironmentVariable("DATA_PATH") ?? "data";
+    var dbPath = Path.Combine(dataPath, "homelab.db");
+    Directory.CreateDirectory(dataPath);
+
+    builder.Services.AddDbContextFactory<HomelabDbContext>(options =>
+        options.UseSqlite($"Data Source={dbPath}"));
+
     // HTTP clients with resilience
     builder.Services.AddHttpClient("Default")
         .AddStandardResilienceHandler();
@@ -62,8 +72,12 @@ try
     builder.Services.AddSingleton<TrueNASPlugin>();
     builder.Services.AddSingleton<HomeAssistantPlugin>();
     builder.Services.AddSingleton<NtfyPlugin>();
+    builder.Services.AddSingleton<KnowledgePlugin>();
+    builder.Services.AddSingleton<InvestigationPlugin>();
 
     // Services
+    builder.Services.AddSingleton<KnowledgeService>();
+    builder.Services.AddSingleton<MemoryService>();
     builder.Services.AddSingleton<UrlService>();
     builder.Services.AddSingleton<ConversationService>();
     builder.Services.AddSingleton<ConfirmationService>();
@@ -74,6 +88,13 @@ try
     builder.Services.AddHealthChecks();
 
     var app = builder.Build();
+
+    // Apply database migrations
+    var dbFactory = app.Services.GetRequiredService<IDbContextFactory<HomelabDbContext>>();
+    await using (var db = await dbFactory.CreateDbContextAsync())
+    {
+        await db.Database.MigrateAsync();
+    }
 
     app.MapHealthChecks("/health");
 

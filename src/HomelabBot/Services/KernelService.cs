@@ -33,13 +33,32 @@ public sealed class KernelService
         - Alertmanager alerts
         - Loki log queries
         - Push notifications via Ntfy
-        - Prusa 3D printer status
+        - Knowledge & memory system
 
         When executing actions:
         - Tell the user briefly what you're checking ("Checking Docker...")
         - For dangerous operations (stop, restart), request confirmation
         - For long outputs, summarize and offer to attach full details
         - Report errors with full context, not generic messages
+
+        Learning & Memory:
+        - Call RecallKnowledge(topic) BEFORE taking action to check what you already know
+        - Call RememberFact(topic, fact) when you discover something useful
+        - Call LearnCorrection() when user corrects you
+        - Use StoreAlias() when user tells you friendly names for devices/containers
+        - Use ResolveAlias() to translate user-friendly names to technical identifiers
+
+        Investigation & Troubleshooting:
+        When diagnosing issues (something broken, slow, not working):
+        1. Call StartInvestigation(threadId, symptom) - this checks for similar past issues
+        2. Check the most likely cause first based on past patterns
+        3. Call RecordStep() after each diagnostic check
+        4. Cross-reference related services (if Docker issue, check Loki logs too)
+        5. Call ResolveInvestigation(threadId, resolution) when fixed - this saves the pattern
+
+        When user mentions devices by name (like "my PC", "media server"):
+        - First try ResolveAlias() to get the actual identifier
+        - If no alias exists, ask them for the technical name and store it
 
         Important: Only perform actions the user explicitly asks for. Don't volunteer to do things.
         """;
@@ -56,7 +75,9 @@ public sealed class KernelService
         MikroTikPlugin mikrotikPlugin,
         TrueNASPlugin truenasPlugin,
         HomeAssistantPlugin homeAssistantPlugin,
-        NtfyPlugin ntfyPlugin)
+        NtfyPlugin ntfyPlugin,
+        KnowledgePlugin knowledgePlugin,
+        InvestigationPlugin investigationPlugin)
     {
         _logger = logger;
         _conversationService = conversationService;
@@ -79,11 +100,13 @@ public sealed class KernelService
         builder.Plugins.AddFromObject(truenasPlugin, "TrueNAS");
         builder.Plugins.AddFromObject(homeAssistantPlugin, "HomeAssistant");
         builder.Plugins.AddFromObject(ntfyPlugin, "Ntfy");
+        builder.Plugins.AddFromObject(knowledgePlugin, "Knowledge");
+        builder.Plugins.AddFromObject(investigationPlugin, "Investigation");
 
         _kernel = builder.Build();
         _chatService = _kernel.GetRequiredService<IChatCompletionService>();
         _logger.LogInformation("Kernel initialized with model {Model} and {PluginCount} plugins",
-            config.Value.OpenRouterModel, 9);
+            config.Value.OpenRouterModel, 11);
     }
 
     public async Task<string> GenerateThreadTitleAsync(string userMessage, CancellationToken ct = default)

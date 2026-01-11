@@ -5,9 +5,11 @@ services:
     restart: unless-stopped
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
+      - homelab-bot-data:/app/data
     env_file:
       - .env
     environment:
+      - DATA_PATH=/app/data
       - Bot__DiscordToken=${DISCORD_TOKEN}
       - Bot__OpenRouterApiKey=${OPENROUTER_API_KEY}
       - MikroTik__Password=${MIKROTIK_PASSWORD}
@@ -25,3 +27,6 @@ services:
 networks:
   monitoring:
     external: true
+
+volumes:
+  homelab-bot-data:

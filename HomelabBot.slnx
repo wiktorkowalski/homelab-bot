@@ -2,4 +2,7 @@
   <Folder Name="/src/">
     <Project Path="src/HomelabBot/HomelabBot.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/HomelabBot.Tests/HomelabBot.Tests.csproj" />
+  </Folder>
 </Solution>
