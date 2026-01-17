@@ -162,6 +162,13 @@ public sealed class ConversationService
 
             db.ConversationMessages.Add(msg);
             conversation.LastMessageAt = DateTime.UtcNow;
+
+            // Auto-set title from first user message
+            if (role == "user" && string.IsNullOrEmpty(conversation.Title))
+            {
+                conversation.Title = content.Length > 100 ? content[..97] + "..." : content;
+            }
+
             await db.SaveChangesAsync(ct);
         }
         catch (Exception ex)

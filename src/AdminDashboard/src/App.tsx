@@ -5,6 +5,8 @@ import Conversations from './pages/Conversations'
 import ConversationDetail from './pages/ConversationDetail'
 import Telemetry from './pages/Telemetry'
 import TelemetryDetail from './pages/TelemetryDetail'
+import Investigations from './pages/Investigations'
+import InvestigationDetail from './pages/InvestigationDetail'
 
 function App() {
   return (
@@ -44,6 +46,14 @@ function App() {
           >
             Telemetry
           </NavLink>
+          <NavLink
+            to="/investigations"
+            className={({ isActive }) =>
+              `block px-4 py-2 rounded ${isActive ? 'bg-blue-600' : 'hover:bg-gray-700'}`
+            }
+          >
+            Investigations
+          </NavLink>
         </nav>
       </aside>
       <main className="flex-1 p-6">
@@ -54,6 +64,8 @@ function App() {
           <Route path="/conversations/:threadId" element={<ConversationDetail />} />
           <Route path="/telemetry" element={<Telemetry />} />
           <Route path="/telemetry/:id" element={<TelemetryDetail />} />
+          <Route path="/investigations" element={<Investigations />} />
+          <Route path="/investigations/:id" element={<InvestigationDetail />} />
         </Routes>
       </main>
     </div>

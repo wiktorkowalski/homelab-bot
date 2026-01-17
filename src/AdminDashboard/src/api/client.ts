@@ -156,3 +156,42 @@ export const telemetryApi = {
   getById: (id: number) => fetchApi<LlmInteractionDetail>(`/telemetry/${id}`),
   getStats: (days = 7) => fetchApi<TelemetryStats>(`/telemetry/stats?days=${days}`),
 }
+
+// Investigations
+export interface Investigation {
+  id: number
+  threadId: string
+  trigger: string
+  startedAt: string
+  resolved: boolean
+  resolution?: string
+  stepCount: number
+}
+
+export interface InvestigationStep {
+  id: number
+  action: string
+  plugin?: string
+  resultSummary?: string
+  timestamp: string
+}
+
+export interface InvestigationDetail extends Omit<Investigation, 'stepCount'> {
+  steps: InvestigationStep[]
+}
+
+export const investigationsApi = {
+  getAll: (params?: { page?: number; pageSize?: number; resolved?: boolean }) => {
+    const query = new URLSearchParams()
+    if (params?.page) query.set('page', String(params.page))
+    if (params?.pageSize) query.set('pageSize', String(params.pageSize))
+    if (params?.resolved !== undefined) query.set('resolved', String(params.resolved))
+    return fetchApi<PagedResult<Investigation>>(`/investigations?${query}`)
+  },
+  getById: (id: number) => fetchApi<InvestigationDetail>(`/investigations/${id}`),
+  resolve: (id: number, resolution: string) =>
+    fetchApi<InvestigationDetail>(`/investigations/${id}/resolve`, {
+      method: 'POST',
+      body: JSON.stringify({ resolution }),
+    }),
+}

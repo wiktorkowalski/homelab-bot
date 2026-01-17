@@ -201,13 +201,12 @@ public sealed class KernelService
 
             int? promptTokens = null;
             int? completionTokens = null;
-            if (response.Metadata?.TryGetValue("Usage", out var usage) == true && usage is not null)
+
+            if (response.Metadata?.TryGetValue("Usage", out var usage) == true &&
+                usage is OpenAI.Chat.ChatTokenUsage tokenUsage)
             {
-                var usageDict = usage as IDictionary<string, object>;
-                if (usageDict?.TryGetValue("PromptTokens", out var pt) == true)
-                    promptTokens = Convert.ToInt32(pt);
-                if (usageDict?.TryGetValue("CompletionTokens", out var cpt) == true)
-                    completionTokens = Convert.ToInt32(cpt);
+                promptTokens = tokenUsage.InputTokenCount;
+                completionTokens = tokenUsage.OutputTokenCount;
             }
 
             await _telemetryService.LogInteractionCompleteAsync(
