@@ -14,7 +14,7 @@ RUN dotnet restore
 COPY src/HomelabBot/ ./
 # Copy frontend build output to backend wwwroot
 COPY --from=frontend-build /app/frontend/dist ./wwwroot
-RUN dotnet publish -c Release -o /app/publish /p:UseAppHost=false
+RUN dotnet publish -c Release -o /app/publish /p:UseAppHost=false /p:EnforceCodeStyleInBuild=false /p:RunAnalyzers=false
 
 # Stage 3: Runtime
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final

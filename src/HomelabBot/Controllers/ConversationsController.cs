@@ -21,7 +21,7 @@ public class ConversationsController : ControllerBase
         [FromQuery] int pageSize = 20,
         CancellationToken ct = default)
     {
-        await using var db = await _dbFactory.CreateDbContextAsync(ct);
+        await using var db = await this._dbFactory.CreateDbContextAsync(ct);
 
         var totalCount = await db.Conversations.CountAsync(ct);
 
@@ -36,16 +36,16 @@ public class ConversationsController : ControllerBase
                 Title = c.Title,
                 CreatedAt = c.CreatedAt,
                 LastMessageAt = c.LastMessageAt,
-                MessageCount = c.Messages.Count
+                MessageCount = c.Messages.Count,
             })
             .ToListAsync(ct);
 
-        return Ok(new PagedResult<ConversationDto>
+        return this.Ok(new PagedResult<ConversationDto>
         {
             Items = items,
             TotalCount = totalCount,
             Page = page,
-            PageSize = pageSize
+            PageSize = pageSize,
         });
     }
 
@@ -55,18 +55,18 @@ public class ConversationsController : ControllerBase
         CancellationToken ct = default)
     {
         if (!ulong.TryParse(threadId, out var tid))
-            return BadRequest("Invalid thread ID");
+            return this.BadRequest("Invalid thread ID");
 
-        await using var db = await _dbFactory.CreateDbContextAsync(ct);
+        await using var db = await this._dbFactory.CreateDbContextAsync(ct);
 
         var conversation = await db.Conversations
             .Include(c => c.Messages.OrderBy(m => m.Timestamp))
             .FirstOrDefaultAsync(c => c.ThreadId == tid, ct);
 
         if (conversation is null)
-            return NotFound();
+            return this.NotFound();
 
-        return Ok(new ConversationDetailDto
+        return this.Ok(new ConversationDetailDto
         {
             Id = conversation.Id,
             ThreadId = conversation.ThreadId.ToString(),
@@ -78,8 +78,8 @@ public class ConversationsController : ControllerBase
                 Id = m.Id,
                 Role = m.Role,
                 Content = m.Content,
-                Timestamp = m.Timestamp
-            }).ToList()
+                Timestamp = m.Timestamp,
+            }).ToList(),
         });
     }
 }
