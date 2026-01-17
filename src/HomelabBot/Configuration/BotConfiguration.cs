@@ -74,3 +74,12 @@ public sealed class NtfyConfiguration
     public string Host { get; init; } = "http://ntfy:80";
     public string DefaultTopic { get; init; } = "alerts";
 }
+
+public sealed class LangfuseConfiguration
+{
+    public const string SectionName = "Langfuse";
+
+    public required string Endpoint { get; init; }
+    public required string PublicKey { get; init; }
+    public required string SecretKey { get; init; }
+}

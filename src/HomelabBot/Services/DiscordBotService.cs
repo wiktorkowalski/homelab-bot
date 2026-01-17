@@ -185,7 +185,7 @@ public sealed class DiscordBotService : BackgroundService
             }
 
             // Process with Semantic Kernel
-            var response = await _kernelService.ProcessMessageAsync(conversationId, content);
+            var response = await _kernelService.ProcessMessageAsync(conversationId, content, e.Author.Id);
 
             // Send response (split if too long)
             await SendResponseAsync(responseChannel, response);

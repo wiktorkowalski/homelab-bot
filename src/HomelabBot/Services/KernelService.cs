@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using HomelabBot.Configuration;
 using HomelabBot.Plugins;
@@ -10,10 +12,14 @@ namespace HomelabBot.Services;
 
 public sealed class KernelService
 {
+    private static readonly ActivitySource ActivitySource = new("HomelabBot.Chat");
+
     private readonly Kernel _kernel;
     private readonly ILogger<KernelService> _logger;
     private readonly ConversationService _conversationService;
+    private readonly TelemetryService _telemetryService;
     private readonly IChatCompletionService _chatService;
+    private readonly string _modelId;
 
     public const string SystemPrompt = """
         You are HomeLabBot, a chill and helpful assistant for managing a homelab infrastructure.
@@ -66,7 +72,9 @@ public sealed class KernelService
     public KernelService(
         IOptions<BotConfiguration> config,
         ILogger<KernelService> logger,
+        ILogger<TelemetryFunctionFilter> filterLogger,
         ConversationService conversationService,
+        TelemetryService telemetryService,
         DockerPlugin dockerPlugin,
         PrometheusPlugin prometheusPlugin,
         AlertmanagerPlugin alertmanagerPlugin,
@@ -81,6 +89,8 @@ public sealed class KernelService
     {
         _logger = logger;
         _conversationService = conversationService;
+        _telemetryService = telemetryService;
+        _modelId = config.Value.OpenRouterModel;
 
         var builder = Kernel.CreateBuilder();
 
@@ -104,6 +114,10 @@ public sealed class KernelService
         builder.Plugins.AddFromObject(investigationPlugin, "Investigation");
 
         _kernel = builder.Build();
+
+        // Add telemetry filter for tool call logging
+        _kernel.FunctionInvocationFilters.Add(new TelemetryFunctionFilter(telemetryService, filterLogger));
+
         _chatService = _kernel.GetRequiredService<IChatCompletionService>();
         _logger.LogInformation("Kernel initialized with model {Model} and {PluginCount} plugins",
             config.Value.OpenRouterModel, 11);
@@ -135,10 +149,33 @@ public sealed class KernelService
         }
     }
 
-    public async Task<string> ProcessMessageAsync(ulong threadId, string userMessage, CancellationToken ct = default)
+    public async Task<string> ProcessMessageAsync(
+        ulong threadId,
+        string userMessage,
+        ulong? userId = null,
+        CancellationToken ct = default)
     {
+        // Start root activity with Langfuse attributes
+        using var activity = ActivitySource.StartActivity("HomeLabBot Chat", ActivityKind.Server);
+        activity?.SetTag("langfuse.trace.name", "HomeLabBot Chat");
+        activity?.SetTag("langfuse.session.id", threadId.ToString());
+        activity?.SetTag("langfuse.trace.tags", "[\"homelab\", \"discord\"]");
+        activity?.SetTag("langfuse.trace.input", userMessage);
+        if (userId.HasValue)
+        {
+            activity?.SetTag("langfuse.user.id", userId.Value.ToString());
+        }
+
+        var sw = Stopwatch.StartNew();
         var history = _conversationService.GetOrCreateHistory(threadId, SystemPrompt);
         _conversationService.AddUserMessage(threadId, userMessage);
+
+        var historyJson = JsonSerializer.Serialize(history.Select(m => new { m.Role, Content = m.Content }));
+        var interaction = await _telemetryService.LogInteractionStartAsync(
+            threadId, _modelId, userMessage, historyJson, ct);
+
+        // Set active interaction for tool call logging
+        _telemetryService.SetActiveInteraction(interaction.Id);
 
         var chatService = _kernel.GetRequiredService<IChatCompletionService>();
 
@@ -157,16 +194,41 @@ public sealed class KernelService
                 _kernel,
                 ct);
 
+            sw.Stop();
             var responseText = response.Content ?? "I couldn't generate a response.";
             responseText = StripThinkingBlocks(responseText);
             _conversationService.AddAssistantMessage(threadId, responseText);
+
+            int? promptTokens = null;
+            int? completionTokens = null;
+
+            if (response.Metadata?.TryGetValue("Usage", out var usage) == true &&
+                usage is OpenAI.Chat.ChatTokenUsage tokenUsage)
+            {
+                promptTokens = tokenUsage.InputTokenCount;
+                completionTokens = tokenUsage.OutputTokenCount;
+            }
+
+            await _telemetryService.LogInteractionCompleteAsync(
+                interaction.Id, responseText, promptTokens, completionTokens, sw.ElapsedMilliseconds, ct);
+
+            // Set trace output
+            activity?.SetTag("langfuse.trace.output", responseText);
 
             return responseText;
         }
         catch (Exception ex)
         {
+            sw.Stop();
+            await _telemetryService.LogInteractionErrorAsync(interaction.Id, ex.Message, sw.ElapsedMilliseconds, ct);
             _logger.LogError(ex, "Error processing message for thread {ThreadId}", threadId);
+            activity?.SetTag("langfuse.observation.level", "ERROR");
+            activity?.SetTag("langfuse.observation.status_message", ex.Message);
             return $"Error processing your request: {ex.Message}";
+        }
+        finally
+        {
+            _telemetryService.SetActiveInteraction(null);
         }
     }
 

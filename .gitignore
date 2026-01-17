@@ -43,3 +43,7 @@ appsettings.Local.json
 # JetBrains Rider
 .idea/
 *.sln.iml
+
+wwwroot/
+
+homelab.db*

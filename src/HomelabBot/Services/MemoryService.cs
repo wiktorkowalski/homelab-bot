@@ -44,6 +44,39 @@ public sealed class MemoryService
             .FirstOrDefaultAsync();
     }
 
+    public async Task<Investigation?> GetInvestigationByIdAsync(int id)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync();
+
+        return await db.Investigations
+            .Include(i => i.Steps.OrderBy(s => s.Timestamp))
+            .FirstOrDefaultAsync(i => i.Id == id);
+    }
+
+    public async Task<(List<Investigation> Items, int TotalCount)> GetInvestigationsAsync(
+        int page = 1,
+        int pageSize = 20,
+        bool? resolved = null)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync();
+
+        var query = db.Investigations.AsQueryable();
+
+        if (resolved.HasValue)
+            query = query.Where(i => i.Resolved == resolved.Value);
+
+        var totalCount = await query.CountAsync();
+
+        var items = await query
+            .Include(i => i.Steps)
+            .OrderByDescending(i => i.StartedAt)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync();
+
+        return (items, totalCount);
+    }
+
     public async Task RecordStepAsync(int investigationId, string action, string? plugin, string? result)
     {
         await using var db = await _dbFactory.CreateDbContextAsync();

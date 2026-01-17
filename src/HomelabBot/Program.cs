@@ -1,9 +1,18 @@
+using System.Text;
+using DotNetEnv;
 using HomelabBot.Configuration;
 using HomelabBot.Data;
 using HomelabBot.Plugins;
 using HomelabBot.Services;
 using Microsoft.EntityFrameworkCore;
+using OpenTelemetry;
+using OpenTelemetry.Exporter;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
 using Serilog;
+
+// Load .env file if present (for local development)
+Env.TraversePath().Load();
 
 Log.Logger = new LoggerConfiguration()
     .WriteTo.Console()
@@ -50,6 +59,38 @@ try
     builder.Services.AddOptions<NtfyConfiguration>()
         .Bind(builder.Configuration.GetSection(NtfyConfiguration.SectionName));
 
+    builder.Services.AddOptions<LangfuseConfiguration>()
+        .Bind(builder.Configuration.GetSection(LangfuseConfiguration.SectionName));
+
+    // Langfuse/OpenTelemetry
+    var langfuseConfig = builder.Configuration.GetSection(LangfuseConfiguration.SectionName).Get<LangfuseConfiguration>();
+    if (langfuseConfig is not null)
+    {
+        Log.Information("Langfuse telemetry endpoint: {Endpoint}", langfuseConfig.Endpoint);
+
+        // Enable Semantic Kernel diagnostics (both required for full tracing)
+        AppContext.SetSwitch("Microsoft.SemanticKernel.Experimental.GenAI.EnableOTelDiagnostics", true);
+        AppContext.SetSwitch("Microsoft.SemanticKernel.Experimental.GenAI.EnableOTelDiagnosticsSensitive", true);
+
+        builder.Services.AddOpenTelemetry()
+            .ConfigureResource(resource => resource.AddService("homelab-bot"))
+            .WithTracing(tracing =>
+            {
+                tracing
+                    .SetSampler(new AlwaysOnSampler())
+                    .AddSource("HomelabBot.Chat")
+                    .AddSource("Microsoft.SemanticKernel*")
+                    .AddProcessor(new LangfuseEnrichmentProcessor())
+                    .AddOtlpExporter(options =>
+                    {
+                        options.Endpoint = new Uri(langfuseConfig.Endpoint);
+                        options.Protocol = OtlpExportProtocol.HttpProtobuf;
+                        options.Headers = $"Authorization=Basic {Convert.ToBase64String(
+                            Encoding.UTF8.GetBytes($"{langfuseConfig.PublicKey}:{langfuseConfig.SecretKey}"))}";
+                    });
+            });
+    }
+
     // Database
     var dataPath = Environment.GetEnvironmentVariable("DATA_PATH") ?? "data";
     var dbPath = Path.Combine(dataPath, "homelab.db");
@@ -81,8 +122,12 @@ try
     builder.Services.AddSingleton<UrlService>();
     builder.Services.AddSingleton<ConversationService>();
     builder.Services.AddSingleton<ConfirmationService>();
+    builder.Services.AddSingleton<TelemetryService>();
     builder.Services.AddSingleton<KernelService>();
     builder.Services.AddHostedService<DiscordBotService>();
+
+    // API Controllers
+    builder.Services.AddControllers();
 
     // Health checks
     builder.Services.AddHealthChecks();
@@ -96,7 +141,16 @@ try
         await db.Database.MigrateAsync();
     }
 
+    // Static files for Admin Dashboard
+    app.UseDefaultFiles();
+    app.UseStaticFiles();
+
+    // API endpoints
+    app.MapControllers();
     app.MapHealthChecks("/health");
+
+    // SPA fallback
+    app.MapFallbackToFile("index.html");
 
     await app.RunAsync();
 }
