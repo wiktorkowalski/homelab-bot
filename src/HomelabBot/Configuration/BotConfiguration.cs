@@ -79,8 +79,7 @@ public sealed class LangfuseConfiguration
 {
     public const string SectionName = "Langfuse";
 
-    public bool Enabled { get; init; }
-    public string Endpoint { get; init; } = "http://langfuse:3000/api/public/otel/v1/traces";
-    public string PublicKey { get; init; } = string.Empty;
-    public string SecretKey { get; init; } = string.Empty;
+    public required string Endpoint { get; init; }
+    public required string PublicKey { get; init; }
+    public required string SecretKey { get; init; }
 }

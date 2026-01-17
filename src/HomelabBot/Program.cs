@@ -1,13 +1,18 @@
 using System.Text;
+using DotNetEnv;
 using HomelabBot.Configuration;
 using HomelabBot.Data;
 using HomelabBot.Plugins;
 using HomelabBot.Services;
 using Microsoft.EntityFrameworkCore;
+using OpenTelemetry;
 using OpenTelemetry.Exporter;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 using Serilog;
+
+// Load .env file if present (for local development)
+Env.TraversePath().Load();
 
 Log.Logger = new LoggerConfiguration()
     .WriteTo.Console()
@@ -59,11 +64,12 @@ try
 
     // Langfuse/OpenTelemetry
     var langfuseConfig = builder.Configuration.GetSection(LangfuseConfiguration.SectionName).Get<LangfuseConfiguration>();
-    if (langfuseConfig?.Enabled == true)
+    if (langfuseConfig is not null)
     {
-        Log.Information("Langfuse telemetry enabled, endpoint: {Endpoint}", langfuseConfig.Endpoint);
+        Log.Information("Langfuse telemetry endpoint: {Endpoint}", langfuseConfig.Endpoint);
 
-        // Enable Semantic Kernel sensitive diagnostics (prompts, responses, tool calls)
+        // Enable Semantic Kernel diagnostics (both required for full tracing)
+        AppContext.SetSwitch("Microsoft.SemanticKernel.Experimental.GenAI.EnableOTelDiagnostics", true);
         AppContext.SetSwitch("Microsoft.SemanticKernel.Experimental.GenAI.EnableOTelDiagnosticsSensitive", true);
 
         builder.Services.AddOpenTelemetry()
@@ -71,7 +77,10 @@ try
             .WithTracing(tracing =>
             {
                 tracing
+                    .SetSampler(new AlwaysOnSampler())
+                    .AddSource("HomelabBot.Chat")
                     .AddSource("Microsoft.SemanticKernel*")
+                    .AddProcessor(new LangfuseEnrichmentProcessor())
                     .AddOtlpExporter(options =>
                     {
                         options.Endpoint = new Uri(langfuseConfig.Endpoint);

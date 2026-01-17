@@ -45,3 +45,5 @@ appsettings.Local.json
 *.sln.iml
 
 wwwroot/
+
+homelab.db*

@@ -12,6 +12,8 @@ namespace HomelabBot.Services;
 
 public sealed class KernelService
 {
+    private static readonly ActivitySource ActivitySource = new("HomelabBot.Chat");
+
     private readonly Kernel _kernel;
     private readonly ILogger<KernelService> _logger;
     private readonly ConversationService _conversationService;
@@ -147,8 +149,23 @@ public sealed class KernelService
         }
     }
 
-    public async Task<string> ProcessMessageAsync(ulong threadId, string userMessage, CancellationToken ct = default)
+    public async Task<string> ProcessMessageAsync(
+        ulong threadId,
+        string userMessage,
+        ulong? userId = null,
+        CancellationToken ct = default)
     {
+        // Start root activity with Langfuse attributes
+        using var activity = ActivitySource.StartActivity("HomeLabBot Chat", ActivityKind.Server);
+        activity?.SetTag("langfuse.trace.name", "HomeLabBot Chat");
+        activity?.SetTag("langfuse.session.id", threadId.ToString());
+        activity?.SetTag("langfuse.trace.tags", "[\"homelab\", \"discord\"]");
+        activity?.SetTag("langfuse.trace.input", userMessage);
+        if (userId.HasValue)
+        {
+            activity?.SetTag("langfuse.user.id", userId.Value.ToString());
+        }
+
         var sw = Stopwatch.StartNew();
         var history = _conversationService.GetOrCreateHistory(threadId, SystemPrompt);
         _conversationService.AddUserMessage(threadId, userMessage);
@@ -196,6 +213,9 @@ public sealed class KernelService
             await _telemetryService.LogInteractionCompleteAsync(
                 interaction.Id, responseText, promptTokens, completionTokens, sw.ElapsedMilliseconds, ct);
 
+            // Set trace output
+            activity?.SetTag("langfuse.trace.output", responseText);
+
             return responseText;
         }
         catch (Exception ex)
@@ -203,6 +223,8 @@ public sealed class KernelService
             sw.Stop();
             await _telemetryService.LogInteractionErrorAsync(interaction.Id, ex.Message, sw.ElapsedMilliseconds, ct);
             _logger.LogError(ex, "Error processing message for thread {ThreadId}", threadId);
+            activity?.SetTag("langfuse.observation.level", "ERROR");
+            activity?.SetTag("langfuse.observation.status_message", ex.Message);
             return $"Error processing your request: {ex.Message}";
         }
         finally
