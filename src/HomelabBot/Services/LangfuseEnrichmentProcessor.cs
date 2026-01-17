@@ -16,6 +16,7 @@ public sealed class LangfuseEnrichmentProcessor : BaseProcessor<Activity>
         PropagateFromParent(activity, "langfuse.session.id");
         PropagateFromParent(activity, "langfuse.user.id");
 
+        // Our custom traces (Chat, Generate Title, etc.)
         if (activity.Source.Name == "HomelabBot.Chat")
         {
             CopyTag(activity, "langfuse.trace.input", "input.value");

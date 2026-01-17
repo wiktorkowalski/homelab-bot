@@ -193,7 +193,7 @@ public sealed class DiscordBotService : BackgroundService
             // Generate and set thread title for new threads
             if (newThread != null)
             {
-                var title = await _kernelService.GenerateThreadTitleAsync(content);
+                var title = await _kernelService.GenerateThreadTitleAsync(content, newThread.Id, e.Author.Id);
                 await newThread.ModifyAsync(t => t.Name = title);
             }
         }

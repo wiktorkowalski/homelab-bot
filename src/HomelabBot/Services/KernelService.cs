@@ -10,9 +10,23 @@ using Microsoft.SemanticKernel.Connectors.OpenAI;
 
 namespace HomelabBot.Services;
 
+public enum TraceType
+{
+    Chat,
+    Discovery,
+    Scheduled,
+}
+
 public sealed class KernelService
 {
     private static readonly ActivitySource ActivitySource = new("HomelabBot.Chat");
+
+    private static readonly Dictionary<TraceType, (string Name, string[] Tags)> TraceConfig = new()
+    {
+        [TraceType.Chat] = ("Chat", ["homelab", "discord"]),
+        [TraceType.Discovery] = ("Discovery", ["homelab", "discord", "investigation"]),
+        [TraceType.Scheduled] = ("Scheduled", ["homelab", "scheduled"]),
+    };
 
     private readonly Kernel _kernel;
     private readonly ILogger<KernelService> _logger;
@@ -123,24 +137,49 @@ public sealed class KernelService
             config.Value.OpenRouterModel, 11);
     }
 
-    public async Task<string> GenerateThreadTitleAsync(string userMessage, CancellationToken ct = default)
+    public async Task<string> GenerateThreadTitleAsync(
+        string userMessage,
+        ulong threadId,
+        ulong? userId = null,
+        CancellationToken ct = default)
     {
+        using var activity = ActivitySource.StartActivity("Generate Title", ActivityKind.Internal);
+        activity?.SetTag("langfuse.trace.name", "Generate Title");
+        activity?.SetTag("langfuse.session.id", threadId.ToString());
+        activity?.SetTag("langfuse.trace.tags", "[\"internal\"]");
+        activity?.SetTag("langfuse.trace.input", userMessage);
+        if (userId.HasValue)
+        {
+            activity?.SetTag("langfuse.user.id", userId.Value.ToString());
+        }
+
         try
         {
             var history = new ChatHistory();
-            history.AddSystemMessage("Generate a very short thread title (max 5 words) for this conversation. Just the title, no quotes or punctuation.");
+            history.AddSystemMessage("""
+                Generate a short thread title (2-6 words) summarizing the user's request.
+                Rules:
+                - Just output the title, nothing else
+                - No quotes, punctuation, or prefixes
+                - Summarize the INTENT, not your response
+                - Examples: "Router Status Check", "Docker Container Logs", "Wake Up Media Server"
+                """);
             history.AddUserMessage(userMessage);
 
             var response = await _chatService.GetChatMessageContentAsync(history, cancellationToken: ct);
-            var title = StripThinkingBlocks(response.Content ?? "").Trim().Trim('"', '\'');
-            if (string.IsNullOrEmpty(title)) title = "Chat";
-
-            // Ensure max length for Discord (100 chars)
-            if (title.Length > 50)
+            var title = StripThinkingBlocks(response.Content ?? "").Trim().Trim('"', '\'', '.');
+            if (string.IsNullOrEmpty(title) || title.Length < 3)
             {
-                title = title[..47] + "...";
+                title = "Chat";
             }
 
+            // Discord thread name limit is 100 chars
+            if (title.Length > 100)
+            {
+                title = title[..97] + "...";
+            }
+
+            activity?.SetTag("langfuse.trace.output", title);
             return title;
         }
         catch
@@ -153,13 +192,17 @@ public sealed class KernelService
         ulong threadId,
         string userMessage,
         ulong? userId = null,
+        TraceType traceType = TraceType.Chat,
         CancellationToken ct = default)
     {
+        var (traceName, traceTags) = TraceConfig[traceType];
+        var tagsJson = JsonSerializer.Serialize(traceTags);
+
         // Start root activity with Langfuse attributes
-        using var activity = ActivitySource.StartActivity("HomeLabBot Chat", ActivityKind.Server);
-        activity?.SetTag("langfuse.trace.name", "HomeLabBot Chat");
+        using var activity = ActivitySource.StartActivity(traceName, ActivityKind.Server);
+        activity?.SetTag("langfuse.trace.name", traceName);
         activity?.SetTag("langfuse.session.id", threadId.ToString());
-        activity?.SetTag("langfuse.trace.tags", "[\"homelab\", \"discord\"]");
+        activity?.SetTag("langfuse.trace.tags", tagsJson);
         activity?.SetTag("langfuse.trace.input", userMessage);
         if (userId.HasValue)
         {
