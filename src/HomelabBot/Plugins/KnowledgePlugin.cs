@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Text;
 using HomelabBot.Services;
 using Microsoft.SemanticKernel;
+using Microsoft.SemanticKernel.ChatCompletion;
 
 namespace HomelabBot.Plugins;
 
@@ -47,6 +48,44 @@ public sealed class KnowledgePlugin
 
         var sb = new StringBuilder();
         sb.AppendLine($"**What I know about {topic ?? "the homelab"}:**\n");
+
+        var byTopic = facts.GroupBy(f => f.Topic);
+        foreach (var group in byTopic)
+        {
+            sb.AppendLine($"**{group.Key}**");
+            foreach (var fact in group)
+            {
+                var stale = fact.LastVerified.HasValue &&
+                    (DateTime.UtcNow - fact.LastVerified.Value).TotalDays > 30;
+                var confidence = fact.Confidence < 0.5 ? " (uncertain)" : "";
+                var warning = stale ? " ⚠️" : "";
+                sb.AppendLine($"- {fact.Fact}{confidence}{warning}");
+            }
+
+            sb.AppendLine();
+        }
+
+        return sb.ToString();
+    }
+
+    [KernelFunction]
+    [Description("Search knowledge using natural language. Use this when you don't know the exact topic name or want to find related information.")]
+    public async Task<string> SmartRecallKnowledge(
+        [Description("Natural language query (e.g., 'what port is portainer on', 'docker container info')")] string query,
+        Kernel kernel)
+    {
+        _logger.LogDebug("Smart recalling knowledge for: {Query}", query);
+
+        var chatService = kernel.GetRequiredService<IChatCompletionService>();
+        var facts = await _knowledgeService.SmartRecallAsync(query, chatService);
+
+        if (facts.Count == 0)
+        {
+            return $"No relevant knowledge found for: {query}";
+        }
+
+        var sb = new StringBuilder();
+        sb.AppendLine($"**Relevant knowledge for \"{query}\":**\n");
 
         var byTopic = facts.GroupBy(f => f.Topic);
         foreach (var group in byTopic)

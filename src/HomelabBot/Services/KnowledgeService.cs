@@ -1,12 +1,17 @@
+using System.Diagnostics;
 using System.Text;
+using System.Text.Json;
 using HomelabBot.Data;
 using HomelabBot.Data.Entities;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.SemanticKernel.ChatCompletion;
 
 namespace HomelabBot.Services;
 
 public sealed class KnowledgeService
 {
+    private static readonly ActivitySource ActivitySource = new("HomelabBot.Chat");
+
     private readonly IDbContextFactory<HomelabDbContext> _dbFactory;
     private readonly ILogger<KnowledgeService> _logger;
 
@@ -226,5 +231,110 @@ public sealed class KnowledgeService
         }
 
         await db.SaveChangesAsync();
+    }
+
+    public async Task<List<string>> GetAllTopicsAsync()
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync();
+
+        return await db.Knowledge
+            .Where(k => k.IsValid)
+            .Select(k => k.Topic)
+            .Distinct()
+            .OrderBy(t => t)
+            .ToListAsync();
+    }
+
+    public async Task<List<Knowledge>> SmartRecallAsync(
+        string naturalQuery,
+        IChatCompletionService chatService)
+    {
+        using var activity = ActivitySource.StartActivity("SmartRecall", ActivityKind.Internal);
+        activity?.SetTag("langfuse.span.name", "SmartRecall");
+        activity?.SetTag("langfuse.span.input", JsonSerializer.Serialize(new { query = naturalQuery }));
+
+        var allTopics = await GetAllTopicsAsync();
+        activity?.SetTag("knowledge.available_topics_count", allTopics.Count);
+        activity?.SetTag("knowledge.available_topics", JsonSerializer.Serialize(allTopics));
+
+        if (allTopics.Count == 0)
+        {
+            activity?.SetTag("langfuse.span.output", JsonSerializer.Serialize(new { status = "no_topics", facts_count = 0 }));
+            return [];
+        }
+
+        var prompt = $"""
+            Given these knowledge topics: [{string.Join(", ", allTopics)}]
+
+            Which topics are relevant to answer this query: "{naturalQuery}"
+
+            Return ONLY a JSON array of relevant topic names, e.g. ["topic1", "topic2"]
+            If no topics are relevant, return []
+            """;
+
+        var history = new ChatHistory();
+        history.AddUserMessage(prompt);
+
+        var response = await chatService.GetChatMessageContentAsync(history);
+        var content = response.Content ?? "[]";
+        activity?.SetTag("knowledge.llm_raw_response", content);
+
+        // Extract JSON array from response (handle markdown code blocks)
+        var jsonMatch = System.Text.RegularExpressions.Regex.Match(
+            content, @"\[.*?\]", System.Text.RegularExpressions.RegexOptions.Singleline);
+
+        if (!jsonMatch.Success)
+        {
+            _logger.LogWarning("SmartRecall: Could not parse topics from LLM response: {Response}", content);
+            activity?.SetTag("langfuse.span.output", JsonSerializer.Serialize(new { status = "parse_error", error = content }));
+            return [];
+        }
+
+        List<string>? matchedTopics;
+        try
+        {
+            matchedTopics = JsonSerializer.Deserialize<List<string>>(jsonMatch.Value);
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogWarning(ex, "SmartRecall: Failed to parse JSON: {Json}", jsonMatch.Value);
+            activity?.SetTag("langfuse.span.output", JsonSerializer.Serialize(new { status = "json_error", error = jsonMatch.Value }));
+            return [];
+        }
+
+        if (matchedTopics == null || matchedTopics.Count == 0)
+        {
+            activity?.SetTag("knowledge.matched_topics", "[]");
+            activity?.SetTag("langfuse.span.output", JsonSerializer.Serialize(new { status = "no_matches", matched_topics = Array.Empty<string>(), facts_count = 0 }));
+            return [];
+        }
+
+        activity?.SetTag("knowledge.matched_topics", JsonSerializer.Serialize(matchedTopics));
+        activity?.SetTag("knowledge.matched_topics_count", matchedTopics.Count);
+
+        // Recall facts from all matched topics
+        var results = new List<Knowledge>();
+        foreach (var topic in matchedTopics)
+        {
+            var facts = await RecallAsync(topic);
+            results.AddRange(facts);
+        }
+
+        // Remove duplicates and sort by confidence
+        var finalResults = results
+            .DistinctBy(k => k.Id)
+            .OrderByDescending(k => k.Confidence)
+            .ToList();
+
+        activity?.SetTag("knowledge.facts_count", finalResults.Count);
+        activity?.SetTag("langfuse.span.output", JsonSerializer.Serialize(new
+        {
+            status = "success",
+            matched_topics = matchedTopics,
+            facts_count = finalResults.Count,
+            facts = finalResults.Select(f => new { f.Topic, f.Fact, f.Confidence })
+        }));
+
+        return finalResults;
     }
 }

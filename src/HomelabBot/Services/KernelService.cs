@@ -62,7 +62,8 @@ public sealed class KernelService
         - Report errors with full context, not generic messages
 
         Learning & Memory:
-        - Call RecallKnowledge(topic) BEFORE taking action to check what you already know
+        - Use SmartRecallKnowledge(query) for natural language searches when you don't know the exact topic
+        - Use RecallKnowledge(topic) when you know the exact topic name
         - Call RememberFact(topic, fact) for each useful discovery - keep facts atomic and specific (e.g., "Pool 'tank' at 50% capacity" not entire status dumps). Call multiple times for multiple facts.
         - Call LearnCorrection() when user corrects you
         - Use StoreAlias() when user tells you friendly names for devices/containers
