@@ -63,7 +63,7 @@ public sealed class KernelService
 
         Learning & Memory:
         - Call RecallKnowledge(topic) BEFORE taking action to check what you already know
-        - Call RememberFact(topic, fact) when you discover something useful
+        - Call RememberFact(topic, fact) for each useful discovery - keep facts atomic and specific (e.g., "Pool 'tank' at 50% capacity" not entire status dumps). Call multiple times for multiple facts.
         - Call LearnCorrection() when user corrects you
         - Use StoreAlias() when user tells you friendly names for devices/containers
         - Use ResolveAlias() to translate user-friendly names to technical identifiers

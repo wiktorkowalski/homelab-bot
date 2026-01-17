@@ -17,7 +17,7 @@ public sealed class KnowledgePlugin
     }
 
     [KernelFunction]
-    [Description("Remember a fact about the homelab. Call this when you discover something useful during operations.")]
+    [Description("Remember a single atomic fact about the homelab. Keep facts small and specific (1-2 sentences max). Call multiple times for multiple facts - don't combine unrelated info into one fact.")]
     public async Task<string> RememberFact(
         [Description("Topic category (e.g., 'docker', 'loki', 'network', 'host', 'service', 'alias:mac', 'alias:container')")] string topic,
         [Description("The fact to remember")] string fact,
