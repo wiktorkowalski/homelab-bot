@@ -94,6 +94,8 @@ public sealed class LangfuseEnrichmentProcessor : BaseProcessor<Activity>
 
     private static string? ExtractContent(Activity activity, string eventName)
     {
+        string? lastContent = null;
+
         foreach (var evt in activity.Events)
         {
             if (evt.Name != eventName)
@@ -111,7 +113,7 @@ public sealed class LangfuseEnrichmentProcessor : BaseProcessor<Activity>
                 var json = tag.Value?.ToString();
                 if (string.IsNullOrEmpty(json))
                 {
-                    return null;
+                    continue;
                 }
 
                 try
@@ -121,23 +123,22 @@ public sealed class LangfuseEnrichmentProcessor : BaseProcessor<Activity>
                     // {"role":"user","content":"..."} or {"message":{"content":"..."}}
                     if (doc.RootElement.TryGetProperty("content", out var c))
                     {
-                        return c.GetString();
+                        lastContent = c.GetString();
                     }
-
-                    if (doc.RootElement.TryGetProperty("message", out var m) &&
+                    else if (doc.RootElement.TryGetProperty("message", out var m) &&
                         m.TryGetProperty("content", out var mc))
                     {
-                        return mc.GetString();
+                        lastContent = mc.GetString();
                     }
                 }
                 catch
                 {
-                    return json;
+                    lastContent = json;
                 }
             }
         }
 
-        return null;
+        return lastContent;
     }
 
     private static string? ExtractToolContent(Activity activity, string eventName)
