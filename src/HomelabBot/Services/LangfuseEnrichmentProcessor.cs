@@ -16,11 +16,16 @@ public sealed class LangfuseEnrichmentProcessor : BaseProcessor<Activity>
         PropagateFromParent(activity, "langfuse.session.id");
         PropagateFromParent(activity, "langfuse.user.id");
 
-        // Our custom traces (Chat, Generate Title, etc.)
+        // Our custom traces and spans (Chat, Generate Title, SmartRecall, etc.)
         if (activity.Source.Name == "HomelabBot.Chat")
         {
+            // Root trace level
             CopyTag(activity, "langfuse.trace.input", "input.value");
             CopyTag(activity, "langfuse.trace.output", "output.value");
+
+            // Child span level - map to observation for Input/Output preview
+            CopyTag(activity, "langfuse.span.input", "langfuse.observation.input");
+            CopyTag(activity, "langfuse.span.output", "langfuse.observation.output");
             return;
         }
 
