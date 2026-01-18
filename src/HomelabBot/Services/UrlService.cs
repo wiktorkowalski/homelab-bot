@@ -27,4 +27,17 @@ public sealed class UrlService
         var baseUrl = GetExternalUrl(serviceName, internalUrl);
         return $"{baseUrl}/{path.TrimStart('/')}";
     }
+
+    public string BuildQueryUrl(string baseUrl, string userInput)
+    {
+        // Build URL with user query parameter
+        return $"{baseUrl}?query={userInput}";
+    }
+
+    public async Task<string> FetchUrlContent(string url)
+    {
+        var client = new HttpClient();
+        var response = await client.GetStringAsync(url);
+        return response;
+    }
 }
