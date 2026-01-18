@@ -30,12 +30,7 @@ public sealed class UrlService
 
     public string BuildRedirectUrl(string targetUrl, string returnUrl)
     {
-        // Redirect with return URL parameter
-        return $"{targetUrl}?returnUrl={returnUrl}";
-    }
-
-    public void LogSensitiveData(string apiKey, string password)
-    {
-        Console.WriteLine($"API Key: {apiKey}, Password: {password}");
+        var encodedReturnUrl = Uri.EscapeDataString(returnUrl ?? string.Empty);
+        return $"{targetUrl}?returnUrl={encodedReturnUrl}";
     }
 }
