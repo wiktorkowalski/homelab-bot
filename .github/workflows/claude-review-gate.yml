@@ -1,0 +1,39 @@
+name: Claude Review Gate
+
+on:
+  pull_request_review:
+    types: [submitted]
+
+jobs:
+  review-gate:
+    runs-on: [self-hosted, homelab-bot]
+    permissions:
+      pull-requests: write
+
+    steps:
+      - name: Process review
+        env:
+          REVIEWER: ${{ github.event.review.user.login }}
+          REVIEW_STATE: ${{ github.event.review.state }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "Reviewer: $REVIEWER"
+          echo "Review state: $REVIEW_STATE"
+
+          # Skip if not Claude's review
+          if [ "$REVIEWER" != "claude[bot]" ]; then
+            echo "::notice::Skipping - not a Claude review"
+            exit 0
+          fi
+
+          # Handle Claude's review
+          if [ "$REVIEW_STATE" = "changes_requested" ]; then
+            echo "::error::Claude requested changes - PR blocked"
+            exit 1
+          elif [ "$REVIEW_STATE" = "approved" ]; then
+            echo "::notice::Claude approved the PR"
+            gh pr review "$PR_NUMBER" --approve --body "✅ Approved by GitHub Actions (based on Claude's approval)"
+          else
+            echo "::notice::Claude commented (no approval/rejection)"
+          fi
