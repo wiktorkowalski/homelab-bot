@@ -36,3 +36,16 @@ jobs:
           ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_PROXY_URL }}
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_args: |
+            --model claude-opus-4-5-20251101
+          prompt: |
+            When reviewing PRs:
+            1. Post inline comments on specific code lines using the GitHub PR review API
+            2. After analysis, submit a formal review with:
+               - APPROVE if no critical issues found
+               - REQUEST_CHANGES if there are security vulnerabilities, bugs, or critical issues
+            3. Use gh api to create a PR review with inline comments:
+               gh api repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews \
+                 -f event="APPROVE" or "REQUEST_CHANGES" \
+                 -f body="Review summary" \
+                 -f comments='[{"path":"file.cs","line":10,"body":"comment"}]'
