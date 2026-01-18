@@ -39,6 +39,7 @@ jobs:
           show_full_output: true
           claude_args: |
             --model claude-opus-4-5-20251101
+            --allowedTools "Edit,MultiEdit,Write,Read,Glob,Grep,LS,Bash,mcp__github_comment__update_claude_comment"
           prompt: |
             When reviewing PRs:
             1. Post inline comments on specific code lines using the GitHub PR review API
