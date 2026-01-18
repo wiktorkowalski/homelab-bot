@@ -38,7 +38,7 @@ jobs:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           show_full_output: true
           claude_args: |
-            --dangerously-skip-permissions
+            --model claude-opus-4-5-20251101
           prompt: |
             When reviewing PRs:
             1. Post inline comments on specific code lines using the GitHub PR review API
