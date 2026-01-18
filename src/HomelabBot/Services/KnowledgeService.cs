@@ -268,6 +268,9 @@ public sealed class KnowledgeService
 
             Which topics are relevant to answer this query: "{naturalQuery}"
 
+            Topics use "category:name" format (e.g., "docker:alertmanager", "network:router").
+            Match semantically - query "alertmanager" should match "docker:alertmanager".
+
             Return ONLY a JSON array of relevant topic names, e.g. ["topic1", "topic2"]
             If no topics are relevant, return []
             """;
@@ -302,7 +305,39 @@ public sealed class KnowledgeService
             return [];
         }
 
-        if (matchedTopics == null || matchedTopics.Count == 0)
+        matchedTopics ??= [];
+
+        // Fallback: substring matching for obvious cases LLM might miss
+        var queryLower = naturalQuery.ToLowerInvariant();
+        var queryWords = queryLower.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+
+        foreach (var topic in allTopics)
+        {
+            if (matchedTopics.Contains(topic))
+            {
+                continue;
+            }
+
+            var topicLower = topic.ToLowerInvariant();
+            var topicParts = topicLower.Split(':');
+
+            // Check if any query word matches topic or topic parts
+            foreach (var word in queryWords)
+            {
+                if (word.Length < 3)
+                {
+                    continue; // Skip short words like "on", "is", etc.
+                }
+
+                if (topicLower.Contains(word) || topicParts.Any(p => p.Contains(word) || word.Contains(p)))
+                {
+                    matchedTopics.Add(topic);
+                    break;
+                }
+            }
+        }
+
+        if (matchedTopics.Count == 0)
         {
             activity?.SetTag("knowledge.matched_topics", "[]");
             activity?.SetTag("langfuse.span.output", JsonSerializer.Serialize(new { status = "no_matches", matched_topics = Array.Empty<string>(), facts_count = 0 }));
