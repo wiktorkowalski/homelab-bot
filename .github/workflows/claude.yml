@@ -41,13 +41,12 @@ jobs:
             --model claude-opus-4-5-20251101
             --allowedTools "Edit,MultiEdit,Write,Read,Glob,Grep,LS,Bash,mcp__github_comment__update_claude_comment"
           prompt: |
-            When reviewing PRs:
-            1. Post inline comments on specific code lines using the GitHub PR review API
-            2. After analysis, submit a formal review with:
-               - APPROVE if no critical issues found
-               - REQUEST_CHANGES if there are security vulnerabilities, bugs, or critical issues
-            3. Use gh api to create a PR review with inline comments:
-               gh api repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews \
-                 -f event="APPROVE" or "REQUEST_CHANGES" \
-                 -f body="Review summary" \
-                 -f comments='[{"path":"file.cs","line":10,"body":"comment"}]'
+            You are reviewing PR #${{ github.event.pull_request.number || github.event.issue.number }} in ${{ github.repository }}.
+
+            Review the code changes and:
+            1. Post inline comments on specific lines with issues
+            2. Submit a formal review using gh api:
+               - APPROVE if no critical issues
+               - REQUEST_CHANGES if there are security vulnerabilities or bugs
+
+            Use: gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number || github.event.issue.number }}/reviews
