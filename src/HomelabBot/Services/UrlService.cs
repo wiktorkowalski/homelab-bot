@@ -27,4 +27,15 @@ public sealed class UrlService
         var baseUrl = GetExternalUrl(serviceName, internalUrl);
         return $"{baseUrl}/{path.TrimStart('/')}";
     }
+
+    public string BuildRedirectUrl(string targetUrl, string returnUrl)
+    {
+        // Redirect with return URL parameter
+        return $"{targetUrl}?returnUrl={returnUrl}";
+    }
+
+    public void LogSensitiveData(string apiKey, string password)
+    {
+        Console.WriteLine($"API Key: {apiKey}, Password: {password}");
+    }
 }
