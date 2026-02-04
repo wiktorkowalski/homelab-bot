@@ -1,5 +1,6 @@
 using DSharpPlus.Entities;
 using DSharpPlus.SlashCommands;
+using HomelabBot.Models;
 using HomelabBot.Plugins;
 using HomelabBot.Services;
 
@@ -324,7 +325,8 @@ public class HomeLabCommands : ApplicationCommandModule
             _logger.LogDebug("Summary command invoked by {User}", ctx.User.Username);
 
             var data = await _summaryAggregator.AggregateAsync();
-            var embed = SummaryEmbedBuilder.Build(data);
+            var analysis = await GenerateSummaryAnalysisAsync(data);
+            var embed = SummaryEmbedBuilder.Build(data, analysis);
 
             await ctx.EditResponseAsync(new DiscordWebhookBuilder().AddEmbed(embed));
         }
@@ -333,6 +335,36 @@ public class HomeLabCommands : ApplicationCommandModule
             _logger.LogError(ex, "Error in summary command");
             await ctx.EditResponseAsync(new DiscordWebhookBuilder()
                 .WithContent($"Error generating summary: {ex.Message}"));
+        }
+    }
+
+    private async Task<string?> GenerateSummaryAnalysisAsync(DailySummaryData data)
+    {
+        try
+        {
+            var prompt = $"""
+                Analyze this homelab status and provide a brief 2-3 sentence summary.
+                Focus on anything noteworthy: issues, warnings, recommendations.
+                If everything looks good, say so briefly.
+                Be concise and direct. No greetings or fluff.
+
+                Data:
+                - Health Score: {data.HealthScore}/100
+                - Alerts (last 24h): {data.Alerts.Count} ({data.Alerts.Count(a => a.Severity == "critical")} critical, {data.Alerts.Count(a => a.Severity == "warning")} warning)
+                {(data.Alerts.Count > 0 ? "  Names: " + string.Join(", ", data.Alerts.Take(5).Select(a => a.Name)) : "")}
+                - Containers: {data.Containers.Count(c => c.State == "running")} running, {data.Containers.Count(c => c.State != "running")} stopped
+                {(data.Containers.Any(c => c.State != "running") ? "  Stopped: " + string.Join(", ", data.Containers.Where(c => c.State != "running").Take(5).Select(c => c.Name)) : "")}
+                - Storage Pools: {string.Join(", ", data.Pools.Select(p => $"{p.Name}: {p.Health} ({p.UsedPercent:F0}%)"))}
+                - Router: {(data.Router != null ? $"CPU {data.Router.CpuPercent:F0}%, Mem {data.Router.MemoryPercent:F0}%, Up {data.Router.Uptime.Days}d" : "unavailable")}
+                - Monitoring: {(data.Monitoring != null ? $"{data.Monitoring.UpTargets}/{data.Monitoring.TotalTargets} targets up" : "unavailable")}
+                """;
+
+            return await _kernelService.ProcessMessageAsync(threadId: 0, userMessage: prompt);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to generate AI analysis");
+            return null;
         }
     }
 }
