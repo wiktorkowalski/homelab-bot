@@ -348,12 +348,21 @@ public class HomeLabCommands : ApplicationCommandModule
             _logger.LogDebug("Roast command invoked by {User}", ctx.User.Username);
 
             var prompt = """
-                Look around the homelab using your tools. Find something embarrassing,
-                inefficient, or roastable (old containers, high resource usage, weird configs,
-                too many alerts, neglected services, etc.).
+                Look around the homelab using your tools. Check multiple sources:
+                - Container stats (CPU, memory, restarts)
+                - System metrics (disk usage, uptime, load)
+                - Recent alerts and their frequency
+                - Service health and response times
+                - Resource allocation vs actual usage
+
+                Find something embarrassing, inefficient, or roastable (old containers,
+                high resource usage, weird configs, too many alerts, neglected services, etc.).
 
                 Then write a short, witty roast (2-3 sentences max) about what you found.
                 Be playfully mean but not too harsh.
+
+                IMPORTANT: Do NOT mention specific container or service names. Keep the roast
+                generic (e.g., "one of your containers" instead of "your nginx container").
                 """;
 
             var response = await _kernelService.ProcessMessageAsync(
