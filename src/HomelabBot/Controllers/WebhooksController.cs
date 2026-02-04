@@ -4,6 +4,9 @@ using Microsoft.AspNetCore.Mvc;
 
 namespace HomelabBot.Controllers;
 
+/// <summary>
+/// Webhook endpoints for external services. Intended for internal network use only - no authentication.
+/// </summary>
 [ApiController]
 [Route("api/webhooks")]
 public class WebhooksController : ControllerBase

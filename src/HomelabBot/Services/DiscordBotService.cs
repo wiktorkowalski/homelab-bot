@@ -303,29 +303,6 @@ public sealed class DiscordBotService : BackgroundService
         }
     }
 
-    public async Task SendChannelMessageAsync(ulong channelId, DiscordEmbed embed, string? textContent = null)
-    {
-        if (_client == null)
-        {
-            _logger.LogWarning("Cannot send channel message: Discord client not connected");
-            return;
-        }
-
-        try
-        {
-            var channel = await _client.GetChannelAsync(channelId);
-            var msgBuilder = new DiscordMessageBuilder().AddEmbed(embed);
-            if (!string.IsNullOrEmpty(textContent))
-                msgBuilder.WithContent(textContent);
-            await channel.SendMessageAsync(msgBuilder);
-            _logger.LogDebug("Sent message to channel {ChannelId}", channelId);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to send message to channel {ChannelId}", channelId);
-        }
-    }
-
     public override async Task StopAsync(CancellationToken cancellationToken)
     {
         _logger.LogInformation("Stopping Discord bot service...");

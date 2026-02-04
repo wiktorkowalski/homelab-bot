@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using DSharpPlus.Entities;
 using HomelabBot.Configuration;
 using HomelabBot.Models;
@@ -53,7 +55,8 @@ public sealed class AlertWebhookService
 
     private async Task ProcessAlertAsync(AlertmanagerWebhookAlert alert, CancellationToken ct)
     {
-        var conversationId = (ulong)$"alert-{alert.Fingerprint ?? Guid.NewGuid().ToString()}".GetHashCode();
+        var hashBytes = SHA256.HashData(Encoding.UTF8.GetBytes($"alert-{alert.Fingerprint ?? Guid.NewGuid().ToString()}"));
+        var conversationId = BitConverter.ToUInt64(hashBytes, 0);
 
         string analysis;
         if (alert.IsFiring)
