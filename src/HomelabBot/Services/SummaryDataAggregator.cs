@@ -51,7 +51,7 @@ public sealed class SummaryDataAggregator
         var router = await routerTask;
         var monitoring = await monitoringTask;
 
-        var healthScore = CalculateHealthScore(alerts, containers, pools, monitoring);
+        var healthScore = CalculateHealthScore(alerts, containers, pools, router, monitoring);
 
         return new DailySummaryData
         {
@@ -210,8 +210,9 @@ public sealed class SummaryDataAggregator
             }
             return 0;
         }
-        catch
+        catch (Exception ex)
         {
+            _logger.LogDebug(ex, "Failed to query Prometheus metric {Metric}", metric);
             return 0;
         }
     }
@@ -220,9 +221,20 @@ public sealed class SummaryDataAggregator
         List<AlertSummary> alerts,
         List<Models.ContainerStatus> containers,
         List<PoolStatus> pools,
+        RouterStatus? router,
         MonitoringStatus? monitoring)
     {
         var score = 100;
+
+        // Deduct for failed data sources (indicates connectivity issues)
+        if (containers.Count == 0)
+            score -= 15;
+        if (pools.Count == 0)
+            score -= 15;
+        if (router == null)
+            score -= 10;
+        if (monitoring == null)
+            score -= 15;
 
         // Deduct for alerts
         var criticalAlerts = alerts.Count(a => a.Severity == "critical");

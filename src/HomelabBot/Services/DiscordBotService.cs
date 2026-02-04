@@ -290,9 +290,9 @@ public sealed class DiscordBotService : BackgroundService
                     _logger.LogDebug("Sent DM to user {UserId}", userId);
                     return;
                 }
-                catch
+                catch (Exception ex)
                 {
-                    // User not in this guild, try next
+                    _logger.LogDebug(ex, "User {UserId} not found in guild {Guild}", userId, guild.Name);
                 }
             }
             _logger.LogWarning("Could not find user {UserId} in any guild", userId);
