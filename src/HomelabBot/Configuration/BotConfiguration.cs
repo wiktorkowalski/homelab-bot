@@ -93,3 +93,10 @@ public sealed class DailySummaryConfiguration
     public string TimeZone { get; init; } = "Europe/Warsaw";
     public ulong DiscordUserId { get; init; }
 }
+
+public sealed class AlertWebhookConfiguration
+{
+    public const string SectionName = "AlertWebhook";
+
+    public ulong DiscordUserId { get; init; }
+}
