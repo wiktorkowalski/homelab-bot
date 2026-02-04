@@ -20,6 +20,7 @@ public sealed class DiscordBotService : BackgroundService
     private SlashCommandsExtension? _slashCommands;
     private int _reconnectAttempts;
     private const int MaxReconnectAttempts = 10;
+    private readonly TaskCompletionSource _readyTcs = new();
 
     public DiscordBotService(
         IOptions<BotConfiguration> config,
@@ -35,6 +36,11 @@ public sealed class DiscordBotService : BackgroundService
         _conversationService = conversationService;
         _confirmationService = confirmationService;
         _serviceProvider = serviceProvider;
+    }
+
+    public Task WaitForReadyAsync(CancellationToken ct = default)
+    {
+        return _readyTcs.Task.WaitAsync(ct);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -104,6 +110,7 @@ public sealed class DiscordBotService : BackgroundService
     {
         _logger.LogInformation("Discord bot connected as {Username}#{Discriminator}",
             client.CurrentUser.Username, client.CurrentUser.Discriminator);
+        _readyTcs.TrySetResult();
         return Task.CompletedTask;
     }
 
@@ -260,6 +267,40 @@ public sealed class DiscordBotService : BackgroundService
         // Exponential backoff: 1s, 2s, 4s, 8s, 16s, 32s, 60s max
         var seconds = Math.Min(Math.Pow(2, attempt - 1), 60);
         return TimeSpan.FromSeconds(seconds);
+    }
+
+    public async Task SendDmAsync(ulong userId, DiscordEmbed embed)
+    {
+        if (_client == null)
+        {
+            _logger.LogWarning("Cannot send DM: Discord client not connected");
+            return;
+        }
+
+        try
+        {
+            // Find user in any guild the bot is in
+            foreach (var guild in _client.Guilds.Values)
+            {
+                try
+                {
+                    var member = await guild.GetMemberAsync(userId);
+                    var dm = await member.CreateDmChannelAsync();
+                    await dm.SendMessageAsync(embed: embed);
+                    _logger.LogDebug("Sent DM to user {UserId}", userId);
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "User {UserId} not found in guild {Guild}", userId, guild.Name);
+                }
+            }
+            _logger.LogWarning("Could not find user {UserId} in any guild", userId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to send DM to user {UserId}", userId);
+        }
     }
 
     public override async Task StopAsync(CancellationToken cancellationToken)

@@ -83,3 +83,13 @@ public sealed class LangfuseConfiguration
     public required string PublicKey { get; init; }
     public required string SecretKey { get; init; }
 }
+
+public sealed class DailySummaryConfiguration
+{
+    public const string SectionName = "DailySummary";
+
+    public bool Enabled { get; init; } = false;
+    public string ScheduleTime { get; init; } = "08:00";
+    public string TimeZone { get; init; } = "Europe/Warsaw";
+    public ulong DiscordUserId { get; init; }
+}
