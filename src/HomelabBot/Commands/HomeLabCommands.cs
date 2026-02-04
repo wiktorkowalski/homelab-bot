@@ -338,6 +338,68 @@ public class HomeLabCommands : ApplicationCommandModule
         }
     }
 
+    [SlashCommand("roast", "Roast your homelab")]
+    public async Task RoastCommand(InteractionContext ctx)
+    {
+        await ctx.DeferAsync();
+
+        try
+        {
+            _logger.LogDebug("Roast command invoked by {User}", ctx.User.Username);
+
+            var prompt = """
+                Look around the homelab using your tools. Find something embarrassing,
+                inefficient, or roastable (old containers, high resource usage, weird configs,
+                too many alerts, neglected services, etc.).
+
+                Then write a short, witty roast (2-3 sentences max) about what you found.
+                Be playfully mean but not too harsh.
+                """;
+
+            var response = await _kernelService.ProcessMessageAsync(
+                ctx.Channel.Id, prompt, ctx.User.Id, TraceType.Chat);
+
+            await ctx.EditResponseAsync(new DiscordWebhookBuilder().WithContent(response));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in roast command");
+            await ctx.EditResponseAsync(new DiscordWebhookBuilder()
+                .WithContent($"Error roasting homelab: {ex.Message}"));
+        }
+    }
+
+    [SlashCommand("randomfact", "Get a random fact about your homelab")]
+    public async Task RandomFactCommand(InteractionContext ctx)
+    {
+        await ctx.DeferAsync();
+
+        try
+        {
+            _logger.LogDebug("RandomFact command invoked by {User}", ctx.User.Username);
+
+            var prompt = """
+                Explore the homelab using your tools and discover something interesting.
+                Could be: total containers running, uptime stats, storage used,
+                network throughput, alert history, service dependencies, etc.
+
+                Present it as a single interesting fact (1-2 sentences).
+                Start with "Did you know..." or similar.
+                """;
+
+            var response = await _kernelService.ProcessMessageAsync(
+                ctx.Channel.Id, prompt, ctx.User.Id, TraceType.Chat);
+
+            await ctx.EditResponseAsync(new DiscordWebhookBuilder().WithContent(response));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in randomfact command");
+            await ctx.EditResponseAsync(new DiscordWebhookBuilder()
+                .WithContent($"Error getting random fact: {ex.Message}"));
+        }
+    }
+
     private async Task<string?> GenerateSummaryAnalysisAsync(DailySummaryData data)
     {
         try
