@@ -10,17 +10,20 @@ public class HomeLabCommands : ApplicationCommandModule
     private readonly DockerPlugin _dockerPlugin;
     private readonly KnowledgePlugin _knowledgePlugin;
     private readonly KernelService _kernelService;
+    private readonly SummaryDataAggregator _summaryAggregator;
     private readonly ILogger<HomeLabCommands> _logger;
 
     public HomeLabCommands(
         DockerPlugin dockerPlugin,
         KnowledgePlugin knowledgePlugin,
         KernelService kernelService,
+        SummaryDataAggregator summaryAggregator,
         ILogger<HomeLabCommands> logger)
     {
         _dockerPlugin = dockerPlugin;
         _knowledgePlugin = knowledgePlugin;
         _kernelService = kernelService;
+        _summaryAggregator = summaryAggregator;
         _logger = logger;
     }
 
@@ -308,6 +311,28 @@ public class HomeLabCommands : ApplicationCommandModule
             _logger.LogError(ex, "Error in knowledge command");
             await ctx.EditResponseAsync(new DiscordWebhookBuilder()
                 .WithContent($"Error getting knowledge: {ex.Message}"));
+        }
+    }
+
+    [SlashCommand("summary", "Get a daily summary of homelab status")]
+    public async Task SummaryCommand(InteractionContext ctx)
+    {
+        await ctx.DeferAsync();
+
+        try
+        {
+            _logger.LogDebug("Summary command invoked by {User}", ctx.User.Username);
+
+            var data = await _summaryAggregator.AggregateAsync();
+            var embed = SummaryEmbedBuilder.Build(data);
+
+            await ctx.EditResponseAsync(new DiscordWebhookBuilder().AddEmbed(embed));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in summary command");
+            await ctx.EditResponseAsync(new DiscordWebhookBuilder()
+                .WithContent($"Error generating summary: {ex.Message}"));
         }
     }
 }

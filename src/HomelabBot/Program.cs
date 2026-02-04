@@ -62,6 +62,9 @@ try
     builder.Services.AddOptions<LangfuseConfiguration>()
         .Bind(builder.Configuration.GetSection(LangfuseConfiguration.SectionName));
 
+    builder.Services.AddOptions<DailySummaryConfiguration>()
+        .Bind(builder.Configuration.GetSection(DailySummaryConfiguration.SectionName));
+
     // Langfuse/OpenTelemetry
     var langfuseConfig = builder.Configuration.GetSection(LangfuseConfiguration.SectionName).Get<LangfuseConfiguration>();
     if (langfuseConfig is not null)
@@ -124,7 +127,10 @@ try
     builder.Services.AddSingleton<ConfirmationService>();
     builder.Services.AddSingleton<TelemetryService>();
     builder.Services.AddSingleton<KernelService>();
-    builder.Services.AddHostedService<DiscordBotService>();
+    builder.Services.AddSingleton<DiscordBotService>();
+    builder.Services.AddHostedService(sp => sp.GetRequiredService<DiscordBotService>());
+    builder.Services.AddSingleton<SummaryDataAggregator>();
+    builder.Services.AddHostedService<DailySummaryService>();
 
     // API Controllers
     builder.Services.AddControllers();

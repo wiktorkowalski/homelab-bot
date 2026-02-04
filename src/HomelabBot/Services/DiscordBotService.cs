@@ -262,6 +262,40 @@ public sealed class DiscordBotService : BackgroundService
         return TimeSpan.FromSeconds(seconds);
     }
 
+    public async Task SendDmAsync(ulong userId, DiscordEmbed embed)
+    {
+        if (_client == null)
+        {
+            _logger.LogWarning("Cannot send DM: Discord client not connected");
+            return;
+        }
+
+        try
+        {
+            // Find user in any guild the bot is in
+            foreach (var guild in _client.Guilds.Values)
+            {
+                try
+                {
+                    var member = await guild.GetMemberAsync(userId);
+                    var dm = await member.CreateDmChannelAsync();
+                    await dm.SendMessageAsync(embed: embed);
+                    _logger.LogDebug("Sent DM to user {UserId}", userId);
+                    return;
+                }
+                catch
+                {
+                    // User not in this guild, try next
+                }
+            }
+            _logger.LogWarning("Could not find user {UserId} in any guild", userId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to send DM to user {UserId}", userId);
+        }
+    }
+
     public override async Task StopAsync(CancellationToken cancellationToken)
     {
         _logger.LogInformation("Stopping Discord bot service...");
