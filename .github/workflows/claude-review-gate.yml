@@ -6,7 +6,7 @@ on:
 
 jobs:
   review-gate:
-    runs-on: [self-hosted, homelab-bot]
+    runs-on: ubuntu-latest
     permissions:
       pull-requests: write
 
