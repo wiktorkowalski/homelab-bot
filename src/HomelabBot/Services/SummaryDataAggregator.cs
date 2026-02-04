@@ -13,21 +13,18 @@ public sealed class SummaryDataAggregator
 {
     private readonly HttpClient _httpClient;
     private readonly ILogger<SummaryDataAggregator> _logger;
-    private readonly string _alertmanagerUrl;
     private readonly string _prometheusUrl;
     private readonly string _truenasUrl;
     private readonly string? _truenasApiKey;
 
     public SummaryDataAggregator(
         IHttpClientFactory httpClientFactory,
-        IOptions<AlertmanagerConfiguration> alertmanagerConfig,
         IOptions<PrometheusConfiguration> prometheusConfig,
         IOptions<TrueNASConfiguration> truenasConfig,
         ILogger<SummaryDataAggregator> logger)
     {
         _httpClient = httpClientFactory.CreateClient("Default");
         _logger = logger;
-        _alertmanagerUrl = alertmanagerConfig.Value.Host.TrimEnd('/');
         _prometheusUrl = prometheusConfig.Value.Host.TrimEnd('/');
         _truenasUrl = truenasConfig.Value.Host.TrimEnd('/');
         _truenasApiKey = truenasConfig.Value.ApiKey;
@@ -69,21 +66,35 @@ public sealed class SummaryDataAggregator
     {
         try
         {
+            // Query Prometheus for alerts that fired in the last 24h
+            var query = Uri.EscapeDataString("ALERTS{alertstate=\"firing\"}");
+            var endTime = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            var startTime = endTime - 86400; // 24 hours ago
+
             var response = await _httpClient.GetAsync(
-                $"{_alertmanagerUrl}/api/v2/alerts?active=true&silenced=false&inhibited=false", ct);
+                $"{_prometheusUrl}/api/v1/query_range?query={query}&start={startTime}&end={endTime}&step=300", ct);
             response.EnsureSuccessStatusCode();
 
-            var alerts = await response.Content.ReadFromJsonAsync<List<AlertmanagerAlert>>(ct);
-            return alerts?.Select(a => new AlertSummary
-            {
-                Name = a.Labels?.GetValueOrDefault("alertname") ?? "unknown",
-                Severity = a.Labels?.GetValueOrDefault("severity") ?? "unknown",
-                Instance = a.Labels?.GetValueOrDefault("instance")
-            }).ToList() ?? [];
+            var result = await response.Content.ReadFromJsonAsync<PrometheusQueryRangeResponse>(ct);
+            var alertResults = result?.Data?.Result ?? [];
+
+            // Deduplicate by alertname - each unique alert that fired in the period
+            var alerts = alertResults
+                .Select(r => new AlertSummary
+                {
+                    Name = r.Metric?.GetValueOrDefault("alertname") ?? "unknown",
+                    Severity = r.Metric?.GetValueOrDefault("severity") ?? "unknown",
+                    Instance = r.Metric?.GetValueOrDefault("instance")
+                })
+                .DistinctBy(a => (a.Name, a.Instance))
+                .ToList();
+
+            _logger.LogDebug("Found {Count} alerts in the last 24h", alerts.Count);
+            return alerts;
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to fetch alerts");
+            _logger.LogWarning(ex, "Failed to fetch alerts from Prometheus");
             return [];
         }
     }
@@ -257,11 +268,6 @@ public sealed class SummaryDataAggregator
         return Math.Max(0, Math.Min(100, score));
     }
 
-    private sealed class AlertmanagerAlert
-    {
-        public Dictionary<string, string>? Labels { get; set; }
-    }
-
     private sealed class TrueNASPool
     {
         public string? Name { get; set; }
@@ -298,5 +304,20 @@ public sealed class SummaryDataAggregator
     private sealed class PrometheusResult
     {
         public JsonElement[]? Value { get; set; }
+    }
+
+    private sealed class PrometheusQueryRangeResponse
+    {
+        public PrometheusQueryRangeData? Data { get; set; }
+    }
+
+    private sealed class PrometheusQueryRangeData
+    {
+        public List<PrometheusRangeResult>? Result { get; set; }
+    }
+
+    private sealed class PrometheusRangeResult
+    {
+        public Dictionary<string, string>? Metric { get; set; }
     }
 }
