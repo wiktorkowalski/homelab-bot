@@ -20,6 +20,7 @@ public sealed class DiscordBotService : BackgroundService
     private SlashCommandsExtension? _slashCommands;
     private int _reconnectAttempts;
     private const int MaxReconnectAttempts = 10;
+    private readonly TaskCompletionSource _readyTcs = new();
 
     public DiscordBotService(
         IOptions<BotConfiguration> config,
@@ -35,6 +36,11 @@ public sealed class DiscordBotService : BackgroundService
         _conversationService = conversationService;
         _confirmationService = confirmationService;
         _serviceProvider = serviceProvider;
+    }
+
+    public Task WaitForReadyAsync(CancellationToken ct = default)
+    {
+        return _readyTcs.Task.WaitAsync(ct);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -104,6 +110,7 @@ public sealed class DiscordBotService : BackgroundService
     {
         _logger.LogInformation("Discord bot connected as {Username}#{Discriminator}",
             client.CurrentUser.Username, client.CurrentUser.Discriminator);
+        _readyTcs.TrySetResult();
         return Task.CompletedTask;
     }
 

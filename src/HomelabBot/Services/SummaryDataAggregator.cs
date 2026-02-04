@@ -9,7 +9,7 @@ using Microsoft.Extensions.Options;
 
 namespace HomelabBot.Services;
 
-public sealed class SummaryDataAggregator : IDisposable
+public sealed class SummaryDataAggregator
 {
     private readonly HttpClient _httpClient;
     private readonly ILogger<SummaryDataAggregator> _logger;
@@ -17,7 +17,6 @@ public sealed class SummaryDataAggregator : IDisposable
     private readonly string _prometheusUrl;
     private readonly string _truenasUrl;
     private readonly string? _truenasApiKey;
-    private readonly DockerClient _dockerClient;
 
     public SummaryDataAggregator(
         IHttpClientFactory httpClientFactory,
@@ -32,7 +31,6 @@ public sealed class SummaryDataAggregator : IDisposable
         _prometheusUrl = prometheusConfig.Value.Host.TrimEnd('/');
         _truenasUrl = truenasConfig.Value.Host.TrimEnd('/');
         _truenasApiKey = truenasConfig.Value.ApiKey;
-        _dockerClient = new DockerClientConfiguration(new Uri("unix:///var/run/docker.sock")).CreateClient();
     }
 
     public async Task<DailySummaryData> AggregateAsync(CancellationToken ct = default)
@@ -94,7 +92,10 @@ public sealed class SummaryDataAggregator : IDisposable
     {
         try
         {
-            var containers = await _dockerClient.Containers.ListContainersAsync(
+            using var dockerClient = new DockerClientConfiguration(
+                new Uri("unix:///var/run/docker.sock")).CreateClient();
+
+            var containers = await dockerClient.Containers.ListContainersAsync(
                 new ContainersListParameters { All = true }, ct);
 
             return containers.Select(c => new Models.ContainerStatus
@@ -242,11 +243,6 @@ public sealed class SummaryDataAggregator : IDisposable
             score -= monitoring.DownTargets * 15;
 
         return Math.Max(0, Math.Min(100, score));
-    }
-
-    public void Dispose()
-    {
-        _dockerClient.Dispose();
     }
 
     private sealed class AlertmanagerAlert

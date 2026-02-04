@@ -30,7 +30,9 @@ public sealed class DailySummaryService : BackgroundService
             return;
         }
 
-        _logger.LogInformation("Daily summary service started");
+        _logger.LogInformation("Daily summary service started, waiting for Discord...");
+        await _discordBot.WaitForReadyAsync(stoppingToken);
+        _logger.LogInformation("Discord ready, scheduling daily summaries");
 
         while (!stoppingToken.IsCancellationRequested)
         {
