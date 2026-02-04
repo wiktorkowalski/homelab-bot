@@ -5,7 +5,7 @@ namespace HomelabBot.Services;
 
 public static class SummaryEmbedBuilder
 {
-    public static DiscordEmbed Build(DailySummaryData data)
+    public static DiscordEmbed Build(DailySummaryData data, string? analysis = null)
     {
         var color = data.HealthScore switch
         {
@@ -18,6 +18,12 @@ public static class SummaryEmbedBuilder
             .WithTitle("📊 Daily Homelab Summary")
             .WithColor(color)
             .WithTimestamp(data.GeneratedAt);
+
+        // AI Analysis (if provided)
+        if (!string.IsNullOrWhiteSpace(analysis))
+        {
+            builder.WithDescription(analysis);
+        }
 
         // Alerts
         if (data.Alerts.Count > 0)
