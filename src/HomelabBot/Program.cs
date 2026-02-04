@@ -65,6 +65,9 @@ try
     builder.Services.AddOptions<DailySummaryConfiguration>()
         .Bind(builder.Configuration.GetSection(DailySummaryConfiguration.SectionName));
 
+    builder.Services.AddOptions<AlertWebhookConfiguration>()
+        .Bind(builder.Configuration.GetSection(AlertWebhookConfiguration.SectionName));
+
     // Langfuse/OpenTelemetry
     var langfuseConfig = builder.Configuration.GetSection(LangfuseConfiguration.SectionName).Get<LangfuseConfiguration>();
     if (langfuseConfig is not null)
@@ -131,6 +134,7 @@ try
     builder.Services.AddHostedService(sp => sp.GetRequiredService<DiscordBotService>());
     builder.Services.AddSingleton<SummaryDataAggregator>();
     builder.Services.AddHostedService<DailySummaryService>();
+    builder.Services.AddSingleton<AlertWebhookService>();
 
     // API Controllers
     builder.Services.AddControllers();
