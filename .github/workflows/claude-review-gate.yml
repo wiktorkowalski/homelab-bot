@@ -6,11 +6,14 @@ on:
 
 jobs:
   review-gate:
-    runs-on: [self-hosted, homelab-bot]
+    runs-on: ubuntu-latest
     permissions:
       pull-requests: write
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Process review
         env:
           REVIEWER: ${{ github.event.review.user.login }}
