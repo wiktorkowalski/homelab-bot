@@ -26,6 +26,8 @@ public sealed class HomelabDbContext : DbContext
 
     public DbSet<ToolCallLog> ToolCallLogs => Set<ToolCallLog>();
 
+    public DbSet<AlertEscalation> AlertEscalations => Set<AlertEscalation>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<Knowledge>(entity =>
@@ -82,6 +84,12 @@ public sealed class HomelabDbContext : DbContext
                 .WithMany(i => i.ToolCalls)
                 .HasForeignKey(t => t.LlmInteractionId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<AlertEscalation>(entity =>
+        {
+            entity.HasIndex(e => e.AlertFingerprint);
+            entity.HasIndex(e => e.Status);
         });
     }
 }
