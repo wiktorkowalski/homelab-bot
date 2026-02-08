@@ -31,22 +31,23 @@ public sealed class DailySummaryService : BackgroundService
     {
         _logger.LogInformation("Daily summary service started, waiting for Discord...");
         await _discordBot.WaitForReadyAsync(stoppingToken);
-        _logger.LogInformation("Discord ready, scheduling daily summaries");
+        _logger.LogInformation("Discord ready, daily summary service running");
 
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
+                if (!_config.CurrentValue.Enabled)
+                {
+                    _logger.LogInformation("Daily summary disabled, rechecking in 1 minute");
+                    await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);
+                    continue;
+                }
+
                 var delay = CalculateDelayUntilNextRun();
                 _logger.LogInformation("Next daily summary in {Delay}", delay);
 
                 await Task.Delay(delay, stoppingToken);
-
-                if (!_config.CurrentValue.Enabled)
-                {
-                    _logger.LogInformation("Daily summary disabled, skipping");
-                    continue;
-                }
 
                 await GenerateAndDeliverSummaryAsync(stoppingToken);
             }
