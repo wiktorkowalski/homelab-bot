@@ -11,6 +11,7 @@ public sealed class AlertWebhookService
 {
     private readonly DiscordBotService _discordService;
     private readonly KernelService _kernelService;
+    private readonly AlertEscalationService _escalationService;
     private readonly AlertWebhookConfiguration _config;
     private readonly ILogger<AlertWebhookService> _logger;
 
@@ -21,11 +22,13 @@ public sealed class AlertWebhookService
     public AlertWebhookService(
         DiscordBotService discordService,
         KernelService kernelService,
+        AlertEscalationService escalationService,
         IOptions<AlertWebhookConfiguration> config,
         ILogger<AlertWebhookService> logger)
     {
         _discordService = discordService;
         _kernelService = kernelService;
+        _escalationService = escalationService;
         _config = config.Value;
         _logger = logger;
     }
@@ -87,6 +90,16 @@ public sealed class AlertWebhookService
 
         var embed = BuildAlertEmbed(alert, analysis);
         await _discordService.SendDmAsync(_config.DiscordUserId, embed);
+
+        // Escalation: create for critical firing alerts, auto-resolve on resolved
+        if (alert.IsFiring && alert.Severity.Equals("critical", StringComparison.OrdinalIgnoreCase))
+        {
+            await _escalationService.CreateEscalationAsync(alert);
+        }
+        else if (alert.IsResolved)
+        {
+            await _escalationService.AutoResolveAsync(alert.Fingerprint ?? string.Empty);
+        }
     }
 
     private DiscordEmbed BuildAlertEmbed(AlertmanagerWebhookAlert alert, string analysis)
