@@ -233,6 +233,31 @@ public sealed class KnowledgeService
         await db.SaveChangesAsync();
     }
 
+    public async Task SetConfidenceAsync(string topic, string fact, double confidence)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync();
+
+        var existing = await db.Knowledge
+            .Where(k => k.Topic == topic && k.Fact == fact && k.IsValid)
+            .FirstOrDefaultAsync();
+
+        if (existing != null)
+        {
+            existing.Confidence = Math.Clamp(confidence, 0, 1);
+            await db.SaveChangesAsync();
+        }
+    }
+
+    public async Task<List<Knowledge>> RecallByTopicPrefixAsync(string prefix)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync();
+
+        return await db.Knowledge
+            .Where(k => k.IsValid && k.Topic.StartsWith(prefix))
+            .OrderByDescending(k => k.Confidence)
+            .ToListAsync();
+    }
+
     public async Task<List<string>> GetAllTopicsAsync()
     {
         await using var db = await _dbFactory.CreateDbContextAsync();

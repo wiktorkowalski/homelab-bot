@@ -271,24 +271,36 @@ public sealed class DiscordBotService : BackgroundService
 
     public async Task SendDmAsync(ulong userId, DiscordEmbed embed)
     {
+        var dm = await GetDmChannelAsync(userId);
+        if (dm != null)
+            await dm.SendMessageAsync(embed: embed);
+    }
+
+    public async Task SendDmAsync(ulong userId, string message)
+    {
+        var dm = await GetDmChannelAsync(userId);
+        if (dm != null)
+            await dm.SendMessageAsync(message);
+    }
+
+    private async Task<DiscordDmChannel?> GetDmChannelAsync(ulong userId)
+    {
         if (_client == null)
         {
             _logger.LogWarning("Cannot send DM: Discord client not connected");
-            return;
+            return null;
         }
 
         try
         {
-            // Find user in any guild the bot is in
             foreach (var guild in _client.Guilds.Values)
             {
                 try
                 {
                     var member = await guild.GetMemberAsync(userId);
                     var dm = await member.CreateDmChannelAsync();
-                    await dm.SendMessageAsync(embed: embed);
-                    _logger.LogDebug("Sent DM to user {UserId}", userId);
-                    return;
+                    _logger.LogDebug("Found DM channel for user {UserId}", userId);
+                    return dm;
                 }
                 catch (Exception ex)
                 {
@@ -299,8 +311,10 @@ public sealed class DiscordBotService : BackgroundService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to send DM to user {UserId}", userId);
+            _logger.LogError(ex, "Failed to find DM channel for user {UserId}", userId);
         }
+
+        return null;
     }
 
     public override async Task StopAsync(CancellationToken cancellationToken)

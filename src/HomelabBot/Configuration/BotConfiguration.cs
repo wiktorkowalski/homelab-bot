@@ -100,3 +100,14 @@ public sealed class AlertWebhookConfiguration
 
     public ulong DiscordUserId { get; init; }
 }
+
+public sealed class KnowledgeRefreshConfiguration
+{
+    public const string SectionName = "KnowledgeRefresh";
+
+    public bool Enabled { get; init; } = false;
+    public string ScheduleTime { get; init; } = "03:00";
+    public string TimeZone { get; init; } = "Europe/Warsaw";
+    public bool NotifyOnChanges { get; init; } = false;
+    public ulong DiscordUserId { get; init; }
+}

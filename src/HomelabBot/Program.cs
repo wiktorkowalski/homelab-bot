@@ -68,6 +68,9 @@ try
     builder.Services.AddOptions<AlertWebhookConfiguration>()
         .Bind(builder.Configuration.GetSection(AlertWebhookConfiguration.SectionName));
 
+    builder.Services.AddOptions<KnowledgeRefreshConfiguration>()
+        .Bind(builder.Configuration.GetSection(KnowledgeRefreshConfiguration.SectionName));
+
     // Langfuse/OpenTelemetry
     var langfuseConfig = builder.Configuration.GetSection(LangfuseConfiguration.SectionName).Get<LangfuseConfiguration>();
     if (langfuseConfig is not null)
@@ -135,6 +138,7 @@ try
     builder.Services.AddSingleton<SummaryDataAggregator>();
     builder.Services.AddHostedService<DailySummaryService>();
     builder.Services.AddSingleton<AlertWebhookService>();
+    builder.Services.AddHostedService<KnowledgeRefreshService>();
 
     // API Controllers
     builder.Services.AddControllers();

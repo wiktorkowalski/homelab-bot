@@ -6,6 +6,7 @@ on:
 
 jobs:
   review-gate:
+    if: github.event.review.user.login == 'claude[bot]'
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
