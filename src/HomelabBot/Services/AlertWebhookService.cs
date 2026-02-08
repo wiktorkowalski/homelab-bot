@@ -96,9 +96,9 @@ public sealed class AlertWebhookService
         {
             await _escalationService.CreateEscalationAsync(alert);
         }
-        else if (alert.IsResolved)
+        else if (alert.IsResolved && !string.IsNullOrEmpty(alert.Fingerprint))
         {
-            await _escalationService.AutoResolveAsync(alert.Fingerprint ?? string.Empty);
+            await _escalationService.AutoResolveAsync(alert.Fingerprint);
         }
     }
 

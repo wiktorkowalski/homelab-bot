@@ -18,6 +18,7 @@ public sealed class DiscordVoiceService : BackgroundService
 
     private readonly ConcurrentDictionary<uint, UserAudioBuffer> _userBuffers = new();
     private readonly SemaphoreSlim _playbackLock = new(1, 1);
+    private readonly SemaphoreSlim _processingLimit = new(3, 3);
     private VoiceNextConnection? _connection;
     private VoiceTransmitSink? _transmitSink;
 
@@ -153,6 +154,12 @@ public sealed class DiscordVoiceService : BackgroundService
 
             _ = Task.Run(async () =>
             {
+                if (!await _processingLimit.WaitAsync(0, ct))
+                {
+                    _logger.LogWarning("Processing limit reached, discarding audio from SSRC {Ssrc}", ssrc);
+                    return;
+                }
+
                 try
                 {
                     await ProcessAudioAsync(ssrc, pcmData, ct);
@@ -160,6 +167,10 @@ public sealed class DiscordVoiceService : BackgroundService
                 catch (Exception ex)
                 {
                     _logger.LogError(ex, "Unhandled exception processing audio from SSRC {Ssrc}", ssrc);
+                }
+                finally
+                {
+                    _processingLimit.Release();
                 }
             }, ct);
         }

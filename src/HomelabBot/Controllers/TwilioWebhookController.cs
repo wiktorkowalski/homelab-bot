@@ -33,6 +33,9 @@ public sealed class TwilioWebhookController : ControllerBase
     [HttpGet("alert-twiml")]
     public async Task<IActionResult> GetAlertTwiml([FromQuery] int escalationId)
     {
+        if (!ValidateTwilioRequest())
+            return Unauthorized();
+
         await using var db = await _dbFactory.CreateDbContextAsync();
         var escalation = await db.Set<AlertEscalation>().FindAsync(escalationId);
 
@@ -48,7 +51,8 @@ public sealed class TwilioWebhookController : ControllerBase
             return Content(notFoundXml, "application/xml");
         }
 
-        var gatherUrl = $"{Request.Scheme}://{Request.Host}/api/twilio/gather-response?escalationId={escalationId}";
+        var baseUrl = _twilioConfig.WebhookBaseUrl.TrimEnd('/');
+        var gatherUrl = $"{baseUrl}/api/twilio/gather-response?escalationId={escalationId}";
 
         var twiml = $"""
             <?xml version="1.0" encoding="UTF-8"?>
@@ -116,9 +120,11 @@ public sealed class TwilioWebhookController : ControllerBase
             return false;
 
         var validator = new RequestValidator(_twilioConfig.AuthToken);
-        var url = $"{Request.Scheme}://{Request.Host}{Request.Path}{Request.QueryString}";
-        var parameters = Request.Form.ToDictionary(x => x.Key, x => x.Value.ToString());
+        var requestUrl = $"{_twilioConfig.WebhookBaseUrl.TrimEnd('/')}{Request.Path}{Request.QueryString}";
+        var parameters = Request.HasFormContentType
+            ? Request.Form.ToDictionary(x => x.Key, x => x.Value.ToString())
+            : new Dictionary<string, string>();
 
-        return validator.Validate(url, parameters, signature);
+        return validator.Validate(requestUrl, parameters, signature);
     }
 }

@@ -58,11 +58,28 @@ public sealed class AlertEscalationService : BackgroundService
 
     public async Task CreateEscalationAsync(AlertmanagerWebhookAlert alert)
     {
+        if (string.IsNullOrEmpty(alert.Fingerprint))
+        {
+            _logger.LogWarning("Skipping escalation for alert {AlertName}: no fingerprint", alert.AlertName);
+            return;
+        }
+
         await using var db = await _dbFactory.CreateDbContextAsync();
+
+        // Deduplicate: skip if a pending/in-progress escalation already exists for this fingerprint
+        var existing = await db.Set<AlertEscalation>()
+            .AnyAsync(e => e.AlertFingerprint == alert.Fingerprint
+                && (e.Status == EscalationStatus.Pending || e.Status == EscalationStatus.PhoneCallPlaced));
+
+        if (existing)
+        {
+            _logger.LogInformation("Escalation already exists for fingerprint {Fingerprint}, skipping", alert.Fingerprint);
+            return;
+        }
 
         var escalation = new AlertEscalation
         {
-            AlertFingerprint = alert.Fingerprint ?? string.Empty,
+            AlertFingerprint = alert.Fingerprint,
             AlertName = alert.AlertName,
             Severity = alert.Severity,
             Description = alert.Description ?? alert.Summary

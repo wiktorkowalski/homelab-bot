@@ -1,19 +1,24 @@
 using DSharpPlus.Entities;
 using DSharpPlus.SlashCommands;
+using HomelabBot.Configuration;
 using HomelabBot.Services.Voice;
+using Microsoft.Extensions.Options;
 
 namespace HomelabBot.Commands;
 
 public class VoiceCommands : ApplicationCommandModule
 {
     private readonly DiscordVoiceService _voiceService;
+    private readonly VoiceConfiguration _voiceConfig;
     private readonly ILogger<VoiceCommands> _logger;
 
     public VoiceCommands(
         DiscordVoiceService voiceService,
+        IOptions<VoiceConfiguration> voiceConfig,
         ILogger<VoiceCommands> logger)
     {
         _voiceService = voiceService;
+        _voiceConfig = voiceConfig.Value;
         _logger = logger;
     }
 
@@ -26,6 +31,13 @@ public class VoiceCommands : ApplicationCommandModule
 
         try
         {
+            if (!_voiceConfig.Enabled)
+            {
+                await ctx.EditResponseAsync(new DiscordWebhookBuilder()
+                    .WithContent("Voice features are disabled."));
+                return;
+            }
+
             var targetChannel = channel ?? ctx.Member?.VoiceState?.Channel;
             if (targetChannel == null)
             {

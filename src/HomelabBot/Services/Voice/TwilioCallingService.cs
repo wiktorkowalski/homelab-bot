@@ -11,7 +11,7 @@ public sealed class TwilioCallingService
     private static readonly object InitLock = new();
     private readonly IOptionsMonitor<TwilioConfiguration> _config;
     private readonly ILogger<TwilioCallingService> _logger;
-    private bool _initialized;
+    private volatile bool _initialized;
 
     public TwilioCallingService(
         IOptionsMonitor<TwilioConfiguration> config,
