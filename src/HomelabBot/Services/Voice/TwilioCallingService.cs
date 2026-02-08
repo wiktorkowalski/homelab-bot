@@ -8,6 +8,7 @@ namespace HomelabBot.Services.Voice;
 
 public sealed class TwilioCallingService
 {
+    private static readonly object InitLock = new();
     private readonly IOptionsMonitor<TwilioConfiguration> _config;
     private readonly ILogger<TwilioCallingService> _logger;
     private bool _initialized;
@@ -23,9 +24,13 @@ public sealed class TwilioCallingService
     private void EnsureInitialized()
     {
         if (_initialized) return;
-        var cfg = _config.CurrentValue;
-        TwilioClient.Init(cfg.AccountSid, cfg.AuthToken);
-        _initialized = true;
+        lock (InitLock)
+        {
+            if (_initialized) return;
+            var cfg = _config.CurrentValue;
+            TwilioClient.Init(cfg.AccountSid, cfg.AuthToken);
+            _initialized = true;
+        }
     }
 
     public async Task<string?> InitiateAlertCallAsync(int escalationId)

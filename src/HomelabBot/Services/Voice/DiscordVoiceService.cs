@@ -151,7 +151,17 @@ public sealed class DiscordVoiceService : BackgroundService
                 continue;
             }
 
-            _ = ProcessAudioAsync(ssrc, pcmData, ct);
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await ProcessAudioAsync(ssrc, pcmData, ct);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Unhandled exception processing audio from SSRC {Ssrc}", ssrc);
+                }
+            }, ct);
         }
     }
 

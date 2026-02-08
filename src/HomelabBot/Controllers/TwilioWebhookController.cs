@@ -1,8 +1,11 @@
+using HomelabBot.Configuration;
 using HomelabBot.Data;
 using HomelabBot.Data.Entities;
 using HomelabBot.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
+using Twilio.Security;
 
 namespace HomelabBot.Controllers;
 
@@ -12,15 +15,18 @@ public sealed class TwilioWebhookController : ControllerBase
 {
     private readonly AlertEscalationService _escalationService;
     private readonly IDbContextFactory<HomelabDbContext> _dbFactory;
+    private readonly TwilioConfiguration _twilioConfig;
     private readonly ILogger<TwilioWebhookController> _logger;
 
     public TwilioWebhookController(
         AlertEscalationService escalationService,
         IDbContextFactory<HomelabDbContext> dbFactory,
+        IOptions<TwilioConfiguration> twilioConfig,
         ILogger<TwilioWebhookController> logger)
     {
         _escalationService = escalationService;
         _dbFactory = dbFactory;
+        _twilioConfig = twilioConfig.Value;
         _logger = logger;
     }
 
@@ -62,6 +68,9 @@ public sealed class TwilioWebhookController : ControllerBase
     [HttpPost("gather-response")]
     public async Task<IActionResult> HandleGatherResponse([FromQuery] int escalationId, [FromForm] string digits)
     {
+        if (!ValidateTwilioRequest())
+            return Unauthorized();
+
         _logger.LogInformation("DTMF response for escalation {EscalationId}: {Digits}", escalationId, digits);
 
         string responseXml;
@@ -93,7 +102,23 @@ public sealed class TwilioWebhookController : ControllerBase
     [HttpPost("call-status")]
     public IActionResult HandleCallStatus([FromForm] string callSid, [FromForm] string callStatus)
     {
+        if (!ValidateTwilioRequest())
+            return Unauthorized();
+
         _logger.LogInformation("Call status update: SID={CallSid}, Status={Status}", callSid, callStatus);
         return Ok();
+    }
+
+    private bool ValidateTwilioRequest()
+    {
+        var signature = Request.Headers["X-Twilio-Signature"].FirstOrDefault();
+        if (string.IsNullOrEmpty(signature))
+            return false;
+
+        var validator = new RequestValidator(_twilioConfig.AuthToken);
+        var url = $"{Request.Scheme}://{Request.Host}{Request.Path}{Request.QueryString}";
+        var parameters = Request.Form.ToDictionary(x => x.Key, x => x.Value.ToString());
+
+        return validator.Validate(url, parameters, signature);
     }
 }
