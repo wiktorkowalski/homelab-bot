@@ -196,4 +196,169 @@ public class KnowledgeServiceTests : IClassFixture<DatabaseFixture>
         // Assert
         Assert.Empty(prompt);
     }
+
+    // --- SetConfidenceAsync tests ---
+
+    [Fact]
+    public async Task SetConfidence_UpdatesExistingFact()
+    {
+        // Arrange
+        var topic = $"confidence-set-{Guid.NewGuid()}";
+        var fact = await _service.RememberFactAsync(topic, "some fact", confidence: 0.9);
+
+        // Act
+        await _service.SetConfidenceAsync(topic, "some fact", 0.5);
+
+        // Assert
+        using var db = _fixture.DbContextFactory.CreateDbContext();
+        var updated = await db.Knowledge.FindAsync(fact.Id);
+        Assert.Equal(0.5, updated!.Confidence);
+    }
+
+    [Fact]
+    public async Task SetConfidence_ClampsToValidRange()
+    {
+        // Arrange
+        var topic = $"confidence-clamp-{Guid.NewGuid()}";
+        await _service.RememberFactAsync(topic, "high", confidence: 0.5);
+        await _service.RememberFactAsync(topic, "low", confidence: 0.5);
+
+        // Act
+        await _service.SetConfidenceAsync(topic, "high", 1.5);
+        await _service.SetConfidenceAsync(topic, "low", -0.5);
+
+        // Assert
+        using var db = _fixture.DbContextFactory.CreateDbContext();
+        var high = db.Knowledge.First(k => k.Topic == topic && k.Fact == "high");
+        var low = db.Knowledge.First(k => k.Topic == topic && k.Fact == "low");
+        Assert.Equal(1.0, high.Confidence);
+        Assert.Equal(0.0, low.Confidence);
+    }
+
+    [Fact]
+    public async Task SetConfidence_DoesNothingForMissingFact()
+    {
+        // Act & Assert - should not throw
+        await _service.SetConfidenceAsync("nonexistent-topic", "nonexistent fact", 0.5);
+    }
+
+    [Fact]
+    public async Task SetConfidence_DoesNotUpdateInvalidatedFact()
+    {
+        // Arrange
+        var topic = $"confidence-invalid-{Guid.NewGuid()}";
+        var fact = await _service.RememberFactAsync(topic, "will invalidate", confidence: 0.8);
+        await _service.InvalidateAsync(topic, "will invalidate");
+
+        // Act
+        await _service.SetConfidenceAsync(topic, "will invalidate", 0.5);
+
+        // Assert - confidence should remain at 0.8 (fact is IsValid=false, not found by query)
+        using var db = _fixture.DbContextFactory.CreateDbContext();
+        var result = await db.Knowledge.FindAsync(fact.Id);
+        Assert.False(result!.IsValid);
+        Assert.Equal(0.8, result.Confidence);
+    }
+
+    [Fact]
+    public async Task SetConfidence_DoesNotUpdateLastVerified()
+    {
+        // Arrange
+        var topic = $"confidence-noverify-{Guid.NewGuid()}";
+        var fact = await _service.RememberFactAsync(topic, "stable fact", confidence: 0.9);
+        var originalVerified = fact.LastVerified;
+
+        // Small delay to ensure time difference
+        await Task.Delay(50);
+
+        // Act
+        await _service.SetConfidenceAsync(topic, "stable fact", 0.6);
+
+        // Assert
+        using var db = _fixture.DbContextFactory.CreateDbContext();
+        var updated = await db.Knowledge.FindAsync(fact.Id);
+        Assert.Equal(originalVerified, updated!.LastVerified);
+    }
+
+    // --- RecallByTopicPrefixAsync tests ---
+
+    [Fact]
+    public async Task RecallByTopicPrefix_ReturnsMatchingFacts()
+    {
+        // Arrange
+        var prefix = $"prefix-{Guid.NewGuid()}";
+        await _service.RememberFactAsync($"{prefix}:alpha", "fact alpha");
+        await _service.RememberFactAsync($"{prefix}:beta", "fact beta");
+        await _service.RememberFactAsync("other:gamma", "fact gamma");
+
+        // Act
+        var results = await _service.RecallByTopicPrefixAsync($"{prefix}:");
+
+        // Assert
+        Assert.Equal(2, results.Count);
+        Assert.All(results, r => Assert.StartsWith(prefix, r.Topic));
+    }
+
+    [Fact]
+    public async Task RecallByTopicPrefix_ExcludesInvalidatedFacts()
+    {
+        // Arrange
+        var prefix = $"prefix-inv-{Guid.NewGuid()}";
+        await _service.RememberFactAsync($"{prefix}:one", "valid fact");
+        await _service.RememberFactAsync($"{prefix}:two", "will invalidate");
+        await _service.InvalidateAsync($"{prefix}:two", "will invalidate");
+
+        // Act
+        var results = await _service.RecallByTopicPrefixAsync($"{prefix}:");
+
+        // Assert
+        Assert.Single(results);
+        Assert.Equal("valid fact", results[0].Fact);
+    }
+
+    [Fact]
+    public async Task RecallByTopicPrefix_ReturnsEmptyForNonMatchingPrefix()
+    {
+        // Act
+        var results = await _service.RecallByTopicPrefixAsync("zzz-nonexistent:");
+
+        // Assert
+        Assert.Empty(results);
+    }
+
+    [Fact]
+    public async Task RecallByTopicPrefix_OrdersByConfidenceDescending()
+    {
+        // Arrange
+        var prefix = $"prefix-order-{Guid.NewGuid()}";
+        await _service.RememberFactAsync($"{prefix}:low", "low conf", confidence: 0.3);
+        await _service.RememberFactAsync($"{prefix}:high", "high conf", confidence: 0.95);
+        await _service.RememberFactAsync($"{prefix}:mid", "mid conf", confidence: 0.6);
+
+        // Act
+        var results = await _service.RecallByTopicPrefixAsync($"{prefix}:");
+
+        // Assert
+        Assert.Equal(3, results.Count);
+        Assert.Equal("high conf", results[0].Fact);
+        Assert.Equal("mid conf", results[1].Fact);
+        Assert.Equal("low conf", results[2].Fact);
+    }
+
+    [Fact]
+    public async Task RecallByTopicPrefix_DoesNotUpdateLastUsed()
+    {
+        // Arrange
+        var prefix = $"prefix-nouse-{Guid.NewGuid()}";
+        var fact = await _service.RememberFactAsync($"{prefix}:item", "no-touch fact");
+        Assert.Null(fact.LastUsed);
+
+        // Act
+        var results = await _service.RecallByTopicPrefixAsync($"{prefix}:");
+
+        // Assert
+        using var db = _fixture.DbContextFactory.CreateDbContext();
+        var loaded = await db.Knowledge.FindAsync(results[0].Id);
+        Assert.Null(loaded!.LastUsed);
+    }
 }
