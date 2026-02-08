@@ -29,12 +29,6 @@ public sealed class DailySummaryService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        if (!_config.CurrentValue.Enabled)
-        {
-            _logger.LogInformation("Daily summary is disabled");
-            return;
-        }
-
         _logger.LogInformation("Daily summary service started, waiting for Discord...");
         await _discordBot.WaitForReadyAsync(stoppingToken);
         _logger.LogInformation("Discord ready, scheduling daily summaries");
