@@ -11,6 +11,7 @@ public class HomeLabCommands : ApplicationCommandModule
     private readonly DockerPlugin _dockerPlugin;
     private readonly KnowledgePlugin _knowledgePlugin;
     private readonly KernelService _kernelService;
+    private readonly ConversationService _conversationService;
     private readonly SummaryDataAggregator _summaryAggregator;
     private readonly ILogger<HomeLabCommands> _logger;
 
@@ -18,12 +19,14 @@ public class HomeLabCommands : ApplicationCommandModule
         DockerPlugin dockerPlugin,
         KnowledgePlugin knowledgePlugin,
         KernelService kernelService,
+        ConversationService conversationService,
         SummaryDataAggregator summaryAggregator,
         ILogger<HomeLabCommands> logger)
     {
         _dockerPlugin = dockerPlugin;
         _knowledgePlugin = knowledgePlugin;
         _kernelService = kernelService;
+        _conversationService = conversationService;
         _summaryAggregator = summaryAggregator;
         _logger = logger;
     }
@@ -317,12 +320,15 @@ public class HomeLabCommands : ApplicationCommandModule
     {
         await ctx.DeferAsync();
 
+        // Use a unique thread ID so systemPromptOverride is always applied
+        var threadId = (ulong)DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
         try
         {
             _logger.LogInformation("Healthcheck command invoked by {User}", ctx.User.Username);
 
             var response = await _kernelService.ProcessMessageAsync(
-                ctx.Channel.Id,
+                threadId,
                 HealthcheckPrompts.Investigation,
                 ctx.User.Id,
                 TraceType.Scheduled,
@@ -337,6 +343,10 @@ public class HomeLabCommands : ApplicationCommandModule
             _logger.LogError(ex, "Error in healthcheck command");
             await ctx.EditResponseAsync(new DiscordWebhookBuilder()
                 .WithContent($"Error running healthcheck: {ex.Message}"));
+        }
+        finally
+        {
+            _conversationService.ClearHistory(threadId);
         }
     }
 
