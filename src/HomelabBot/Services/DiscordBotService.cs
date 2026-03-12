@@ -283,6 +283,17 @@ public sealed class DiscordBotService : BackgroundService
             await dm.SendMessageAsync(message);
     }
 
+    public async Task SendDmFileAsync(ulong userId, string content, string filename)
+    {
+        var dm = await GetDmChannelAsync(userId);
+        if (dm == null) return;
+
+        using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(content));
+        var message = new DiscordMessageBuilder()
+            .AddFile(filename, stream);
+        await dm.SendMessageAsync(message);
+    }
+
     private async Task<DiscordDmChannel?> GetDmChannelAsync(ulong userId)
     {
         if (_client == null)

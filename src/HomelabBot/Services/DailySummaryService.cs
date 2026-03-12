@@ -1,6 +1,4 @@
-using System.Text.Json;
 using HomelabBot.Configuration;
-using HomelabBot.Models;
 using Microsoft.Extensions.Options;
 
 namespace HomelabBot.Services;
@@ -8,30 +6,30 @@ namespace HomelabBot.Services;
 public sealed class DailySummaryService : BackgroundService
 {
     private readonly IOptionsMonitor<DailySummaryConfiguration> _config;
-    private readonly SummaryDataAggregator _aggregator;
     private readonly KernelService _kernelService;
+    private readonly ConversationService _conversationService;
     private readonly DiscordBotService _discordBot;
     private readonly ILogger<DailySummaryService> _logger;
 
     public DailySummaryService(
         IOptionsMonitor<DailySummaryConfiguration> config,
-        SummaryDataAggregator aggregator,
         KernelService kernelService,
+        ConversationService conversationService,
         DiscordBotService discordBot,
         ILogger<DailySummaryService> logger)
     {
         _config = config;
-        _aggregator = aggregator;
         _kernelService = kernelService;
+        _conversationService = conversationService;
         _discordBot = discordBot;
         _logger = logger;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _logger.LogInformation("Daily summary service started, waiting for Discord...");
+        _logger.LogInformation("Daily healthcheck service started, waiting for Discord...");
         await _discordBot.WaitForReadyAsync(stoppingToken);
-        _logger.LogInformation("Discord ready, daily summary service running");
+        _logger.LogInformation("Discord ready, daily healthcheck service running");
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -39,17 +37,17 @@ public sealed class DailySummaryService : BackgroundService
             {
                 if (!_config.CurrentValue.Enabled)
                 {
-                    _logger.LogInformation("Daily summary disabled, rechecking in 1 minute");
+                    _logger.LogInformation("Daily healthcheck disabled, rechecking in 1 minute");
                     await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);
                     continue;
                 }
 
                 var delay = CalculateDelayUntilNextRun();
-                _logger.LogInformation("Next daily summary in {Delay}", delay);
+                _logger.LogInformation("Next daily healthcheck in {Delay}", delay);
 
                 await Task.Delay(delay, stoppingToken);
 
-                await GenerateAndDeliverSummaryAsync(stoppingToken);
+                await GenerateAndDeliverHealthcheckAsync(stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -57,7 +55,7 @@ public sealed class DailySummaryService : BackgroundService
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error in daily summary service");
+                _logger.LogError(ex, "Error in daily healthcheck service");
                 await Task.Delay(TimeSpan.FromMinutes(5), stoppingToken);
             }
         }
@@ -94,13 +92,9 @@ public sealed class DailySummaryService : BackgroundService
         return nextRunUtc - nowUtc;
     }
 
-    private async Task GenerateAndDeliverSummaryAsync(CancellationToken ct)
+    private async Task GenerateAndDeliverHealthcheckAsync(CancellationToken ct)
     {
-        _logger.LogInformation("Generating daily summary");
-
-        var data = await _aggregator.AggregateAsync(ct);
-        var analysis = await GenerateAnalysisAsync(data);
-        var embed = SummaryEmbedBuilder.Build(data, analysis);
+        _logger.LogInformation("Starting daily healthcheck investigation");
 
         var userId = _config.CurrentValue.DiscordUserId;
         if (userId == 0)
@@ -109,41 +103,39 @@ public sealed class DailySummaryService : BackgroundService
             return;
         }
 
-        await _discordBot.SendDmAsync(userId, embed);
-        _logger.LogInformation("Daily summary delivered to user {UserId}", userId);
-    }
+        // Use a unique thread ID to avoid conversation history buildup
+        var threadId = (ulong)DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
-    private async Task<string?> GenerateAnalysisAsync(DailySummaryData data)
-    {
         try
         {
-            var prompt = $"""
-                Analyze this homelab status and provide a brief 2-3 sentence summary.
-                Focus on anything noteworthy: issues, warnings, recommendations.
-                If everything looks good, say so briefly.
-                Be concise and direct. No greetings or fluff.
+            var report = await _kernelService.ProcessMessageAsync(
+                threadId: threadId,
+                userMessage: HealthcheckPrompts.Investigation,
+                traceType: TraceType.Scheduled,
+                maxTokens: HealthcheckPrompts.MaxTokens,
+                systemPromptOverride: HealthcheckPrompts.System,
+                ct: ct);
 
-                Data:
-                - Health Score: {data.HealthScore}/100
-                - Alerts (last 24h): {data.Alerts.Count} ({data.Alerts.Count(a => a.Severity == "critical")} critical, {data.Alerts.Count(a => a.Severity == "warning")} warning)
-                {(data.Alerts.Count > 0 ? "  Names: " + string.Join(", ", data.Alerts.Take(5).Select(a => a.Name)) : "")}
-                - Containers: {data.Containers.Count(c => c.State == "running")} running, {data.Containers.Count(c => c.State != "running")} stopped
-                {(data.Containers.Any(c => c.State != "running") ? "  Stopped: " + string.Join(", ", data.Containers.Where(c => c.State != "running").Take(5).Select(c => c.Name)) : "")}
-                - Storage Pools: {string.Join(", ", data.Pools.Select(p => $"{p.Name}: {p.Health} ({p.UsedPercent:F0}%)"))}
-                - Router: {(data.Router != null ? $"CPU {data.Router.CpuPercent:F0}%, Mem {data.Router.MemoryPercent:F0}%, Up {data.Router.Uptime.Days}d" : "unavailable")}
-                - Monitoring: {(data.Monitoring != null ? $"{data.Monitoring.UpTargets}/{data.Monitoring.TotalTargets} targets up" : "unavailable")}
-                """;
+            if (report.Length > 1900)
+            {
+                var date = DateTime.UtcNow.ToString("yyyy-MM-dd");
+                await _discordBot.SendDmFileAsync(userId, report, $"healthcheck-{date}.md");
+            }
+            else
+            {
+                await _discordBot.SendDmAsync(userId, report);
+            }
 
-            var response = await _kernelService.ProcessMessageAsync(
-                threadId: 0,
-                userMessage: prompt);
-
-            return response.Length > 500 ? response[..500] + "..." : response;
+            _logger.LogInformation("Daily healthcheck delivered to user {UserId}", userId);
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to generate AI analysis");
-            return null;
+            _logger.LogError(ex, "Failed to generate daily healthcheck");
+        }
+        finally
+        {
+            // Clean up ephemeral conversation history to prevent memory leak
+            _conversationService.ClearHistory(threadId);
         }
     }
 }

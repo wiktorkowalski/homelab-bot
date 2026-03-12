@@ -130,18 +130,8 @@ public class HomeLabCommands : ApplicationCommandModule
 
             var logs = await _dockerPlugin.GetContainerLogs(containerName, (int)lines);
 
-            // Discord has 2000 char limit, send as file if too long
-            if (logs.Length > 1900)
-            {
-                using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(logs));
-                await ctx.EditResponseAsync(new DiscordWebhookBuilder()
-                    .WithContent($"Logs for **{containerName}** (last {lines} lines):")
-                    .AddFile($"{containerName}-logs.txt", stream));
-            }
-            else
-            {
-                await ctx.EditResponseAsync(new DiscordWebhookBuilder().WithContent(logs));
-            }
+            await EditResponseWithContentOrFileAsync(ctx, logs, $"{containerName}-logs.txt",
+                $"Logs for **{containerName}** (last {lines} lines):");
         }
         catch (Exception ex)
         {
@@ -258,24 +248,8 @@ public class HomeLabCommands : ApplicationCommandModule
                 ctx.Channel.Id,
                 prompt);
 
-            if (response.Length > 1900)
-            {
-                using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(response));
-                await ctx.EditResponseAsync(new DiscordWebhookBuilder()
-                    .WithContent($"Discovery ({scope}) complete. See attached:")
-                    .AddFile("discovery.txt", stream));
-            }
-            else
-            {
-                var embed = new DiscordEmbedBuilder()
-                    .WithTitle($"Discovery: {scope}")
-                    .WithDescription(response)
-                    .WithColor(DiscordColor.Azure)
-                    .WithTimestamp(DateTimeOffset.UtcNow)
-                    .Build();
-
-                await ctx.EditResponseAsync(new DiscordWebhookBuilder().AddEmbed(embed));
-            }
+            await EditResponseWithContentOrFileAsync(ctx, response, "discovery.txt",
+                $"Discovery ({scope}) complete. See attached:");
         }
         catch (Exception ex)
         {
@@ -335,6 +309,34 @@ public class HomeLabCommands : ApplicationCommandModule
             _logger.LogError(ex, "Error in summary command");
             await ctx.EditResponseAsync(new DiscordWebhookBuilder()
                 .WithContent($"Error generating summary: {ex.Message}"));
+        }
+    }
+
+    [SlashCommand("healthcheck", "Run a comprehensive healthcheck investigation")]
+    public async Task HealthcheckCommand(InteractionContext ctx)
+    {
+        await ctx.DeferAsync();
+
+        try
+        {
+            _logger.LogInformation("Healthcheck command invoked by {User}", ctx.User.Username);
+
+            var response = await _kernelService.ProcessMessageAsync(
+                ctx.Channel.Id,
+                HealthcheckPrompts.Investigation,
+                ctx.User.Id,
+                TraceType.Scheduled,
+                maxTokens: HealthcheckPrompts.MaxTokens,
+                systemPromptOverride: HealthcheckPrompts.System);
+
+            await EditResponseWithContentOrFileAsync(ctx, response, "healthcheck.md",
+                "Healthcheck complete. See attached report:");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in healthcheck command");
+            await ctx.EditResponseAsync(new DiscordWebhookBuilder()
+                .WithContent($"Error running healthcheck: {ex.Message}"));
         }
     }
 
@@ -406,6 +408,23 @@ public class HomeLabCommands : ApplicationCommandModule
             _logger.LogError(ex, "Error in randomfact command");
             await ctx.EditResponseAsync(new DiscordWebhookBuilder()
                 .WithContent($"Error getting random fact: {ex.Message}"));
+        }
+    }
+
+    private static async Task EditResponseWithContentOrFileAsync(
+        InteractionContext ctx, string content, string filename, string preamble = "")
+    {
+        if (content.Length > 1900)
+        {
+            using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(content));
+            var builder = new DiscordWebhookBuilder().AddFile(filename, stream);
+            if (!string.IsNullOrEmpty(preamble))
+                builder.WithContent(preamble);
+            await ctx.EditResponseAsync(builder);
+        }
+        else
+        {
+            await ctx.EditResponseAsync(new DiscordWebhookBuilder().WithContent(content));
         }
     }
 

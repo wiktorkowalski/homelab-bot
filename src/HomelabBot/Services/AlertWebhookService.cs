@@ -78,7 +78,7 @@ public sealed class AlertWebhookService
                 prompt,
                 _config.DiscordUserId,
                 TraceType.Scheduled,
-                ct);
+                ct: ct);
         }
         else
         {
