@@ -21,6 +21,10 @@ public sealed class KernelService
 {
     private static readonly ActivitySource ActivitySource = new("HomelabBot.Chat");
 
+    private static readonly Regex ThinkingBlockRegex = new(
+        @"<(think|thinking|reasoning|reflection)>[\s\S]*?</\1>",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
     private static readonly Dictionary<TraceType, (string Name, string[] Tags)> TraceConfig = new()
     {
         [TraceType.Chat] = ("Chat", ["homelab", "discord"]),
@@ -194,6 +198,8 @@ public sealed class KernelService
         string userMessage,
         ulong? userId = null,
         TraceType traceType = TraceType.Chat,
+        int? maxTokens = null,
+        string? systemPromptOverride = null,
         CancellationToken ct = default)
     {
         var (traceName, traceTags) = TraceConfig[traceType];
@@ -211,7 +217,8 @@ public sealed class KernelService
         }
 
         var sw = Stopwatch.StartNew();
-        var history = _conversationService.GetOrCreateHistory(threadId, SystemPrompt);
+        var systemPrompt = systemPromptOverride ?? SystemPrompt;
+        var history = _conversationService.GetOrCreateHistory(threadId, systemPrompt);
         _conversationService.AddUserMessage(threadId, userMessage);
 
         var historyJson = JsonSerializer.Serialize(history.Select(m => new { m.Role, Content = m.Content }));
@@ -226,7 +233,7 @@ public sealed class KernelService
         var settings = new OpenAIPromptExecutionSettings
         {
             Temperature = 0.7,
-            MaxTokens = 2048,
+            MaxTokens = maxTokens ?? 2048,
             ToolCallBehavior = ToolCallBehavior.AutoInvokeKernelFunctions
         };
 
@@ -279,25 +286,8 @@ public sealed class KernelService
     private static string StripThinkingBlocks(string text)
     {
         if (string.IsNullOrEmpty(text))
-        {
             return text;
-        }
 
-        // Strip various thinking block formats used by different models
-        // <think>...</think>, <thinking>...</thinking>, <reasoning>...</reasoning>
-        var patterns = new[]
-        {
-            @"<think>[\s\S]*?</think>",
-            @"<thinking>[\s\S]*?</thinking>",
-            @"<reasoning>[\s\S]*?</reasoning>",
-            @"<reflection>[\s\S]*?</reflection>"
-        };
-
-        foreach (var pattern in patterns)
-        {
-            text = Regex.Replace(text, pattern, "", RegexOptions.IgnoreCase);
-        }
-
-        return text.Trim();
+        return ThinkingBlockRegex.Replace(text, "").Trim();
     }
 }
