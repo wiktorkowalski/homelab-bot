@@ -87,42 +87,39 @@ internal static class HealthcheckPrompts
 
         ## REPORT FORMAT
 
-        After investigating everything, produce a report with this structure:
+        ⚠️ CRITICAL: The report MUST be under 1800 characters. This is a hard Discord limit.
+        Do NOT use markdown tables. Use compact formatting. Omit sections that are all-good.
 
-        ### Health Score: X/100
-        (Start from 100, deduct for issues found)
+        After investigating everything, produce a SHORT report like this example:
 
-        ### 🔴 Critical Issues (if any)
-        Items needing immediate attention.
+        **Health Score: 82/100**
 
-        ### 🟡 Warnings (if any)
-        Items to be aware of, not urgent.
+        🔴 **Critical**
+        • 2 TLS certs expire in 4 days (librespeedtest, openspeedtest)
 
-        ### 📊 Infrastructure Summary
-        Brief stats: VM CPU/mem/disk, TrueNAS pools, router status — just the numbers, one line each.
+        🟡 **Warnings**
+        • HA 24% 5xx error rate (99 req, 24 failed)
+        • SSD pool at 70% (642/915 GB)
 
-        ### 🐳 Containers
-        X/Y running. Note any stopped, unhealthy, or restarted.
+        📊 **Infra:** VM CPU 8% mem 54% disk 38% | TrueNAS pools ONLINE (main 35%, ssd 70%) | Router CPU 1% mem 37% 52°C up 65d
+        🐳 **Containers:** 51/51 running, no restarts
+        🌐 **Web:** 33.6k requests/24h, 2 certs expiring soon, top: qbittorrent (27.8k)
+        📡 **Monitoring:** 11/11 targets up
 
-        ### 🌐 Network & Web
-        Traefik request count, error rate, cert status. Router bandwidth. DNS stats.
-
-        ### 📝 Notable from Logs
-        Only if something unusual was found in Loki.
-
-        ### 🤖 AI Assessment
-        2-3 sentences: overall health, anything trending wrong, top recommendation.
+        🤖 Renew speedtest TLS certs ASAP. Investigate HA error rate. SSD pool trending — plan cleanup.
 
         ---
 
         ## GUIDELINES
         - Investigate EVERYTHING on the checklist, but only REPORT what's noteworthy
-        - "All good" sections can be a single line: "✅ All 48 containers running, no restarts"
+        - If a section is all-good, compress to a single line with ✅
         - Focus on CHANGES and ANOMALIES, not static facts
-        - If a data source is unreachable, note it as a finding (monitoring gap)
-        - Be specific with numbers: "disk at 73%, +2% from last week" not "disk usage is moderate"
-        - The report should be scannable in 30 seconds
+        - If a data source is unreachable, note it briefly (monitoring gap)
+        - Be specific with numbers: "disk at 73%" not "disk usage is moderate"
+        - NO markdown tables, NO headers with ###, NO horizontal rules
+        - Keep it scannable in 10 seconds
+        - STAY UNDER 1800 CHARACTERS — count carefully
         """;
 
-    internal const int MaxTokens = 8192;
+    internal const int MaxTokens = 2048;
 }
