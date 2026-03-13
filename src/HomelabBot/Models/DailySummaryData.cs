@@ -7,7 +7,7 @@ public sealed class DailySummaryData
     public List<PoolStatus> Pools { get; init; } = [];
     public RouterStatus? Router { get; init; }
     public MonitoringStatus? Monitoring { get; init; }
-    public int HealthScore { get; init; }
+    public int HealthScore { get; set; }
     public DateTime GeneratedAt { get; init; } = DateTime.UtcNow;
 }
 

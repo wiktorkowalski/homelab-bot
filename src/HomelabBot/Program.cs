@@ -68,6 +68,9 @@ try
     builder.Services.AddOptions<AlertWebhookConfiguration>()
         .Bind(builder.Configuration.GetSection(AlertWebhookConfiguration.SectionName));
 
+    builder.Services.AddOptions<HealthScoreConfiguration>()
+        .Bind(builder.Configuration.GetSection(HealthScoreConfiguration.SectionName));
+
     builder.Services.AddOptions<KnowledgeRefreshConfiguration>()
         .Bind(builder.Configuration.GetSection(KnowledgeRefreshConfiguration.SectionName));
 
@@ -135,9 +138,11 @@ try
     builder.Services.AddSingleton<KernelService>();
     builder.Services.AddSingleton<DiscordBotService>();
     builder.Services.AddHostedService(sp => sp.GetRequiredService<DiscordBotService>());
+    builder.Services.AddSingleton<HealthScoreService>();
     builder.Services.AddSingleton<SummaryDataAggregator>();
     builder.Services.AddHostedService<DailySummaryService>();
     builder.Services.AddSingleton<AlertWebhookService>();
+    builder.Services.AddHostedService<HealthScoreBackgroundService>();
     builder.Services.AddHostedService<KnowledgeRefreshService>();
 
     // API Controllers

@@ -16,11 +16,13 @@ public sealed class SummaryDataAggregator
     private readonly string _prometheusUrl;
     private readonly string _truenasUrl;
     private readonly string? _truenasApiKey;
+    private readonly HealthScoreService _healthScoreService;
 
     public SummaryDataAggregator(
         IHttpClientFactory httpClientFactory,
         IOptions<PrometheusConfiguration> prometheusConfig,
         IOptions<TrueNASConfiguration> truenasConfig,
+        HealthScoreService healthScoreService,
         ILogger<SummaryDataAggregator> logger)
     {
         _httpClient = httpClientFactory.CreateClient("Default");
@@ -28,6 +30,7 @@ public sealed class SummaryDataAggregator
         _prometheusUrl = prometheusConfig.Value.Host.TrimEnd('/');
         _truenasUrl = truenasConfig.Value.Host.TrimEnd('/');
         _truenasApiKey = truenasConfig.Value.ApiKey;
+        _healthScoreService = healthScoreService;
     }
 
     public async Task<DailySummaryData> AggregateAsync(CancellationToken ct = default)
@@ -48,18 +51,19 @@ public sealed class SummaryDataAggregator
         var router = await routerTask;
         var monitoring = await monitoringTask;
 
-        var healthScore = CalculateHealthScore(alerts, containers, pools, router, monitoring);
-
-        return new DailySummaryData
+        var data = new DailySummaryData
         {
             Alerts = alerts,
             Containers = containers,
             Pools = pools,
             Router = router,
             Monitoring = monitoring,
-            HealthScore = healthScore,
-            GeneratedAt = DateTime.UtcNow
+            GeneratedAt = DateTime.UtcNow,
         };
+
+        data.HealthScore = _healthScoreService.CalculateScore(data).Score;
+
+        return data;
     }
 
     private async Task<List<AlertSummary>> GetAlertsAsync(CancellationToken ct)
@@ -226,46 +230,6 @@ public sealed class SummaryDataAggregator
             _logger.LogDebug(ex, "Failed to query Prometheus metric {Metric}", metric);
             return 0;
         }
-    }
-
-    private static int CalculateHealthScore(
-        List<AlertSummary> alerts,
-        List<Models.ContainerStatus> containers,
-        List<PoolStatus> pools,
-        RouterStatus? router,
-        MonitoringStatus? monitoring)
-    {
-        var score = 100;
-
-        // Deduct for failed data sources (indicates connectivity issues)
-        if (containers.Count == 0)
-            score -= 15;
-        if (pools.Count == 0)
-            score -= 15;
-        if (router == null)
-            score -= 10;
-        if (monitoring == null)
-            score -= 15;
-
-        // Deduct for alerts
-        var criticalAlerts = alerts.Count(a => a.Severity == "critical");
-        var warningAlerts = alerts.Count(a => a.Severity == "warning");
-        score -= criticalAlerts * 20;
-        score -= warningAlerts * 5;
-
-        // Deduct for stopped containers
-        var stoppedContainers = containers.Count(c => c.State != "running");
-        score -= stoppedContainers * 10;
-
-        // Deduct for unhealthy pools
-        var unhealthyPools = pools.Count(p => p.Health != "ONLINE");
-        score -= unhealthyPools * 25;
-
-        // Deduct for down targets
-        if (monitoring != null)
-            score -= monitoring.DownTargets * 15;
-
-        return Math.Max(0, Math.Min(100, score));
     }
 
     private sealed class TrueNASPool

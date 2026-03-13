@@ -26,6 +26,8 @@ public sealed class HomelabDbContext : DbContext
 
     public DbSet<ToolCallLog> ToolCallLogs => Set<ToolCallLog>();
 
+    public DbSet<HealthScoreHistory> HealthScoreHistory => Set<HealthScoreHistory>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<Knowledge>(entity =>
@@ -82,6 +84,11 @@ public sealed class HomelabDbContext : DbContext
                 .WithMany(i => i.ToolCalls)
                 .HasForeignKey(t => t.LlmInteractionId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<HealthScoreHistory>(entity =>
+        {
+            entity.HasIndex(h => h.RecordedAt);
         });
     }
 }
