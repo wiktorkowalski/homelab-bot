@@ -104,7 +104,8 @@ public sealed class KernelService
         HomeAssistantPlugin homeAssistantPlugin,
         NtfyPlugin ntfyPlugin,
         KnowledgePlugin knowledgePlugin,
-        InvestigationPlugin investigationPlugin)
+        InvestigationPlugin investigationPlugin,
+        RunbookPlugin runbookPlugin)
     {
         _logger = logger;
         _conversationService = conversationService;
@@ -131,6 +132,7 @@ public sealed class KernelService
         builder.Plugins.AddFromObject(ntfyPlugin, "Ntfy");
         builder.Plugins.AddFromObject(knowledgePlugin, "Knowledge");
         builder.Plugins.AddFromObject(investigationPlugin, "Investigation");
+        builder.Plugins.AddFromObject(runbookPlugin, "Runbook");
 
         _kernel = builder.Build();
 
@@ -139,7 +141,7 @@ public sealed class KernelService
 
         _chatService = _kernel.GetRequiredService<IChatCompletionService>();
         _logger.LogInformation("Kernel initialized with model {Model} and {PluginCount} plugins",
-            config.Value.OpenRouterModel, 11);
+            config.Value.OpenRouterModel, _kernel.Plugins.Count);
     }
 
     public async Task<string> GenerateThreadTitleAsync(
@@ -192,6 +194,8 @@ public sealed class KernelService
             return "Chat";
         }
     }
+
+    public Kernel GetKernel() => _kernel;
 
     public async Task<string> ProcessMessageAsync(
         ulong threadId,

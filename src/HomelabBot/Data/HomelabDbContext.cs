@@ -28,6 +28,8 @@ public sealed class HomelabDbContext : DbContext
 
     public DbSet<HealthScoreHistory> HealthScoreHistory => Set<HealthScoreHistory>();
 
+    public DbSet<Runbook> Runbooks => Set<Runbook>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<Knowledge>(entity =>
@@ -89,6 +91,11 @@ public sealed class HomelabDbContext : DbContext
         modelBuilder.Entity<HealthScoreHistory>(entity =>
         {
             entity.HasIndex(h => h.RecordedAt);
+        });
+
+        modelBuilder.Entity<Runbook>(entity =>
+        {
+            entity.HasIndex(r => r.Enabled);
         });
     }
 }
