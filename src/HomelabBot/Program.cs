@@ -68,6 +68,9 @@ try
     builder.Services.AddOptions<AlertWebhookConfiguration>()
         .Bind(builder.Configuration.GetSection(AlertWebhookConfiguration.SectionName));
 
+    builder.Services.AddOptions<HealthScoreConfiguration>()
+        .Bind(builder.Configuration.GetSection(HealthScoreConfiguration.SectionName));
+
     builder.Services.AddOptions<KnowledgeRefreshConfiguration>()
         .Bind(builder.Configuration.GetSection(KnowledgeRefreshConfiguration.SectionName));
 
@@ -138,6 +141,8 @@ try
     builder.Services.AddSingleton<SummaryDataAggregator>();
     builder.Services.AddHostedService<DailySummaryService>();
     builder.Services.AddSingleton<AlertWebhookService>();
+    builder.Services.AddSingleton<HealthScoreService>();
+    builder.Services.AddHostedService<HealthScoreBackgroundService>();
     builder.Services.AddHostedService<KnowledgeRefreshService>();
 
     // API Controllers

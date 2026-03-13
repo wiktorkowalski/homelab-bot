@@ -101,6 +101,25 @@ public sealed class AlertWebhookConfiguration
     public ulong DiscordUserId { get; init; }
 }
 
+public sealed class HealthScoreConfiguration
+{
+    public const string SectionName = "HealthScore";
+
+    public bool Enabled { get; init; } = true;
+    public int IntervalMinutes { get; init; } = 15;
+    public int AlertDropThreshold { get; init; } = 15;
+    public ulong DiscordUserId { get; init; }
+    public int CriticalAlertWeight { get; init; } = 20;
+    public int WarningAlertWeight { get; init; } = 5;
+    public int StoppedContainerWeight { get; init; } = 10;
+    public int UnhealthyPoolWeight { get; init; } = 25;
+    public int DownTargetWeight { get; init; } = 15;
+    public int MissingContainersWeight { get; init; } = 15;
+    public int MissingPoolsWeight { get; init; } = 15;
+    public int MissingRouterWeight { get; init; } = 10;
+    public int MissingMonitoringWeight { get; init; } = 15;
+}
+
 public sealed class KnowledgeRefreshConfiguration
 {
     public const string SectionName = "KnowledgeRefresh";

@@ -13,6 +13,7 @@ public class HomeLabCommands : ApplicationCommandModule
     private readonly KernelService _kernelService;
     private readonly ConversationService _conversationService;
     private readonly SummaryDataAggregator _summaryAggregator;
+    private readonly HealthScoreService _healthScoreService;
     private readonly ILogger<HomeLabCommands> _logger;
 
     public HomeLabCommands(
@@ -21,6 +22,7 @@ public class HomeLabCommands : ApplicationCommandModule
         KernelService kernelService,
         ConversationService conversationService,
         SummaryDataAggregator summaryAggregator,
+        HealthScoreService healthScoreService,
         ILogger<HomeLabCommands> logger)
     {
         _dockerPlugin = dockerPlugin;
@@ -28,6 +30,7 @@ public class HomeLabCommands : ApplicationCommandModule
         _kernelService = kernelService;
         _conversationService = conversationService;
         _summaryAggregator = summaryAggregator;
+        _healthScoreService = healthScoreService;
         _logger = logger;
     }
 
@@ -289,6 +292,58 @@ public class HomeLabCommands : ApplicationCommandModule
             _logger.LogError(ex, "Error in knowledge command");
             await ctx.EditResponseAsync(new DiscordWebhookBuilder()
                 .WithContent($"Error getting knowledge: {ex.Message}"));
+        }
+    }
+
+    [SlashCommand("health", "Get current health score with breakdown")]
+    public async Task HealthCommand(InteractionContext ctx)
+    {
+        await ctx.DeferAsync();
+
+        try
+        {
+            _logger.LogDebug("Health command invoked by {User}", ctx.User.Username);
+
+            var data = await _summaryAggregator.AggregateAsync();
+            var result = _healthScoreService.CalculateScore(data);
+            var trend = await _healthScoreService.GetTrendAsync(TimeSpan.FromHours(1));
+
+            var color = result.Score switch
+            {
+                > 80 => DiscordColor.Green,
+                > 50 => DiscordColor.Yellow,
+                _ => DiscordColor.Red
+            };
+
+            var embed = new DiscordEmbedBuilder()
+                .WithTitle($"Health Score: {result.Score}/100")
+                .WithColor(color)
+                .WithTimestamp(DateTimeOffset.UtcNow);
+
+            // Breakdown fields — only show categories with deductions
+            if (result.AlertDeductions > 0)
+                embed.AddField("⚠️ Alerts", $"-{result.AlertDeductions} pts", true);
+            if (result.ContainerDeductions > 0)
+                embed.AddField("🐳 Containers", $"-{result.ContainerDeductions} pts", true);
+            if (result.PoolDeductions > 0)
+                embed.AddField("💾 Pools", $"-{result.PoolDeductions} pts", true);
+            if (result.MonitoringDeductions > 0)
+                embed.AddField("📊 Monitoring", $"-{result.MonitoringDeductions} pts", true);
+            if (result.ConnectivityDeductions > 0)
+                embed.AddField("🔌 Connectivity", $"-{result.ConnectivityDeductions} pts", true);
+
+            if (result.Score == 100)
+                embed.WithDescription("All systems healthy — no deductions.");
+
+            embed.WithFooter(trend);
+
+            await ctx.EditResponseAsync(new DiscordWebhookBuilder().AddEmbed(embed.Build()));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in health command");
+            await ctx.EditResponseAsync(new DiscordWebhookBuilder()
+                .WithContent($"Error getting health score: {ex.Message}"));
         }
     }
 
