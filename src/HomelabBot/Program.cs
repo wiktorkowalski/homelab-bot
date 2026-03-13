@@ -4,6 +4,7 @@ using HomelabBot.Configuration;
 using HomelabBot.Data;
 using HomelabBot.Plugins;
 using HomelabBot.Services;
+using HomelabBot.Services.Voice;
 using Microsoft.EntityFrameworkCore;
 using OpenTelemetry;
 using OpenTelemetry.Exporter;
@@ -71,6 +72,12 @@ try
     builder.Services.AddOptions<KnowledgeRefreshConfiguration>()
         .Bind(builder.Configuration.GetSection(KnowledgeRefreshConfiguration.SectionName));
 
+    builder.Services.AddOptions<VoiceConfiguration>()
+        .Bind(builder.Configuration.GetSection(VoiceConfiguration.SectionName));
+
+    builder.Services.AddOptions<TwilioConfiguration>()
+        .Bind(builder.Configuration.GetSection(TwilioConfiguration.SectionName));
+
     // Langfuse/OpenTelemetry
     var langfuseConfig = builder.Configuration.GetSection(LangfuseConfiguration.SectionName).Get<LangfuseConfiguration>();
     if (langfuseConfig is not null)
@@ -112,6 +119,9 @@ try
     builder.Services.AddHttpClient("Default")
         .AddStandardResilienceHandler();
 
+    builder.Services.AddHttpClient("OpenAiAudio")
+        .AddStandardResilienceHandler();
+
     // Plugins
     builder.Services.AddSingleton<DockerPlugin>();
     builder.Services.AddSingleton<PrometheusPlugin>();
@@ -139,6 +149,17 @@ try
     builder.Services.AddHostedService<DailySummaryService>();
     builder.Services.AddSingleton<AlertWebhookService>();
     builder.Services.AddHostedService<KnowledgeRefreshService>();
+
+    // Voice services
+    builder.Services.AddSingleton<ISpeechToTextService, OpenAiSpeechToTextService>();
+    builder.Services.AddSingleton<ITextToSpeechService, OpenAiTextToSpeechService>();
+    builder.Services.AddSingleton<DiscordVoiceService>();
+    builder.Services.AddHostedService(sp => sp.GetRequiredService<DiscordVoiceService>());
+
+    // Twilio / Escalation services
+    builder.Services.AddSingleton<TwilioCallingService>();
+    builder.Services.AddSingleton<AlertEscalationService>();
+    builder.Services.AddHostedService(sp => sp.GetRequiredService<AlertEscalationService>());
 
     // API Controllers
     builder.Services.AddControllers();

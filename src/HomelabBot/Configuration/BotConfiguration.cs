@@ -111,3 +111,29 @@ public sealed class KnowledgeRefreshConfiguration
     public bool NotifyOnChanges { get; init; } = false;
     public ulong DiscordUserId { get; init; }
 }
+
+public sealed class VoiceConfiguration
+{
+    public const string SectionName = "Voice";
+
+    public bool Enabled { get; init; } = false;
+    public required string OpenAiApiKey { get; init; }
+    public string TtsVoice { get; init; } = "alloy";
+    public string TtsModel { get; init; } = "tts-1";
+    public int SilenceThresholdMs { get; init; } = 1500;
+    public int MinAudioLengthMs { get; init; } = 500;
+    public int MaxAudioLengthMs { get; init; } = 30000;
+}
+
+public sealed class TwilioConfiguration
+{
+    public const string SectionName = "Twilio";
+
+    public bool Enabled { get; init; } = false;
+    public required string AccountSid { get; init; }
+    public required string AuthToken { get; init; }
+    public required string FromPhoneNumber { get; init; }
+    public required string ToPhoneNumber { get; init; }
+    public required string WebhookBaseUrl { get; init; }
+    public int EscalationDelayMinutes { get; init; } = 5;
+}

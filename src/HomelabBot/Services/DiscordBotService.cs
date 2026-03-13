@@ -2,6 +2,7 @@ using DSharpPlus;
 using DSharpPlus.Entities;
 using DSharpPlus.EventArgs;
 using DSharpPlus.SlashCommands;
+using DSharpPlus.VoiceNext;
 using HomelabBot.Commands;
 using HomelabBot.Configuration;
 using Microsoft.Extensions.Options;
@@ -16,11 +17,11 @@ public sealed class DiscordBotService : BackgroundService
     private readonly ConversationService _conversationService;
     private readonly ConfirmationService _confirmationService;
     private readonly IServiceProvider _serviceProvider;
+    private readonly TaskCompletionSource _readyTcs = new();
     private DiscordClient? _client;
     private SlashCommandsExtension? _slashCommands;
     private int _reconnectAttempts;
     private const int MaxReconnectAttempts = 10;
-    private readonly TaskCompletionSource _readyTcs = new();
 
     public DiscordBotService(
         IOptions<BotConfiguration> config,
@@ -37,6 +38,8 @@ public sealed class DiscordBotService : BackgroundService
         _confirmationService = confirmationService;
         _serviceProvider = serviceProvider;
     }
+
+    public DiscordClient? Client => _client;
 
     public Task WaitForReadyAsync(CancellationToken ct = default)
     {
@@ -80,11 +83,15 @@ public sealed class DiscordBotService : BackgroundService
             TokenType = TokenType.Bot,
             Intents = DiscordIntents.AllUnprivileged |
                       DiscordIntents.MessageContents |
-                      DiscordIntents.GuildMessages,
+                      DiscordIntents.GuildMessages |
+                      DiscordIntents.GuildVoiceStates,
             AutoReconnect = true
         };
 
         _client = new DiscordClient(discordConfig);
+
+        // Enable VoiceNext
+        _client.UseVoiceNext();
 
         // Register slash commands
         _slashCommands = _client.UseSlashCommands(new SlashCommandsConfiguration
@@ -92,6 +99,7 @@ public sealed class DiscordBotService : BackgroundService
             Services = _serviceProvider
         });
         _slashCommands.RegisterCommands<HomeLabCommands>();
+        _slashCommands.RegisterCommands<VoiceCommands>();
 
         _client.Ready += OnReady;
         _client.MessageCreated += OnMessageCreated;
