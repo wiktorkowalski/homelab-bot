@@ -101,6 +101,17 @@ public sealed class AlertWebhookConfiguration
     public ulong DiscordUserId { get; init; }
 }
 
+public sealed class SecurityAuditConfiguration
+{
+    public const string SectionName = "SecurityAudit";
+
+    public bool Enabled { get; init; } = false;
+    public DayOfWeek ScheduleDay { get; init; } = DayOfWeek.Sunday;
+    public string ScheduleTime { get; init; } = "02:00";
+    public string TimeZone { get; init; } = "Europe/Warsaw";
+    public ulong DiscordUserId { get; init; }
+}
+
 public sealed class LogAnomalyConfiguration
 {
     public const string SectionName = "LogAnomaly";

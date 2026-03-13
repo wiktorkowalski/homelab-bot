@@ -15,6 +15,7 @@ public class HomeLabCommands : ApplicationCommandModule
     private readonly ConversationService _conversationService;
     private readonly SummaryDataAggregator _summaryAggregator;
     private readonly HealthScoreService _healthScoreService;
+    private readonly SecurityAuditService _securityAuditService;
     private readonly ILogger<HomeLabCommands> _logger;
 
     public HomeLabCommands(
@@ -25,6 +26,7 @@ public class HomeLabCommands : ApplicationCommandModule
         ConversationService conversationService,
         SummaryDataAggregator summaryAggregator,
         HealthScoreService healthScoreService,
+        SecurityAuditService securityAuditService,
         ILogger<HomeLabCommands> logger)
     {
         _dockerPlugin = dockerPlugin;
@@ -34,6 +36,7 @@ public class HomeLabCommands : ApplicationCommandModule
         _conversationService = conversationService;
         _summaryAggregator = summaryAggregator;
         _healthScoreService = healthScoreService;
+        _securityAuditService = securityAuditService;
         _logger = logger;
     }
 
@@ -476,6 +479,28 @@ public class HomeLabCommands : ApplicationCommandModule
         finally
         {
             _conversationService.ClearHistory(threadId);
+        }
+    }
+
+    [SlashCommand("security", "Run a security audit of the homelab")]
+    public async Task SecurityCommand(InteractionContext ctx)
+    {
+        await ctx.DeferAsync();
+
+        try
+        {
+            _logger.LogInformation("Security audit command invoked by {User}", ctx.User.Username);
+
+            var report = await _securityAuditService.RunAuditAsync();
+
+            await EditResponseWithContentOrFileAsync(ctx, report, "security-audit.md",
+                "Security audit complete. See attached report:");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in security command");
+            await ctx.EditResponseAsync(new DiscordWebhookBuilder()
+                .WithContent($"Error running security audit: {ex.Message}"));
         }
     }
 
