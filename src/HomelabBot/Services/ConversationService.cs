@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using HomelabBot.Data;
 using HomelabBot.Data.Entities;
+using HomelabBot.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.SemanticKernel.ChatCompletion;
 
@@ -124,6 +125,54 @@ public sealed class ConversationService
             conversation.Title = title;
             await db.SaveChangesAsync(ct);
         }
+    }
+
+    public async Task<List<ConversationSearchResult>> SearchConversationsAsync(
+        string query, int limit = 5, CancellationToken ct = default)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(ct);
+
+        var keywords = query
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .Where(k => k.Length > 1)
+            .ToArray();
+
+        if (keywords.Length == 0)
+            return [];
+
+        var conversations = await db.Conversations
+            .AsNoTracking()
+            .Include(c => c.Messages)
+            .Where(c => c.Messages.Count > 0)
+            .OrderByDescending(c => c.LastMessageAt)
+            .Take(100)
+            .ToListAsync(ct);
+
+        return conversations
+            .Select(c =>
+            {
+                var score = keywords.Count(k =>
+                    c.Messages.Any(m => m.Content.Contains(k, StringComparison.OrdinalIgnoreCase)));
+                return (Conversation: c, Score: score);
+            })
+            .Where(x => x.Score > 0)
+            .OrderByDescending(x => x.Score)
+            .ThenByDescending(x => x.Conversation.LastMessageAt)
+            .Take(limit)
+            .Select(x => new ConversationSearchResult
+            {
+                ConversationId = x.Conversation.Id,
+                ThreadId = x.Conversation.ThreadId,
+                Title = x.Conversation.Title,
+                Date = x.Conversation.LastMessageAt ?? x.Conversation.CreatedAt,
+                Score = x.Score,
+                RelevantMessages = x.Conversation.Messages
+                    .Where(m => keywords.Any(k => m.Content.Contains(k, StringComparison.OrdinalIgnoreCase)))
+                    .OrderBy(m => m.Timestamp)
+                    .Take(5)
+                    .ToList(),
+            })
+            .ToList();
     }
 
     public void ClearHistory(ulong threadId)
