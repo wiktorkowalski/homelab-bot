@@ -15,6 +15,7 @@ public sealed class DiscordBotService : BackgroundService
     private readonly KernelService _kernelService;
     private readonly ConversationService _conversationService;
     private readonly ConfirmationService _confirmationService;
+    private readonly MemoryService _memoryService;
     private readonly IServiceProvider _serviceProvider;
     private DiscordClient? _client;
     private SlashCommandsExtension? _slashCommands;
@@ -28,6 +29,7 @@ public sealed class DiscordBotService : BackgroundService
         KernelService kernelService,
         ConversationService conversationService,
         ConfirmationService confirmationService,
+        MemoryService memoryService,
         IServiceProvider serviceProvider)
     {
         _config = config.Value;
@@ -35,6 +37,7 @@ public sealed class DiscordBotService : BackgroundService
         _kernelService = kernelService;
         _conversationService = conversationService;
         _confirmationService = confirmationService;
+        _memoryService = memoryService;
         _serviceProvider = serviceProvider;
     }
 
@@ -130,12 +133,51 @@ public sealed class DiscordBotService : BackgroundService
     {
         try
         {
+            var customId = e.Interaction.Data.CustomId;
+
+            if (customId.StartsWith("pattern_helpful_") || customId.StartsWith("pattern_notrelevant_"))
+            {
+                await HandlePatternFeedbackAsync(e);
+                return;
+            }
+
             await _confirmationService.HandleInteractionAsync(e);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error handling component interaction");
         }
+    }
+
+    private async Task HandlePatternFeedbackAsync(ComponentInteractionCreateEventArgs e)
+    {
+        var customId = e.Interaction.Data.CustomId;
+        var isHelpful = customId.StartsWith("pattern_helpful_");
+        var prefix = isHelpful ? "pattern_helpful_" : "pattern_notrelevant_";
+
+        if (!int.TryParse(customId[prefix.Length..], out var patternId))
+        {
+            await e.Interaction.CreateResponseAsync(InteractionResponseType.DeferredMessageUpdate);
+            return;
+        }
+
+        try
+        {
+            await _memoryService.RecordPatternFeedbackAsync(patternId, isHelpful);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to record pattern feedback for {PatternId}", patternId);
+        }
+
+        var emoji = isHelpful ? "👍" : "👎";
+        var text = isHelpful ? "Thanks! Marked as helpful." : "Noted, marked as not relevant.";
+
+        await e.Interaction.CreateResponseAsync(
+            InteractionResponseType.ChannelMessageWithSource,
+            new DiscordInteractionResponseBuilder()
+                .WithContent($"{emoji} {text}")
+                .AsEphemeral());
     }
 
     private async Task OnMessageCreated(DiscordClient client, MessageCreateEventArgs e)
@@ -281,6 +323,18 @@ public sealed class DiscordBotService : BackgroundService
         var dm = await GetDmChannelAsync(userId);
         if (dm != null)
             await dm.SendMessageAsync(message);
+    }
+
+    public async Task SendDmWithComponentsAsync(ulong userId, DiscordEmbed embed, List<DiscordComponent> components)
+    {
+        var dm = await GetDmChannelAsync(userId);
+        if (dm == null) return;
+
+        var builder = new DiscordMessageBuilder()
+            .WithEmbed(embed)
+            .AddComponents(components);
+
+        await dm.SendMessageAsync(builder);
     }
 
     public async Task SendDmFileAsync(ulong userId, string content, string filename)
