@@ -37,13 +37,13 @@ public sealed class HealthScoreBackgroundService : BackgroundService
             {
                 if (!_config.CurrentValue.Enabled)
                 {
-                    _logger.LogInformation("Health score tracking disabled, rechecking in 1 minute");
+                    _logger.LogDebug("Health score tracking disabled, rechecking in 1 minute");
                     await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);
                     continue;
                 }
 
-                var interval = TimeSpan.FromMinutes(_config.CurrentValue.IntervalMinutes);
-                await Task.Delay(interval, stoppingToken);
+                var intervalMinutes = Math.Max(1, _config.CurrentValue.IntervalMinutes);
+                await Task.Delay(TimeSpan.FromMinutes(intervalMinutes), stoppingToken);
 
                 await RecordAndCheckScoreAsync(stoppingToken);
             }
@@ -66,7 +66,7 @@ public sealed class HealthScoreBackgroundService : BackgroundService
 
         // Query previous score BEFORE recording the new one
         var threshold = _config.CurrentValue.AlertDropThreshold;
-        var previousScore = await _healthScoreService.GetPreviousScoreAsync(TimeSpan.FromHours(1), ct);
+        var previousScore = await _healthScoreService.GetScoreAtWindowStartAsync(TimeSpan.FromHours(1), ct);
 
         await _healthScoreService.RecordScoreAsync(result, ct);
         _logger.LogDebug("Recorded health score: {Score}/100", result.Score);
@@ -83,7 +83,15 @@ public sealed class HealthScoreBackgroundService : BackgroundService
                           $"Score went from **{previousScore.Value}** → **{result.Score}** in the last hour\n" +
                           BuildBreakdown(result);
 
-            await _discordBot.SendDmAsync(userId, message);
+            try
+            {
+                await _discordBot.SendDmAsync(userId, message);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to send health score drop DM");
+            }
+
             _logger.LogWarning("Health score dropped {Points} points: {Old} → {New}",
                 previousScore.Value - result.Score, previousScore.Value, result.Score);
         }

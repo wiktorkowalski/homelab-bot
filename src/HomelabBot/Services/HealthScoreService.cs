@@ -112,7 +112,7 @@ public sealed class HealthScoreService
         };
     }
 
-    public async Task<int?> GetPreviousScoreAsync(TimeSpan window, CancellationToken ct = default)
+    public async Task<int?> GetScoreAtWindowStartAsync(TimeSpan window, CancellationToken ct = default)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
         var since = DateTime.UtcNow - window;
