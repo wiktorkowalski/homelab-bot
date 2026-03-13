@@ -95,7 +95,6 @@ public sealed class RunbookPlugin
         string runbookName;
         string stepsJson;
         TrustLevel trustLevel;
-        bool enabled;
 
         await using (var db = await _dbFactory.CreateDbContextAsync())
         {
@@ -108,7 +107,6 @@ public sealed class RunbookPlugin
             runbookName = runbook.Name;
             stepsJson = runbook.StepsJson;
             trustLevel = runbook.TrustLevel;
-            enabled = runbook.Enabled;
         }
 
         if (!TryParseSteps(stepsJson, out var steps, out var error))
