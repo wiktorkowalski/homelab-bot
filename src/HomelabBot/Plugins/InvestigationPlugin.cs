@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Text;
+using HomelabBot.Models;
 using HomelabBot.Services;
 using Microsoft.SemanticKernel;
 
@@ -8,14 +9,19 @@ namespace HomelabBot.Plugins;
 public sealed class InvestigationPlugin
 {
     private readonly MemoryService _memoryService;
+    private readonly ConversationService _conversationService;
     private readonly ILogger<InvestigationPlugin> _logger;
 
     // Track current investigation per thread (in-memory for quick access)
     private readonly Dictionary<ulong, int> _activeInvestigations = new();
 
-    public InvestigationPlugin(MemoryService memoryService, ILogger<InvestigationPlugin> logger)
+    public InvestigationPlugin(
+        MemoryService memoryService,
+        ConversationService conversationService,
+        ILogger<InvestigationPlugin> logger)
     {
         _memoryService = memoryService;
+        _conversationService = conversationService;
         _logger = logger;
     }
 
@@ -48,9 +54,23 @@ public sealed class InvestigationPlugin
         {
             sb.AppendLine(pastContext);
         }
-        else
+
+        // Search past conversations for additional context
+        var conversationResults = await _conversationService.SearchConversationsAsync(symptom, limit: 3);
+        if (conversationResults.Count > 0)
         {
-            sb.AppendLine("No similar past incidents found.");
+            sb.AppendLine("\n### Relevant Past Conversations");
+            foreach (var r in conversationResults)
+            {
+                sb.AppendLine($"- [{r.TimeAgo}] {r.DisplayTitle}");
+                if (r.RelevantMessages.Count > 0)
+                    sb.AppendLine($"  > {ConversationSearchResult.Truncate(r.RelevantMessages[0].Content, 100)}");
+            }
+        }
+
+        if (string.IsNullOrEmpty(pastContext) && conversationResults.Count == 0)
+        {
+            sb.AppendLine("No similar past incidents or conversations found.");
         }
 
         sb.AppendLine("\nUse RecordStep() to log each diagnostic action.");
@@ -163,6 +183,21 @@ public sealed class InvestigationPlugin
         }
 
         return sb.ToString();
+    }
+
+    [KernelFunction]
+    [Description("Search past conversations for context on an issue. Use this to find what was discussed or done previously about a topic.")]
+    public async Task<string> SearchConversations(
+        [Description("Keywords to search for (e.g. 'Plex crashed', 'high CPU', 'TLS cert')")] string query)
+    {
+        _logger.LogDebug("Searching conversations for '{Query}'", query);
+
+        var results = await _conversationService.SearchConversationsAsync(query);
+
+        if (results.Count == 0)
+            return $"No past conversations found matching '{query}'.";
+
+        return ConversationSearchResult.FormatResults(results);
     }
 
     [KernelFunction]

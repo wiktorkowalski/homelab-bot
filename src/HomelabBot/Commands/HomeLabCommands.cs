@@ -479,6 +479,58 @@ public class HomeLabCommands : ApplicationCommandModule
         }
     }
 
+    [SlashCommand("recall", "Search past conversations for context on an issue")]
+    public async Task RecallCommand(
+        InteractionContext ctx,
+        [Option("query", "What to search for (e.g. 'Plex crashed', 'high CPU', 'TLS cert')")] string query)
+    {
+        await ctx.DeferAsync();
+
+        var threadId = (ulong)DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
+        try
+        {
+            _logger.LogDebug("Recall command invoked by {User} for '{Query}'", ctx.User.Username, query);
+
+            var results = await _conversationService.SearchConversationsAsync(query);
+
+            if (results.Count == 0)
+            {
+                await ctx.EditResponseAsync(new DiscordWebhookBuilder()
+                    .WithContent($"No past conversations found matching \"{query}\"."));
+                return;
+            }
+
+            var formattedResults = ConversationSearchResult.FormatResults(results, previewMaxLength: 200);
+
+            var prompt = $"""
+                The user is searching their conversation history for: "{query}"
+
+                Here are the relevant past conversations:
+                {formattedResults}
+
+                Summarize what was discussed, what actions were taken, and what the outcome was.
+                Focus on practical info the user can act on now. Be concise.
+                """;
+
+            var response = await _kernelService.ProcessMessageAsync(
+                threadId, prompt, ctx.User.Id, TraceType.Chat);
+
+            await EditResponseWithContentOrFileAsync(ctx, response, "recall.md",
+                $"Recall results for \"{query}\":");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in recall command");
+            await ctx.EditResponseAsync(new DiscordWebhookBuilder()
+                .WithContent($"Error searching conversations: {ex.Message}"));
+        }
+        finally
+        {
+            _conversationService.ClearHistory(threadId);
+        }
+    }
+
     [SlashCommand("roast", "Roast your homelab")]
     public async Task RoastCommand(InteractionContext ctx)
     {
