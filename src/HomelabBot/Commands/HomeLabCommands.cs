@@ -10,6 +10,7 @@ public class HomeLabCommands : ApplicationCommandModule
 {
     private readonly DockerPlugin _dockerPlugin;
     private readonly KnowledgePlugin _knowledgePlugin;
+    private readonly LokiPlugin _lokiPlugin;
     private readonly KernelService _kernelService;
     private readonly ConversationService _conversationService;
     private readonly SummaryDataAggregator _summaryAggregator;
@@ -19,6 +20,7 @@ public class HomeLabCommands : ApplicationCommandModule
     public HomeLabCommands(
         DockerPlugin dockerPlugin,
         KnowledgePlugin knowledgePlugin,
+        LokiPlugin lokiPlugin,
         KernelService kernelService,
         ConversationService conversationService,
         SummaryDataAggregator summaryAggregator,
@@ -27,6 +29,7 @@ public class HomeLabCommands : ApplicationCommandModule
     {
         _dockerPlugin = dockerPlugin;
         _knowledgePlugin = knowledgePlugin;
+        _lokiPlugin = lokiPlugin;
         _kernelService = kernelService;
         _conversationService = conversationService;
         _summaryAggregator = summaryAggregator;
@@ -344,6 +347,77 @@ public class HomeLabCommands : ApplicationCommandModule
             _logger.LogError(ex, "Error in health command");
             await ctx.EditResponseAsync(new DiscordWebhookBuilder()
                 .WithContent($"Error getting health score: {ex.Message}"));
+        }
+    }
+
+    [SlashCommand("logs-analyze", "Analyze container logs for errors and anomalies")]
+    public async Task LogsAnalyzeCommand(
+        InteractionContext ctx,
+        [Option("container", "Container name (optional, analyzes all if omitted)")] string? container = null)
+    {
+        await ctx.DeferAsync();
+
+        try
+        {
+            _logger.LogDebug("LogsAnalyze command invoked by {User} for {Container}",
+                ctx.User.Username, container ?? "all");
+
+            var threadId = (ulong)DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
+            string prompt;
+            if (!string.IsNullOrWhiteSpace(container))
+            {
+                var errors = await _lokiPlugin.CountErrorsByContainer("1h");
+                var logs = await _lokiPlugin.GetContainerLogs(container, "1h");
+
+                // Truncate for token efficiency
+                if (logs.Length > 2000) logs = logs[..2000] + "\n... (truncated)";
+
+                prompt = $"""
+                    Analyze the logs for container "{container}". Here's the data:
+
+                    ERROR COUNTS (last 1h):
+                    {errors}
+
+                    RECENT LOGS:
+                    {logs}
+
+                    Provide a brief analysis: what errors are occurring, likely cause, and suggested action.
+                    Be concise (3-5 sentences max).
+                    """;
+            }
+            else
+            {
+                var errors = await _lokiPlugin.CountErrorsByContainer("1h");
+                var critical = await _lokiPlugin.DetectCriticalPatterns("1h");
+
+                prompt = $"""
+                    Analyze error logs across all containers. Here's the data:
+
+                    ERROR COUNTS BY CONTAINER (last 1h):
+                    {errors}
+
+                    CRITICAL PATTERNS (fatal/panic/OOM):
+                    {critical}
+
+                    Summarize: which containers have issues, severity, likely causes, suggested actions.
+                    Be concise. Focus on what needs attention.
+                    """;
+            }
+
+            var response = await _kernelService.ProcessMessageAsync(
+                threadId, prompt, ctx.User.Id, TraceType.Chat);
+
+            _conversationService.ClearHistory(threadId);
+
+            await EditResponseWithContentOrFileAsync(ctx, response, "log-analysis.md",
+                "Log analysis complete. See attached:");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in logs-analyze command");
+            await ctx.EditResponseAsync(new DiscordWebhookBuilder()
+                .WithContent($"Error analyzing logs: {ex.Message}"));
         }
     }
 

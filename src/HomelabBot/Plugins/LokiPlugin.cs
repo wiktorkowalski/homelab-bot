@@ -276,6 +276,159 @@ public sealed class LokiPlugin
         return $"No logs found for container '{containerName}' in the last {since}. Try using ListLabels and ListLabelValues to discover available labels.";
     }
 
+    public async Task<Dictionary<string, long>> GetErrorCountsByContainerAsync(string since = "1h")
+    {
+        var normalizedSince = NormalizeDuration(since);
+        var query = $"sum by (compose_service) (count_over_time({{job=~\".+\"}} |~ \"(?i)(\\\\berror\\\\b|\\\\bexception\\\\b|\\\\bfailed\\\\b|\\\\bfailure\\\\b)\" [{normalizedSince}]))";
+
+        var encodedQuery = Uri.EscapeDataString(query);
+        var url = $"{_baseUrl}/loki/api/v1/query?query={encodedQuery}";
+        var response = await _httpClient.GetAsync(url);
+        response.EnsureSuccessStatusCode();
+
+        var result = await response.Content.ReadFromJsonAsync<LokiQueryResponse>();
+        var entries = new Dictionary<string, long>();
+
+        if (result?.Data?.Result == null)
+            return entries;
+
+        foreach (var stream in result.Data.Result)
+        {
+            var container = stream.Stream?.GetValueOrDefault("compose_service") ?? "unknown";
+            long count = 0;
+
+            if (stream.Values is { Count: > 0 } && stream.Values[0].Length >= 2)
+            {
+                long.TryParse(stream.Values[0][1].ToString(), out count);
+            }
+            else if (stream.Value is { Length: >= 2 })
+            {
+                long.TryParse(stream.Value[1].ToString(), out count);
+            }
+
+            if (count > 0)
+                entries[container] = count;
+        }
+
+        return entries;
+    }
+
+    [KernelFunction]
+    [Description("Counts error/exception log lines per container over a time window. Returns container name and error count.")]
+    public async Task<string> CountErrorsByContainer(
+        [Description("Time range like '1h', '6h', '24h' (default 1h)")] string since = "1h")
+    {
+        _logger.LogDebug("Counting errors by container since {Since}", since);
+
+        try
+        {
+            var entries = await GetErrorCountsByContainerAsync(since);
+
+            if (entries.Count == 0)
+            {
+                return $"No error logs found in the last {since}.";
+            }
+
+            var sb = new StringBuilder();
+            sb.AppendLine($"**Error counts by container** (last {since}):\n");
+
+            foreach (var entry in entries.OrderByDescending(e => e.Value))
+            {
+                var emoji = entry.Value > 100 ? "🔴" : entry.Value > 10 ? "🟡" : "🟢";
+                sb.AppendLine($"{emoji} **{entry.Key}**: {entry.Value} errors");
+            }
+
+            sb.AppendLine($"\nTotal: {entries.Values.Sum()} errors across {entries.Count} containers");
+
+            return sb.ToString();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error counting errors by container");
+            return $"Error counting errors: {ex.Message}";
+        }
+    }
+
+    [KernelFunction]
+    [Description("Detects critical log patterns (fatal, panic, OOM, segfault, killed) across all containers.")]
+    public async Task<string> DetectCriticalPatterns(
+        [Description("Time range like '1h', '6h', '24h' (default 1h)")] string since = "1h")
+    {
+        _logger.LogDebug("Detecting critical patterns since {Since}", since);
+
+        var duration = ParseDuration(since);
+        var query = "{job=~\".+\"} |~ \"(?i)(fatal|panic|oom|out of memory|killed process|segfault)\"";
+        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() * 1_000_000;
+        var start = DateTimeOffset.UtcNow.Subtract(duration).ToUnixTimeMilliseconds() * 1_000_000;
+
+        try
+        {
+            var encodedQuery = Uri.EscapeDataString(query);
+            var url = $"{_baseUrl}/loki/api/v1/query_range?query={encodedQuery}&start={start}&end={now}&limit=50";
+            var response = await _httpClient.GetAsync(url);
+            response.EnsureSuccessStatusCode();
+
+            var result = await response.Content.ReadFromJsonAsync<LokiQueryResponse>();
+
+            if (result?.Data?.Result == null || result.Data.Result.Count == 0)
+            {
+                return $"No critical patterns (fatal/panic/OOM/segfault) found in the last {since}.";
+            }
+
+            var sb = new StringBuilder();
+            sb.AppendLine($"**Critical patterns detected** (last {since}):\n");
+
+            var allEvents = new List<(DateTime Timestamp, string Container, string Message)>();
+
+            foreach (var stream in result.Data.Result)
+            {
+                var container = stream.Stream?.GetValueOrDefault("compose_service")
+                    ?? stream.Stream?.GetValueOrDefault("container_name")
+                    ?? "unknown";
+
+                if (stream.Values != null)
+                {
+                    foreach (var value in stream.Values)
+                    {
+                        if (value.Length >= 2)
+                        {
+                            var timestamp = ParseNanoseconds(value[0].ToString() ?? "0");
+                            var message = value[1].ToString() ?? "";
+                            allEvents.Add((timestamp, container, message));
+                        }
+                    }
+                }
+            }
+
+            var grouped = allEvents
+                .GroupBy(e => e.Container)
+                .OrderByDescending(g => g.Count());
+
+            foreach (var group in grouped)
+            {
+                sb.AppendLine($"🔴 **{group.Key}** ({group.Count()} events):");
+                foreach (var evt in group.OrderByDescending(e => e.Timestamp).Take(3))
+                {
+                    var time = evt.Timestamp.ToString("HH:mm:ss");
+                    var msg = evt.Message.Length > 120 ? evt.Message[..117] + "..." : evt.Message;
+                    sb.AppendLine($"  `{time}` {msg}");
+                }
+
+                if (group.Count() > 3)
+                {
+                    sb.AppendLine($"  ... and {group.Count() - 3} more");
+                }
+            }
+
+            return sb.ToString();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error detecting critical patterns");
+            return $"Error detecting critical patterns: {ex.Message}";
+        }
+    }
+
     [KernelFunction]
     [Description("Searches all logs for specific text (grep-style search).")]
     public async Task<string> SearchLogs(
@@ -357,6 +510,18 @@ public sealed class LokiPlugin
         }
     }
 
+    private static string NormalizeDuration(string input)
+    {
+        var duration = ParseDuration(input);
+        var totalMinutes = (int)duration.TotalMinutes;
+        return totalMinutes switch
+        {
+            < 60 => $"{totalMinutes}m",
+            < 1440 => $"{totalMinutes / 60}h",
+            _ => $"{totalMinutes / 1440}d"
+        };
+    }
+
     private static string FormatLabels(Dictionary<string, string>? labels)
     {
         if (labels == null || labels.Count == 0)
@@ -416,6 +581,7 @@ public sealed class LokiPlugin
     {
         public Dictionary<string, string>? Stream { get; set; }
         public List<JsonElement[]>? Values { get; set; }
+        public JsonElement[]? Value { get; set; }
     }
 
     private sealed class LokiLabelsResponse
