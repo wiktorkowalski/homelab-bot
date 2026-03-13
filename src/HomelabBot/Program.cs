@@ -138,10 +138,10 @@ try
     builder.Services.AddSingleton<KernelService>();
     builder.Services.AddSingleton<DiscordBotService>();
     builder.Services.AddHostedService(sp => sp.GetRequiredService<DiscordBotService>());
+    builder.Services.AddSingleton<HealthScoreService>();
     builder.Services.AddSingleton<SummaryDataAggregator>();
     builder.Services.AddHostedService<DailySummaryService>();
     builder.Services.AddSingleton<AlertWebhookService>();
-    builder.Services.AddSingleton<HealthScoreService>();
     builder.Services.AddHostedService<HealthScoreBackgroundService>();
     builder.Services.AddHostedService<KnowledgeRefreshService>();
 

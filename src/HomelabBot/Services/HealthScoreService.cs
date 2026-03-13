@@ -9,18 +9,15 @@ namespace HomelabBot.Services;
 
 public sealed class HealthScoreService
 {
-    private readonly SummaryDataAggregator _aggregator;
     private readonly IDbContextFactory<HomelabDbContext> _dbFactory;
     private readonly IOptionsMonitor<HealthScoreConfiguration> _config;
     private readonly ILogger<HealthScoreService> _logger;
 
     public HealthScoreService(
-        SummaryDataAggregator aggregator,
         IDbContextFactory<HomelabDbContext> dbFactory,
         IOptionsMonitor<HealthScoreConfiguration> config,
         ILogger<HealthScoreService> logger)
     {
-        _aggregator = aggregator;
         _dbFactory = dbFactory;
         _config = config;
         _logger = logger;
