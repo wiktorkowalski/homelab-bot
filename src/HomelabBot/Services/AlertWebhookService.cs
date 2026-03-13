@@ -13,6 +13,7 @@ public sealed class AlertWebhookService
     private readonly DiscordBotService _discordService;
     private readonly KernelService _kernelService;
     private readonly MemoryService _memoryService;
+    private readonly RunbookTriggerService _runbookTriggerService;
     private readonly AlertWebhookConfiguration _config;
     private readonly ILogger<AlertWebhookService> _logger;
 
@@ -24,12 +25,14 @@ public sealed class AlertWebhookService
         DiscordBotService discordService,
         KernelService kernelService,
         MemoryService memoryService,
+        RunbookTriggerService runbookTriggerService,
         IOptions<AlertWebhookConfiguration> config,
         ILogger<AlertWebhookService> logger)
     {
         _discordService = discordService;
         _kernelService = kernelService;
         _memoryService = memoryService;
+        _runbookTriggerService = runbookTriggerService;
         _config = config.Value;
         _logger = logger;
     }
@@ -67,6 +70,15 @@ public sealed class AlertWebhookService
 
         if (alert.IsFiring)
         {
+            // Try runbook first — if matched, use its result instead of LLM investigation
+            var runbookResult = await _runbookTriggerService.TryMatchAndExecuteAsync(alert, ct);
+            if (runbookResult != null)
+            {
+                var runbookEmbed = BuildAlertEmbed(alert, runbookResult);
+                await _discordService.SendDmAsync(_config.DiscordUserId, runbookEmbed);
+                return;
+            }
+
             // Check for known patterns before LLM investigation
             var searchTerms = $"{alert.AlertName} {alert.Description ?? alert.Summary ?? ""}";
             matchedPatterns = await _memoryService.GetRelevantPatternsAsync(searchTerms);

@@ -130,6 +130,7 @@ try
     builder.Services.AddSingleton<NtfyPlugin>();
     builder.Services.AddSingleton<KnowledgePlugin>();
     builder.Services.AddSingleton<InvestigationPlugin>();
+    builder.Services.AddSingleton<RunbookPlugin>();
 
     // Services
     builder.Services.AddSingleton<KnowledgeService>();
@@ -144,6 +145,7 @@ try
     builder.Services.AddSingleton<HealthScoreService>();
     builder.Services.AddSingleton<SummaryDataAggregator>();
     builder.Services.AddHostedService<DailySummaryService>();
+    builder.Services.AddSingleton<RunbookTriggerService>();
     builder.Services.AddSingleton<AlertWebhookService>();
     builder.Services.AddHostedService<HealthScoreBackgroundService>();
     builder.Services.AddHostedService<LogAnomalyService>();
@@ -163,6 +165,9 @@ try
     {
         await db.Database.MigrateAsync();
     }
+
+    // Seed default runbooks
+    await app.Services.GetRequiredService<RunbookTriggerService>().SeedDefaultRunbooksAsync();
 
     // Static files for Admin Dashboard
     app.UseDefaultFiles();
