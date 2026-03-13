@@ -71,6 +71,9 @@ try
     builder.Services.AddOptions<HealthScoreConfiguration>()
         .Bind(builder.Configuration.GetSection(HealthScoreConfiguration.SectionName));
 
+    builder.Services.AddOptions<SecurityAuditConfiguration>()
+        .Bind(builder.Configuration.GetSection(SecurityAuditConfiguration.SectionName));
+
     builder.Services.AddOptions<LogAnomalyConfiguration>()
         .Bind(builder.Configuration.GetSection(LogAnomalyConfiguration.SectionName));
 
@@ -148,6 +151,8 @@ try
     builder.Services.AddSingleton<RunbookTriggerService>();
     builder.Services.AddSingleton<AlertWebhookService>();
     builder.Services.AddHostedService<HealthScoreBackgroundService>();
+    builder.Services.AddSingleton<SecurityAuditService>();
+    builder.Services.AddHostedService(sp => sp.GetRequiredService<SecurityAuditService>());
     builder.Services.AddHostedService<LogAnomalyService>();
     builder.Services.AddHostedService<KnowledgeRefreshService>();
 
