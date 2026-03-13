@@ -71,6 +71,9 @@ try
     builder.Services.AddOptions<HealthScoreConfiguration>()
         .Bind(builder.Configuration.GetSection(HealthScoreConfiguration.SectionName));
 
+    builder.Services.AddOptions<AnomalyDetectionConfiguration>()
+        .Bind(builder.Configuration.GetSection(AnomalyDetectionConfiguration.SectionName));
+
     builder.Services.AddOptions<SecurityAuditConfiguration>()
         .Bind(builder.Configuration.GetSection(SecurityAuditConfiguration.SectionName));
 
@@ -153,6 +156,7 @@ try
     builder.Services.AddHostedService<HealthScoreBackgroundService>();
     builder.Services.AddSingleton<SecurityAuditService>();
     builder.Services.AddHostedService(sp => sp.GetRequiredService<SecurityAuditService>());
+    builder.Services.AddHostedService<AnomalyDetectionService>();
     builder.Services.AddHostedService<LogAnomalyService>();
     builder.Services.AddHostedService<KnowledgeRefreshService>();
 

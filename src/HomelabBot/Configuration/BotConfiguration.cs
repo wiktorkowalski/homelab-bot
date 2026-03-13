@@ -101,6 +101,16 @@ public sealed class AlertWebhookConfiguration
     public ulong DiscordUserId { get; init; }
 }
 
+public sealed class AnomalyDetectionConfiguration
+{
+    public const string SectionName = "AnomalyDetection";
+
+    public bool Enabled { get; init; } = true;
+    public int HeuristicIntervalMinutes { get; init; } = 60;
+    public int LlmIntervalTicks { get; init; } = 1;
+    public ulong DiscordUserId { get; init; }
+}
+
 public sealed class SecurityAuditConfiguration
 {
     public const string SectionName = "SecurityAudit";
