@@ -159,20 +159,66 @@ public sealed class MemoryService
     {
         await using var db = await _dbFactory.CreateDbContextAsync();
 
-        var keywords = symptom.ToLowerInvariant().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var keywords = symptom.ToLowerInvariant()
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .Where(k => k.Length > 2)
+            .ToArray();
+
+        if (keywords.Length == 0)
+            return [];
 
         var patterns = await db.Patterns
             .OrderByDescending(p => p.OccurrenceCount)
-            .Take(20)
+            .Take(50)
             .ToListAsync();
 
-        var matched = patterns
-            .Where(p => keywords.Any(k =>
-                p.Symptom.Contains(k, StringComparison.OrdinalIgnoreCase)))
+        var scored = patterns
+            .Select(p =>
+            {
+                var symptomLower = p.Symptom.ToLowerInvariant();
+                var keywordScore = 0;
+
+                foreach (var keyword in keywords)
+                {
+                    if (symptomLower.Split(' ').Contains(keyword))
+                        keywordScore += 2;
+                    else if (symptomLower.Contains(keyword))
+                        keywordScore += 1;
+                }
+
+                if (keywordScore == 0)
+                    return new { Pattern = p, Score = 0 };
+
+                // Frequency bonus only when there's a keyword match
+                var score = keywordScore + Math.Min(p.OccurrenceCount / 3, 3);
+
+                return new { Pattern = p, Score = score };
+            })
+            .Where(x => x.Score > 0)
+            .OrderByDescending(x => x.Score)
+            .ThenByDescending(x => x.Pattern.SuccessRate)
             .Take(limit)
+            .Select(x => x.Pattern)
             .ToList();
 
-        return matched;
+        return scored;
+    }
+
+    public async Task RecordPatternFeedbackAsync(int patternId, bool helpful)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync();
+
+        var pattern = await db.Patterns.FindAsync(patternId);
+        if (pattern == null)
+            return;
+
+        if (helpful)
+            pattern.SuccessCount++;
+        else
+            pattern.FailureCount++;
+
+        await db.SaveChangesAsync();
+        _logger.LogDebug("Recorded {Feedback} feedback for pattern {Id}", helpful ? "positive" : "negative", patternId);
     }
 
     public async Task<string> GenerateIncidentContextAsync(string symptom)
@@ -193,7 +239,10 @@ public sealed class MemoryService
             sb.AppendLine("\n### Known Patterns");
             foreach (var p in patterns)
             {
-                sb.AppendLine($"- **{p.Symptom}**: Usually caused by {p.CommonCause}");
+                var successInfo = (p.SuccessCount + p.FailureCount) > 0
+                    ? $" (resolved {p.SuccessRate:F0}% of cases)"
+                    : "";
+                sb.AppendLine($"- **{p.Symptom}**: Usually caused by {p.CommonCause}{successInfo}");
                 if (!string.IsNullOrEmpty(p.Resolution))
                 {
                     sb.AppendLine($"  Fix: {p.Resolution}");

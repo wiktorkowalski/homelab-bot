@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using DSharpPlus;
 using DSharpPlus.Entities;
 using HomelabBot.Configuration;
 using HomelabBot.Models;
@@ -11,6 +12,7 @@ public sealed class AlertWebhookService
 {
     private readonly DiscordBotService _discordService;
     private readonly KernelService _kernelService;
+    private readonly MemoryService _memoryService;
     private readonly AlertWebhookConfiguration _config;
     private readonly ILogger<AlertWebhookService> _logger;
 
@@ -21,11 +23,13 @@ public sealed class AlertWebhookService
     public AlertWebhookService(
         DiscordBotService discordService,
         KernelService kernelService,
+        MemoryService memoryService,
         IOptions<AlertWebhookConfiguration> config,
         ILogger<AlertWebhookService> logger)
     {
         _discordService = discordService;
         _kernelService = kernelService;
+        _memoryService = memoryService;
         _config = config.Value;
         _logger = logger;
     }
@@ -59,8 +63,27 @@ public sealed class AlertWebhookService
         var conversationId = BitConverter.ToUInt64(hashBytes, 0);
 
         string analysis;
+        List<Data.Entities.Pattern> matchedPatterns = [];
+
         if (alert.IsFiring)
         {
+            // Check for known patterns before LLM investigation
+            var searchTerms = $"{alert.AlertName} {alert.Description ?? alert.Summary ?? ""}";
+            matchedPatterns = await _memoryService.GetRelevantPatternsAsync(searchTerms);
+
+            var patternContext = "";
+            if (matchedPatterns.Count > 0)
+            {
+                var patternLines = matchedPatterns.Select(p =>
+                {
+                    var successInfo = (p.SuccessCount + p.FailureCount) > 0
+                        ? $" (resolved {p.SuccessRate:F0}% of cases)"
+                        : "";
+                    return $"- {p.Symptom}: {p.CommonCause} → Fix: {p.Resolution}{successInfo}";
+                });
+                patternContext = $"\n\nKNOWN PATTERNS for this type of issue (consider these first):\n{string.Join("\n", patternLines)}\n";
+            }
+
             var prompt = $"""
                 ALERT FIRING - Investigate this:
                 Alert: {alert.AlertName}
@@ -68,7 +91,7 @@ public sealed class AlertWebhookService
                 Instance: {alert.Instance ?? "unknown"}
                 Description: {alert.Description ?? alert.Summary ?? "none"}
                 Started: {alert.StartsAt:u}
-
+                {patternContext}
                 Use your tools to investigate what's happening. Check relevant logs, metrics, container status, etc.
                 Provide a brief summary of what you found and any recommended actions.
                 """;
@@ -86,7 +109,47 @@ public sealed class AlertWebhookService
         }
 
         var embed = BuildAlertEmbed(alert, analysis);
-        await _discordService.SendDmAsync(_config.DiscordUserId, embed);
+
+        if (matchedPatterns.Count > 0)
+        {
+            await _discordService.SendDmWithComponentsAsync(
+                _config.DiscordUserId,
+                embed,
+                BuildPatternFeedbackButtons(matchedPatterns));
+        }
+        else
+        {
+            await _discordService.SendDmAsync(_config.DiscordUserId, embed);
+        }
+    }
+
+    private static List<DiscordComponent> BuildPatternFeedbackButtons(List<Data.Entities.Pattern> patterns)
+    {
+        var components = new List<DiscordComponent>();
+
+        foreach (var pattern in patterns.Take(2))
+        {
+            components.Add(new DiscordButtonComponent(
+                ButtonStyle.Success,
+                $"pattern_helpful_{pattern.Id}",
+                $"Helpful: {Truncate(pattern.Symptom, 30)}",
+                false,
+                new DiscordComponentEmoji("👍")));
+
+            components.Add(new DiscordButtonComponent(
+                ButtonStyle.Secondary,
+                $"pattern_notrelevant_{pattern.Id}",
+                "Not relevant",
+                false,
+                new DiscordComponentEmoji("👎")));
+        }
+
+        return components;
+    }
+
+    private static string Truncate(string text, int maxLength)
+    {
+        return text.Length > maxLength ? text[.. (maxLength - 3)] + "..." : text;
     }
 
     private DiscordEmbed BuildAlertEmbed(AlertmanagerWebhookAlert alert, string analysis)
