@@ -101,6 +101,16 @@ public sealed class AlertWebhookConfiguration
     public ulong DiscordUserId { get; init; }
 }
 
+public sealed class LogAnomalyConfiguration
+{
+    public const string SectionName = "LogAnomaly";
+
+    public bool Enabled { get; init; } = true;
+    public int IntervalMinutes { get; init; } = 30;
+    public int ErrorThreshold { get; init; } = 50;
+    public ulong DiscordUserId { get; init; }
+}
+
 public sealed class HealthScoreConfiguration
 {
     public const string SectionName = "HealthScore";

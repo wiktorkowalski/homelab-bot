@@ -68,8 +68,8 @@ internal static class HealthcheckPrompts
         Flag: any scrape target DOWN, Loki dropping logs, cardinality >500k.
 
         ### 9. LOKI LOG ANALYSIS (last 24h)
-        - Error logs per container
-        - Fatal/panic/OOM events
+        - Call CountErrorsByContainer("24h") to get error counts per container
+        - Call DetectCriticalPatterns("24h") to find fatal/panic/OOM events
         Flag: any container with >100 error lines/24h, any fatal/panic/OOM.
 
         ### 10. SERVICES — SPECIFIC CHECKS

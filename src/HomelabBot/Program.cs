@@ -71,6 +71,9 @@ try
     builder.Services.AddOptions<HealthScoreConfiguration>()
         .Bind(builder.Configuration.GetSection(HealthScoreConfiguration.SectionName));
 
+    builder.Services.AddOptions<LogAnomalyConfiguration>()
+        .Bind(builder.Configuration.GetSection(LogAnomalyConfiguration.SectionName));
+
     builder.Services.AddOptions<KnowledgeRefreshConfiguration>()
         .Bind(builder.Configuration.GetSection(KnowledgeRefreshConfiguration.SectionName));
 
@@ -143,6 +146,7 @@ try
     builder.Services.AddHostedService<DailySummaryService>();
     builder.Services.AddSingleton<AlertWebhookService>();
     builder.Services.AddHostedService<HealthScoreBackgroundService>();
+    builder.Services.AddHostedService<LogAnomalyService>();
     builder.Services.AddHostedService<KnowledgeRefreshService>();
 
     // API Controllers
