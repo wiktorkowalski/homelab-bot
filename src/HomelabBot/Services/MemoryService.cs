@@ -176,11 +176,12 @@ public sealed class MemoryService
             .Select(p =>
             {
                 var symptomLower = p.Symptom.ToLowerInvariant();
+                var symptomWords = symptomLower.Split(' ');
                 var keywordScore = 0;
 
                 foreach (var keyword in keywords)
                 {
-                    if (symptomLower.Split(' ').Contains(keyword))
+                    if (symptomWords.Contains(keyword))
                         keywordScore += 2;
                     else if (symptomLower.Contains(keyword))
                         keywordScore += 1;
