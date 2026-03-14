@@ -157,11 +157,16 @@ public sealed class KernelService
                 BaseUrl = config.Value.AnthropicBaseUrl!,
             };
 
-            _chatService = new Microsoft.Extensions.AI.ChatClientBuilder(
+            var anthropicService = new ChatClientBuilder(
                     anthropicClient.AsIChatClient(config.Value.AnthropicModel))
                 .UseFunctionInvocation()
                 .Build()
                 .AsChatCompletionService();
+
+            // Wrap with fallback to OpenRouter
+            var openRouterFallback = _kernel.GetRequiredService<IChatCompletionService>();
+            _chatService = new FallbackChatCompletionService(
+                anthropicService, openRouterFallback, logger);
 
             _logger.LogInformation(
                 "Kernel initialized with Anthropic {Model} (fallback: OpenRouter {Fallback}), {PluginCount} plugins",
