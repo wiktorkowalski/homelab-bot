@@ -47,11 +47,18 @@ public sealed class FallbackChatCompletionService : IChatCompletionService
         {
             _logger.LogWarning(ex, "Primary LLM failed, falling back to OpenRouter");
 
-            // Build OpenAI-specific settings with tool calling for fallback
+            // Preserve caller's max_tokens, default temperature and enable tool calling
+            var maxTokens = 2048;
+            if (executionSettings?.ExtensionData?.TryGetValue("max_tokens", out var mt) == true)
+            {
+                if (mt is int i) maxTokens = i;
+                else if (mt is long l) maxTokens = (int)l;
+            }
+
             var fallbackSettings = new OpenAIPromptExecutionSettings
             {
                 Temperature = 0.7,
-                MaxTokens = 2048,
+                MaxTokens = maxTokens,
                 ToolCallBehavior = ToolCallBehavior.AutoInvokeKernelFunctions,
             };
 
