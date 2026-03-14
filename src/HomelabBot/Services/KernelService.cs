@@ -91,6 +91,7 @@ public sealed class KernelService
     public KernelService(
         IOptions<BotConfiguration> config,
         ILogger<KernelService> logger,
+        ILoggerFactory loggerFactory,
         ILogger<TelemetryFunctionFilter> filterLogger,
         ConversationService conversationService,
         TelemetryService telemetryService,
@@ -161,6 +162,9 @@ public sealed class KernelService
                     anthropicClient.AsIChatClient(config.Value.AnthropicModel))
                 .UseOpenTelemetry(sourceName: "HomelabBot.Chat", configure: otel =>
                     otel.EnableSensitiveData = true)
+                .Use(inner => new TelemetryChatClient(
+                    inner, telemetryService,
+                    loggerFactory.CreateLogger<TelemetryChatClient>()))
                 .UseFunctionInvocation()
                 .Build()
                 .AsChatCompletionService();
