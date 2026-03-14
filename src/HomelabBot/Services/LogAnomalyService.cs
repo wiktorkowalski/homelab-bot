@@ -89,7 +89,7 @@ public sealed class LogAnomalyService : BackgroundService
             return;
         }
 
-        var userId = _config.CurrentValue.DiscordUserId;
+        var userId = HomelabOwner.DiscordUserId;
         if (userId == 0)
             return;
 

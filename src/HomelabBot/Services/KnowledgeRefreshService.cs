@@ -125,7 +125,7 @@ public sealed class KnowledgeRefreshService : BackgroundService
             "Knowledge refresh complete: {Added} added, {Verified} verified, {Stale} stale, {Errors} errors",
             result.AddedFacts, result.VerifiedFacts, result.StaleFacts, result.Errors.Count);
 
-        if (_config.CurrentValue.NotifyOnChanges && _config.CurrentValue.DiscordUserId != 0
+        if (_config.CurrentValue.NotifyOnChanges && HomelabOwner.DiscordUserId != 0
             && (result.AddedFacts > 0 || result.StaleFacts > 0))
         {
             await SendNotificationAsync(result);
@@ -285,7 +285,7 @@ public sealed class KnowledgeRefreshService : BackgroundService
 
         try
         {
-            await _discordBot.SendDmAsync(_config.CurrentValue.DiscordUserId, message);
+            await _discordBot.SendDmAsync(HomelabOwner.DiscordUserId, message);
         }
         catch (Exception ex)
         {

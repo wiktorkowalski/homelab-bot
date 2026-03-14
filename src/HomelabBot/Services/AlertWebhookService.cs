@@ -39,12 +39,6 @@ public sealed class AlertWebhookService
 
     public async Task ProcessAlertsAsync(AlertmanagerWebhookPayload payload, CancellationToken ct = default)
     {
-        if (_config.DiscordUserId == 0)
-        {
-            _logger.LogWarning("AlertWebhook: DiscordUserId not configured, skipping");
-            return;
-        }
-
         _logger.LogInformation("Processing {Count} alerts from Alertmanager", payload.Alerts.Count);
 
         foreach (var alert in payload.Alerts)
@@ -75,7 +69,7 @@ public sealed class AlertWebhookService
             if (runbookResult != null)
             {
                 var runbookEmbed = BuildAlertEmbed(alert, runbookResult);
-                await _discordService.SendDmAsync(_config.DiscordUserId, runbookEmbed);
+                await _discordService.SendDmAsync(HomelabOwner.DiscordUserId, runbookEmbed);
                 return;
             }
 
@@ -111,7 +105,7 @@ public sealed class AlertWebhookService
             analysis = await _kernelService.ProcessMessageAsync(
                 conversationId,
                 prompt,
-                _config.DiscordUserId,
+                HomelabOwner.DiscordUserId,
                 TraceType.Scheduled,
                 ct: ct);
         }
@@ -125,13 +119,13 @@ public sealed class AlertWebhookService
         if (matchedPatterns.Count > 0)
         {
             await _discordService.SendDmWithComponentsAsync(
-                _config.DiscordUserId,
+                HomelabOwner.DiscordUserId,
                 embed,
                 BuildPatternFeedbackButtons(matchedPatterns));
         }
         else
         {
-            await _discordService.SendDmAsync(_config.DiscordUserId, embed);
+            await _discordService.SendDmAsync(HomelabOwner.DiscordUserId, embed);
         }
     }
 

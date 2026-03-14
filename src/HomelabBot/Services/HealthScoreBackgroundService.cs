@@ -75,7 +75,7 @@ public sealed class HealthScoreBackgroundService : BackgroundService
 
         if (previousScore.HasValue && previousScore.Value - result.Score >= threshold)
         {
-            var userId = _config.CurrentValue.DiscordUserId;
+            var userId = HomelabOwner.DiscordUserId;
             if (userId == 0)
                 return;
 

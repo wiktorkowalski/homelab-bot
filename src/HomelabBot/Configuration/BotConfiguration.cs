@@ -1,5 +1,14 @@
 namespace HomelabBot.Configuration;
 
+/// <summary>
+/// Single-user homelab bot — the owner's Discord ID is hardcoded here
+/// rather than duplicated across every feature config section.
+/// </summary>
+public static class HomelabOwner
+{
+    public const ulong DiscordUserId = 170921674840080384;
+}
+
 public sealed class BotConfiguration
 {
     public const string SectionName = "Bot";
@@ -91,14 +100,11 @@ public sealed class DailySummaryConfiguration
     public bool Enabled { get; init; } = false;
     public string ScheduleTime { get; init; } = "08:00";
     public string TimeZone { get; init; } = "Europe/Warsaw";
-    public ulong DiscordUserId { get; init; }
 }
 
 public sealed class AlertWebhookConfiguration
 {
     public const string SectionName = "AlertWebhook";
-
-    public ulong DiscordUserId { get; init; }
 }
 
 public sealed class AnomalyDetectionConfiguration
@@ -108,7 +114,6 @@ public sealed class AnomalyDetectionConfiguration
     public bool Enabled { get; init; } = true;
     public int HeuristicIntervalMinutes { get; init; } = 60;
     public int LlmIntervalTicks { get; init; } = 1;
-    public ulong DiscordUserId { get; init; }
 }
 
 public sealed class SecurityAuditConfiguration
@@ -119,7 +124,6 @@ public sealed class SecurityAuditConfiguration
     public DayOfWeek ScheduleDay { get; init; } = DayOfWeek.Sunday;
     public string ScheduleTime { get; init; } = "02:00";
     public string TimeZone { get; init; } = "Europe/Warsaw";
-    public ulong DiscordUserId { get; init; }
 }
 
 public sealed class LogAnomalyConfiguration
@@ -129,7 +133,6 @@ public sealed class LogAnomalyConfiguration
     public bool Enabled { get; init; } = true;
     public int IntervalMinutes { get; init; } = 30;
     public int ErrorThreshold { get; init; } = 50;
-    public ulong DiscordUserId { get; init; }
 }
 
 public sealed class HealthScoreConfiguration
@@ -139,7 +142,6 @@ public sealed class HealthScoreConfiguration
     public bool Enabled { get; init; } = true;
     public int IntervalMinutes { get; init; } = 15;
     public int AlertDropThreshold { get; init; } = 15;
-    public ulong DiscordUserId { get; init; }
     public int CriticalAlertWeight { get; init; } = 20;
     public int WarningAlertWeight { get; init; } = 5;
     public int StoppedContainerWeight { get; init; } = 10;
@@ -159,5 +161,4 @@ public sealed class KnowledgeRefreshConfiguration
     public string ScheduleTime { get; init; } = "03:00";
     public string TimeZone { get; init; } = "Europe/Warsaw";
     public bool NotifyOnChanges { get; init; } = false;
-    public ulong DiscordUserId { get; init; }
 }

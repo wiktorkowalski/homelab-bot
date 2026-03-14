@@ -87,7 +87,7 @@ public sealed class SecurityAuditService : BackgroundService
     {
         _logger.LogInformation("Starting scheduled security audit");
 
-        var userId = _config.CurrentValue.DiscordUserId;
+        var userId = HomelabOwner.DiscordUserId;
         if (userId == 0)
         {
             _logger.LogWarning("DiscordUserId not configured, cannot send security audit");

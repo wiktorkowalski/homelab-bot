@@ -266,7 +266,7 @@ public sealed class AnomalyDetectionService : BackgroundService
 
     private async Task RunLlmAnalysisAsync(List<Anomaly> anomalies, CancellationToken ct)
     {
-        var userId = _config.CurrentValue.DiscordUserId;
+        var userId = HomelabOwner.DiscordUserId;
         if (userId == 0)
             return;
 
@@ -326,7 +326,7 @@ public sealed class AnomalyDetectionService : BackgroundService
 
     private async Task NotifyCriticalAnomaliesAsync(List<Anomaly> anomalies, CancellationToken ct)
     {
-        var userId = _config.CurrentValue.DiscordUserId;
+        var userId = HomelabOwner.DiscordUserId;
         if (userId == 0)
             return;
 
