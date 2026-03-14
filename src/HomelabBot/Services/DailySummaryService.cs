@@ -96,7 +96,7 @@ public sealed class DailySummaryService : BackgroundService
     {
         _logger.LogInformation("Starting daily healthcheck investigation");
 
-        var userId = _config.CurrentValue.DiscordUserId;
+        var userId = HomelabOwner.DiscordUserId;
         if (userId == 0)
         {
             _logger.LogWarning("DiscordUserId not configured, cannot send DM");
