@@ -30,6 +30,8 @@ public sealed class HomelabDbContext : DbContext
 
     public DbSet<Runbook> Runbooks => Set<Runbook>();
 
+    public DbSet<AnomalyEvent> AnomalyEvents => Set<AnomalyEvent>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<Knowledge>(entity =>
@@ -96,6 +98,11 @@ public sealed class HomelabDbContext : DbContext
         modelBuilder.Entity<Runbook>(entity =>
         {
             entity.HasIndex(r => r.Enabled);
+        });
+
+        modelBuilder.Entity<AnomalyEvent>(entity =>
+        {
+            entity.HasIndex(a => a.DetectedAt);
         });
     }
 }

@@ -1,0 +1,419 @@
+using System.Text;
+using System.Text.Json;
+using HomelabBot.Configuration;
+using HomelabBot.Data;
+using HomelabBot.Data.Entities;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
+
+namespace HomelabBot.Services;
+
+public sealed class AnomalyDetectionService : BackgroundService
+{
+    private readonly IOptionsMonitor<AnomalyDetectionConfiguration> _config;
+    private readonly HttpClient _httpClient;
+    private readonly string _prometheusUrl;
+    private readonly KernelService _kernelService;
+    private readonly ConversationService _conversationService;
+    private readonly DiscordBotService _discordBot;
+    private readonly IDbContextFactory<HomelabDbContext> _dbFactory;
+    private readonly ILogger<AnomalyDetectionService> _logger;
+
+    // In-memory baselines for rate-of-change detection
+    private readonly Dictionary<string, double> _lastMetricValues = new();
+    private int _heuristicTick;
+
+    public AnomalyDetectionService(
+        IOptionsMonitor<AnomalyDetectionConfiguration> config,
+        IHttpClientFactory httpClientFactory,
+        IOptions<PrometheusConfiguration> prometheusConfig,
+        KernelService kernelService,
+        ConversationService conversationService,
+        DiscordBotService discordBot,
+        IDbContextFactory<HomelabDbContext> dbFactory,
+        ILogger<AnomalyDetectionService> logger)
+    {
+        _config = config;
+        _httpClient = httpClientFactory.CreateClient("Default");
+        _prometheusUrl = prometheusConfig.Value.Host.TrimEnd('/');
+        _kernelService = kernelService;
+        _conversationService = conversationService;
+        _discordBot = discordBot;
+        _dbFactory = dbFactory;
+        _logger = logger;
+    }
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        _logger.LogInformation("Anomaly detection service started, waiting for Discord...");
+        await _discordBot.WaitForReadyAsync(stoppingToken);
+        _logger.LogInformation("Discord ready, anomaly detection running");
+
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            try
+            {
+                if (!_config.CurrentValue.Enabled)
+                {
+                    _logger.LogDebug("Anomaly detection disabled, rechecking in 1 minute");
+                    await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);
+                    continue;
+                }
+
+                var interval = Math.Max(1, _config.CurrentValue.HeuristicIntervalMinutes);
+                await Task.Delay(TimeSpan.FromMinutes(interval), stoppingToken);
+
+                _heuristicTick++;
+                var anomalies = await RunHeuristicChecksAsync(stoppingToken);
+
+                // Every N heuristic ticks, run LLM analysis if anomalies detected
+                var llmInterval = Math.Max(1, _config.CurrentValue.LlmIntervalTicks);
+                if (_heuristicTick % llmInterval == 0 && anomalies.Count > 0)
+                {
+                    await RunLlmAnalysisAsync(anomalies, stoppingToken);
+                }
+                else if (anomalies.Any(a => a.Severity == AnomalySeverity.Critical))
+                {
+                    // Critical anomalies always trigger immediate notification
+                    await NotifyCriticalAnomaliesAsync(anomalies, stoppingToken);
+                }
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                break;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error in anomaly detection service");
+                await Task.Delay(TimeSpan.FromMinutes(5), stoppingToken);
+            }
+        }
+    }
+
+    private async Task<List<Anomaly>> RunHeuristicChecksAsync(CancellationToken ct)
+    {
+        var anomalies = new List<Anomaly>();
+
+        // Run all checks in parallel
+        var tasks = new List<Task<List<Anomaly>>>
+        {
+            CheckCpuAsync(ct),
+            CheckMemoryAsync(ct),
+            CheckDiskAsync(ct),
+            CheckTargetsAsync(ct),
+        };
+
+        await Task.WhenAll(tasks);
+
+        foreach (var task in tasks)
+        {
+            anomalies.AddRange(await task);
+        }
+
+        if (anomalies.Count > 0)
+        {
+            _logger.LogDebug("Heuristic check found {Count} anomalies", anomalies.Count);
+        }
+
+        return anomalies;
+    }
+
+    private async Task<List<Anomaly>> CheckCpuAsync(CancellationToken ct)
+    {
+        var anomalies = new List<Anomaly>();
+
+        var cpuUsage = await QueryPrometheusValueAsync(
+            "100 - (avg(rate(node_cpu_seconds_total{mode=\"idle\"}[5m])) * 100)", ct);
+
+        if (cpuUsage == null)
+            return anomalies;
+
+        var previous = _lastMetricValues.GetValueOrDefault("cpu", cpuUsage.Value);
+        _lastMetricValues["cpu"] = cpuUsage.Value;
+
+        if (cpuUsage > 80)
+        {
+            anomalies.Add(new Anomaly
+            {
+                Type = "CPU",
+                Message = $"CPU usage at {cpuUsage:F1}%",
+                Severity = cpuUsage > 95 ? AnomalySeverity.Critical : AnomalySeverity.Warning,
+                Value = cpuUsage.Value,
+            });
+        }
+        else if (cpuUsage > 50 && cpuUsage - previous > 20)
+        {
+            anomalies.Add(new Anomaly
+            {
+                Type = "CPU",
+                Message = $"CPU spike: {previous:F1}% → {cpuUsage:F1}% (rapid increase)",
+                Severity = AnomalySeverity.Warning,
+                Value = cpuUsage.Value,
+            });
+        }
+
+        return anomalies;
+    }
+
+    private async Task<List<Anomaly>> CheckMemoryAsync(CancellationToken ct)
+    {
+        var anomalies = new List<Anomaly>();
+
+        var memUsage = await QueryPrometheusValueAsync(
+            "(1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * 100", ct);
+
+        if (memUsage == null)
+            return anomalies;
+
+        if (memUsage > 90)
+        {
+            anomalies.Add(new Anomaly
+            {
+                Type = "Memory",
+                Message = $"Memory usage at {memUsage:F1}%",
+                Severity = memUsage > 95 ? AnomalySeverity.Critical : AnomalySeverity.Warning,
+                Value = memUsage.Value,
+            });
+        }
+
+        return anomalies;
+    }
+
+    private async Task<List<Anomaly>> CheckDiskAsync(CancellationToken ct)
+    {
+        var anomalies = new List<Anomaly>();
+
+        var diskUsage = await QueryPrometheusValueAsync(
+            "(1 - node_filesystem_avail_bytes{mountpoint=\"/\"} / node_filesystem_size_bytes{mountpoint=\"/\"}) * 100", ct);
+
+        if (diskUsage == null)
+            return anomalies;
+
+        if (diskUsage > 85)
+        {
+            anomalies.Add(new Anomaly
+            {
+                Type = "Disk",
+                Message = $"Disk usage at {diskUsage:F1}%",
+                Severity = diskUsage > 95 ? AnomalySeverity.Critical : AnomalySeverity.Warning,
+                Value = diskUsage.Value,
+            });
+        }
+
+        // Check disk fill rate prediction (ratio < 0 means available space crosses zero within 30 days)
+        var predictedAvailableRatio = await QueryPrometheusValueAsync(
+            "predict_linear(node_filesystem_avail_bytes{mountpoint=\"/\"}[7d], 30*24*3600) / node_filesystem_size_bytes{mountpoint=\"/\"}", ct);
+
+        if (predictedAvailableRatio is < 0)
+        {
+            anomalies.Add(new Anomaly
+            {
+                Type = "Disk",
+                Message = "Disk predicted to fill within 30 days based on current trend",
+                Severity = AnomalySeverity.Warning,
+                Value = diskUsage ?? 0,
+            });
+        }
+
+        return anomalies;
+    }
+
+    private async Task<List<Anomaly>> CheckTargetsAsync(CancellationToken ct)
+    {
+        var anomalies = new List<Anomaly>();
+
+        try
+        {
+            var response = await _httpClient.GetAsync($"{_prometheusUrl}/api/v1/targets", ct);
+            if (!response.IsSuccessStatusCode)
+                return anomalies;
+
+            var json = await response.Content.ReadAsStringAsync(ct);
+            using var doc = JsonDocument.Parse(json);
+
+            var targets = doc.RootElement
+                .GetProperty("data")
+                .GetProperty("activeTargets");
+
+            var downTargets = new List<string>();
+            foreach (var target in targets.EnumerateArray())
+            {
+                if (target.GetProperty("health").GetString() == "down")
+                {
+                    var job = target.GetProperty("labels").GetProperty("job").GetString() ?? "unknown";
+                    downTargets.Add(job);
+                }
+            }
+
+            if (downTargets.Count > 0)
+            {
+                anomalies.Add(new Anomaly
+                {
+                    Type = "Monitoring",
+                    Message = $"{downTargets.Count} targets down: {string.Join(", ", downTargets.Take(5))}",
+                    Severity = downTargets.Count > 2 ? AnomalySeverity.Critical : AnomalySeverity.Warning,
+                    Value = downTargets.Count,
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to check Prometheus targets");
+        }
+
+        return anomalies;
+    }
+
+    private async Task RunLlmAnalysisAsync(List<Anomaly> anomalies, CancellationToken ct)
+    {
+        var userId = _config.CurrentValue.DiscordUserId;
+        if (userId == 0)
+            return;
+
+        var anomalySummary = new StringBuilder();
+        anomalySummary.AppendLine("The following anomalies were detected by automated monitoring:");
+        foreach (var a in anomalies)
+        {
+            var emoji = a.Severity == AnomalySeverity.Critical ? "🔴" : "🟡";
+            anomalySummary.AppendLine($"{emoji} [{a.Type}] {a.Message}");
+        }
+
+        var threadId = (ulong)DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        try
+        {
+            var prompt = $"""
+                PROACTIVE MONITORING ALERT - Analyze these anomalies:
+
+                {anomalySummary}
+
+                Use your tools to investigate the root cause. Check related metrics, logs, and container states.
+                Provide a brief analysis with:
+                1. What's happening
+                2. Likely cause
+                3. Recommended action
+                Be concise (3-5 sentences).
+                """;
+
+            var analysis = await _kernelService.ProcessMessageAsync(
+                threadId, prompt, traceType: TraceType.Scheduled, ct: ct);
+
+            var message = $"🔍 **Proactive Anomaly Detection**\n\n{anomalySummary}\n**Analysis:**\n{analysis}";
+
+            try
+            {
+                if (message.Length > 1900)
+                {
+                    await _discordBot.SendDmFileAsync(userId, message, "anomaly-report.md");
+                }
+                else
+                {
+                    await _discordBot.SendDmAsync(userId, message);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to send anomaly notification");
+            }
+
+            // Record anomaly event
+            await RecordAnomalyEventAsync(anomalies, analysis, ct);
+        }
+        finally
+        {
+            _conversationService.ClearHistory(threadId);
+        }
+    }
+
+    private async Task NotifyCriticalAnomaliesAsync(List<Anomaly> anomalies, CancellationToken ct)
+    {
+        var userId = _config.CurrentValue.DiscordUserId;
+        if (userId == 0)
+            return;
+
+        var criticals = anomalies.Where(a => a.Severity == AnomalySeverity.Critical).ToList();
+        var message = $"🚨 **Critical Anomalies Detected**\n\n" +
+                      string.Join("\n", criticals.Select(a => $"🔴 [{a.Type}] {a.Message}"));
+
+        try
+        {
+            await _discordBot.SendDmAsync(userId, message);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to send critical anomaly notification");
+        }
+    }
+
+    private async Task RecordAnomalyEventAsync(List<Anomaly> anomalies, string analysis, CancellationToken ct)
+    {
+        try
+        {
+            await using var db = await _dbFactory.CreateDbContextAsync(ct);
+            db.AnomalyEvents.Add(new AnomalyEvent
+            {
+                Summary = string.Join("; ", anomalies.Select(a => $"[{a.Type}] {a.Message}")),
+                Analysis = analysis.Length > 1000 ? analysis[..997] + "..." : analysis,
+                Severity = anomalies.Max(a => a.Severity).ToString(),
+                AnomalyCount = anomalies.Count,
+            });
+            await db.SaveChangesAsync(ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to record anomaly event");
+        }
+    }
+
+    private async Task<double?> QueryPrometheusValueAsync(string query, CancellationToken ct)
+    {
+        try
+        {
+            var encodedQuery = Uri.EscapeDataString(query);
+            var response = await _httpClient.GetAsync(
+                $"{_prometheusUrl}/api/v1/query?query={encodedQuery}", ct);
+
+            if (!response.IsSuccessStatusCode)
+                return null;
+
+            var json = await response.Content.ReadAsStringAsync(ct);
+            using var doc = JsonDocument.Parse(json);
+
+            var results = doc.RootElement
+                .GetProperty("data")
+                .GetProperty("result");
+
+            if (results.GetArrayLength() == 0)
+                return null;
+
+            var valueStr = results[0].GetProperty("value")[1].GetString();
+            if (double.TryParse(valueStr, System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out var value))
+            {
+                return value;
+            }
+
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to query Prometheus: {Query}", query);
+            return null;
+        }
+    }
+
+#pragma warning disable SA1201
+    private enum AnomalySeverity
+    {
+        Warning,
+        Critical,
+    }
+
+    private sealed class Anomaly
+    {
+        public required string Type { get; init; }
+        public required string Message { get; init; }
+        public required AnomalySeverity Severity { get; init; }
+        public required double Value { get; init; }
+    }
+#pragma warning restore SA1201
+}
