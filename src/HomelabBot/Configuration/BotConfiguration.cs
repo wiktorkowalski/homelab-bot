@@ -170,3 +170,11 @@ public sealed class KnowledgeRefreshConfiguration
     public string TimeZone { get; init; } = "Europe/Warsaw";
     public bool NotifyOnChanges { get; init; } = false;
 }
+
+public sealed class McpServerConfiguration
+{
+    public const string SectionName = "McpServer";
+
+    public bool Enabled { get; init; }
+    public string ApiKey { get; init; } = "";
+}
