@@ -156,22 +156,22 @@ public sealed class AlertWebhookService
     {
         var components = new List<DiscordComponent>();
 
-        foreach (var pattern in patterns.Take(2))
-        {
-            components.Add(new DiscordButtonComponent(
-                ButtonStyle.Success,
-                $"pattern_helpful_{pattern.Id}",
-                $"Helpful: {Truncate(pattern.Symptom, 30)}",
-                false,
-                new DiscordComponentEmoji("👍")));
+        // Encode all pattern IDs so one button press feeds back on all matched patterns
+        var ids = string.Join(",", patterns.Select(p => p.Id));
 
-            components.Add(new DiscordButtonComponent(
-                ButtonStyle.Secondary,
-                $"pattern_notrelevant_{pattern.Id}",
-                "Not relevant",
-                false,
-                new DiscordComponentEmoji("👎")));
-        }
+        components.Add(new DiscordButtonComponent(
+            ButtonStyle.Success,
+            $"pattern_helpful_{ids}",
+            "Analysis was helpful",
+            false,
+            new DiscordComponentEmoji("👍")));
+
+        components.Add(new DiscordButtonComponent(
+            ButtonStyle.Secondary,
+            $"pattern_notrelevant_{ids}",
+            "Not relevant",
+            false,
+            new DiscordComponentEmoji("👎")));
 
         return components;
     }
