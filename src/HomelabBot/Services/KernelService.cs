@@ -350,7 +350,7 @@ public sealed class KernelService
             return (promptTokens, completionTokens);
 
         // Debug: log available metadata keys to help diagnose
-        _logger.LogDebug("Token extraction miss. Metadata keys: {Keys}, InnerContent type: {Type}",
+        _logger.LogWarning("Token extraction miss. Metadata keys: {Keys}, InnerContent type: {Type}",
             string.Join(", ", response.Metadata.Keys),
             response.InnerContent?.GetType().FullName ?? "null");
 
