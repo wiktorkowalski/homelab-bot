@@ -170,3 +170,13 @@ public sealed class KnowledgeRefreshConfiguration
     public string TimeZone { get; init; } = "Europe/Warsaw";
     public bool NotifyOnChanges { get; init; } = false;
 }
+
+public sealed class AutoRemediationConfiguration
+{
+    public const string SectionName = "AutoRemediation";
+
+    public bool Enabled { get; init; } = true;
+    public double MinSuccessRate { get; init; } = 80;
+    public int MinFeedbackCount { get; init; } = 3;
+    public int MaxRestartsPerHour { get; init; } = 3;
+}

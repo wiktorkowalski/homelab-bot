@@ -16,6 +16,7 @@ public sealed class DiscordBotService : BackgroundService
     private readonly ConversationService _conversationService;
     private readonly ConfirmationService _confirmationService;
     private readonly MemoryService _memoryService;
+    private readonly AutoRemediationService _autoRemediationService;
     private readonly IServiceProvider _serviceProvider;
     private DiscordClient? _client;
     private SlashCommandsExtension? _slashCommands;
@@ -30,6 +31,7 @@ public sealed class DiscordBotService : BackgroundService
         ConversationService conversationService,
         ConfirmationService confirmationService,
         MemoryService memoryService,
+        AutoRemediationService autoRemediationService,
         IServiceProvider serviceProvider)
     {
         _config = config.Value;
@@ -38,6 +40,7 @@ public sealed class DiscordBotService : BackgroundService
         _conversationService = conversationService;
         _confirmationService = confirmationService;
         _memoryService = memoryService;
+        _autoRemediationService = autoRemediationService;
         _serviceProvider = serviceProvider;
     }
 
@@ -141,6 +144,13 @@ public sealed class DiscordBotService : BackgroundService
                 return;
             }
 
+            if (customId.StartsWith("remediation_approve_") || customId.StartsWith("remediation_reject_")
+                || customId.StartsWith("remediation_ok_") || customId.StartsWith("remediation_fail_"))
+            {
+                await HandleRemediationResponseAsync(e);
+                return;
+            }
+
             await _confirmationService.HandleInteractionAsync(e);
         }
         catch (Exception ex)
@@ -178,6 +188,90 @@ public sealed class DiscordBotService : BackgroundService
             new DiscordInteractionResponseBuilder()
                 .WithContent($"{emoji} {text}")
                 .AsEphemeral());
+    }
+
+    private async Task HandleRemediationResponseAsync(ComponentInteractionCreateEventArgs e)
+    {
+        var customId = e.Interaction.Data.CustomId;
+
+        // Determine the prefix and parse the action ID
+        string prefix;
+        if (customId.StartsWith("remediation_approve_"))
+        {
+            prefix = "remediation_approve_";
+        }
+        else if (customId.StartsWith("remediation_reject_"))
+        {
+            prefix = "remediation_reject_";
+        }
+        else if (customId.StartsWith("remediation_ok_"))
+        {
+            prefix = "remediation_ok_";
+        }
+        else if (customId.StartsWith("remediation_fail_"))
+        {
+            prefix = "remediation_fail_";
+        }
+        else
+        {
+            await e.Interaction.CreateResponseAsync(InteractionResponseType.DeferredMessageUpdate);
+            return;
+        }
+
+        if (!int.TryParse(customId[prefix.Length..], out var actionId))
+        {
+            await e.Interaction.CreateResponseAsync(InteractionResponseType.DeferredMessageUpdate);
+            return;
+        }
+
+        var isApproval = prefix is "remediation_approve_" or "remediation_ok_";
+
+        try
+        {
+            if (prefix is "remediation_approve_" or "remediation_reject_")
+            {
+                await e.Interaction.CreateResponseAsync(
+                    InteractionResponseType.DeferredChannelMessageWithSource,
+                    new DiscordInteractionResponseBuilder().AsEphemeral());
+
+                await _autoRemediationService.RecordUserConfirmationAsync(actionId, isApproval, default);
+
+                var responseText = isApproval
+                    ? "Remediation approved and executing..."
+                    : "Remediation rejected.";
+
+                await e.Interaction.EditOriginalResponseAsync(
+                    new DiscordWebhookBuilder().WithContent(responseText));
+            }
+            else
+            {
+                // Feedback on auto-executed remediation (ok/fail)
+                var emoji = isApproval ? "✅" : "❌";
+                var text = isApproval ? "Noted, remediation was successful." : "Noted, remediation did not help.";
+
+                await e.Interaction.CreateResponseAsync(
+                    InteractionResponseType.ChannelMessageWithSource,
+                    new DiscordInteractionResponseBuilder()
+                        .WithContent($"{emoji} {text}")
+                        .AsEphemeral());
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to handle remediation response for action {ActionId}", actionId);
+            try
+            {
+                await e.Interaction.CreateResponseAsync(
+                    InteractionResponseType.ChannelMessageWithSource,
+                    new DiscordInteractionResponseBuilder()
+                        .WithContent("Failed to process remediation response.")
+                        .AsEphemeral());
+            }
+            catch
+            {
+                // Response already sent
+            }
+        }
     }
 
     private async Task OnMessageCreated(DiscordClient client, MessageCreateEventArgs e)

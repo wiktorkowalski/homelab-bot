@@ -83,6 +83,9 @@ try
     builder.Services.AddOptions<KnowledgeRefreshConfiguration>()
         .Bind(builder.Configuration.GetSection(KnowledgeRefreshConfiguration.SectionName));
 
+    builder.Services.AddOptions<AutoRemediationConfiguration>()
+        .Bind(builder.Configuration.GetSection(AutoRemediationConfiguration.SectionName));
+
     // Langfuse/OpenTelemetry
     var langfuseConfig = builder.Configuration.GetSection(LangfuseConfiguration.SectionName).Get<LangfuseConfiguration>();
     if (langfuseConfig is not null)
@@ -151,6 +154,7 @@ try
     builder.Services.AddSingleton<HealthScoreService>();
     builder.Services.AddSingleton<SummaryDataAggregator>();
     builder.Services.AddHostedService<DailySummaryService>();
+    builder.Services.AddSingleton<AutoRemediationService>();
     builder.Services.AddSingleton<RunbookTriggerService>();
     builder.Services.AddSingleton<AlertWebhookService>();
     builder.Services.AddHostedService<HealthScoreBackgroundService>();

@@ -14,6 +14,7 @@ public sealed class AlertWebhookService
     private readonly KernelService _kernelService;
     private readonly MemoryService _memoryService;
     private readonly RunbookTriggerService _runbookTriggerService;
+    private readonly AutoRemediationService _autoRemediationService;
     private readonly AlertWebhookConfiguration _config;
     private readonly ILogger<AlertWebhookService> _logger;
 
@@ -26,6 +27,7 @@ public sealed class AlertWebhookService
         KernelService kernelService,
         MemoryService memoryService,
         RunbookTriggerService runbookTriggerService,
+        AutoRemediationService autoRemediationService,
         IOptions<AlertWebhookConfiguration> config,
         ILogger<AlertWebhookService> logger)
     {
@@ -33,6 +35,7 @@ public sealed class AlertWebhookService
         _kernelService = kernelService;
         _memoryService = memoryService;
         _runbookTriggerService = runbookTriggerService;
+        _autoRemediationService = autoRemediationService;
         _config = config.Value;
         _logger = logger;
     }
@@ -76,6 +79,26 @@ public sealed class AlertWebhookService
             // Check for known patterns before LLM investigation
             var searchTerms = $"{alert.AlertName} {alert.Description ?? alert.Summary ?? ""}";
             matchedPatterns = await _memoryService.GetRelevantPatternsAsync(searchTerms);
+
+            // Try auto-remediation before LLM investigation
+            var remediationResult = await _autoRemediationService.TryAutoRemediateAsync(alert, matchedPatterns, ct);
+            if (remediationResult != null)
+            {
+                if (remediationResult.WasAutoExecuted)
+                {
+                    var remEmbed = BuildAlertEmbed(alert, remediationResult.Message);
+                    var remButtons = BuildRemediationFeedbackButtons(remediationResult.ActionId!.Value);
+                    await _discordService.SendDmWithComponentsAsync(HomelabOwner.DiscordUserId, remEmbed, remButtons);
+                    return;
+                }
+                if (remediationResult.NeedsConfirmation)
+                {
+                    var remEmbed = BuildAlertEmbed(alert, remediationResult.Message);
+                    var remButtons = BuildRemediationConfirmButtons(remediationResult.ActionId!.Value);
+                    await _discordService.SendDmWithComponentsAsync(HomelabOwner.DiscordUserId, remEmbed, remButtons);
+                    return;
+                }
+            }
 
             var patternContext = "";
             if (matchedPatterns.Count > 0)
@@ -151,6 +174,44 @@ public sealed class AlertWebhookService
         }
 
         return components;
+    }
+
+    private static List<DiscordComponent> BuildRemediationFeedbackButtons(int actionId)
+    {
+        return
+        [
+            new DiscordButtonComponent(
+                ButtonStyle.Success,
+                $"remediation_ok_{actionId}",
+                "Remediation Worked",
+                false,
+                new DiscordComponentEmoji("✅")),
+            new DiscordButtonComponent(
+                ButtonStyle.Danger,
+                $"remediation_fail_{actionId}",
+                "Still Broken",
+                false,
+                new DiscordComponentEmoji("❌"))
+        ];
+    }
+
+    private static List<DiscordComponent> BuildRemediationConfirmButtons(int actionId)
+    {
+        return
+        [
+            new DiscordButtonComponent(
+                ButtonStyle.Success,
+                $"remediation_approve_{actionId}",
+                "Approve Restart",
+                false,
+                new DiscordComponentEmoji("✅")),
+            new DiscordButtonComponent(
+                ButtonStyle.Danger,
+                $"remediation_reject_{actionId}",
+                "Reject",
+                false,
+                new DiscordComponentEmoji("❌"))
+        ];
     }
 
     private static string Truncate(string text, int maxLength)
