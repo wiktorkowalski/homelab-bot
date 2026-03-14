@@ -94,6 +94,17 @@ public sealed class RunbookTriggerService
     {
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
 
+        // Fix broken step in existing "High CPU Investigation" runbook
+        var existingCpu = await db.Runbooks.FirstOrDefaultAsync(
+            r => r.Name == "High CPU Investigation" && r.StepsJson.Contains("GetContainerMetrics"), ct);
+        if (existingCpu != null)
+        {
+            existingCpu.StepsJson = existingCpu.StepsJson.Replace("GetContainerMetrics", "GetTargets");
+            existingCpu.StepsJson = existingCpu.StepsJson.Replace("Check container metrics", "Check Prometheus targets");
+            await db.SaveChangesAsync(ct);
+            _logger.LogInformation("Fixed broken step in runbook '{Name}'", existingCpu.Name);
+        }
+
         if (await db.Runbooks.AnyAsync(ct))
             return;
 
@@ -108,7 +119,7 @@ public sealed class RunbookTriggerService
                 StepsJson = """
                 [
                     {"Order":1,"Description":"Check node CPU metrics","PluginName":"Prometheus","FunctionName":"GetNodeStats","Parameters":{}},
-                    {"Order":2,"Description":"Check container metrics","PluginName":"Prometheus","FunctionName":"GetContainerMetrics","Parameters":{}},
+                    {"Order":2,"Description":"Check Prometheus targets","PluginName":"Prometheus","FunctionName":"GetTargets","Parameters":{}},
                     {"Order":3,"Description":"List containers","PluginName":"Docker","FunctionName":"ListContainers","Parameters":{}}
                 ]
                 """,
