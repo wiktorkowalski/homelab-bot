@@ -3,10 +3,10 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using HomelabBot.Configuration;
 using HomelabBot.Plugins;
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Options;
 using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.ChatCompletion;
-using Microsoft.SemanticKernel.Connectors.OpenAI;
 
 namespace HomelabBot.Services;
 
@@ -110,15 +110,19 @@ public sealed class KernelService
         _logger = logger;
         _conversationService = conversationService;
         _telemetryService = telemetryService;
-        _modelId = config.Value.OpenRouterModel;
 
         var builder = Kernel.CreateBuilder();
 
-        // Configure OpenRouter as OpenAI-compatible endpoint
+        // Always register OpenRouter as OpenAI-compatible endpoint (used as fallback)
         builder.AddOpenAIChatCompletion(
             modelId: config.Value.OpenRouterModel,
             apiKey: config.Value.OpenRouterApiKey,
             endpoint: new Uri(config.Value.OpenRouterEndpoint));
+
+        // Determine primary model ID for logging/telemetry
+        _modelId = !string.IsNullOrEmpty(config.Value.AnthropicApiKey)
+            ? config.Value.AnthropicModel
+            : config.Value.OpenRouterModel;
 
         // Register plugins
         builder.Plugins.AddFromObject(dockerPlugin, "Docker");
@@ -139,9 +143,41 @@ public sealed class KernelService
         // Add telemetry filter for tool call logging
         _kernel.FunctionInvocationFilters.Add(new TelemetryFunctionFilter(telemetryService, filterLogger));
 
-        _chatService = _kernel.GetRequiredService<IChatCompletionService>();
-        _logger.LogInformation("Kernel initialized with model {Model} and {PluginCount} plugins",
-            config.Value.OpenRouterModel, _kernel.Plugins.Count);
+        // Use Anthropic as primary or just OpenRouter if no Anthropic config
+        var useAnthropic = !string.IsNullOrEmpty(config.Value.AnthropicApiKey)
+                           && !string.IsNullOrEmpty(config.Value.AnthropicBaseUrl);
+
+        if (useAnthropic)
+        {
+            // Use official Anthropic SDK → IChatClient → IChatCompletionService
+            // UseFunctionInvocation() handles the tool use loop automatically
+            var anthropicClient = new Anthropic.AnthropicClient
+            {
+                ApiKey = config.Value.AnthropicApiKey!,
+                BaseUrl = config.Value.AnthropicBaseUrl!,
+            };
+
+            var anthropicService = new ChatClientBuilder(
+                    anthropicClient.AsIChatClient(config.Value.AnthropicModel))
+                .UseFunctionInvocation()
+                .Build()
+                .AsChatCompletionService();
+
+            // Wrap with fallback to OpenRouter
+            var openRouterFallback = _kernel.GetRequiredService<IChatCompletionService>();
+            _chatService = new FallbackChatCompletionService(
+                anthropicService, openRouterFallback, logger);
+
+            _logger.LogInformation(
+                "Kernel initialized with Anthropic {Model} (fallback: OpenRouter {Fallback}), {PluginCount} plugins",
+                config.Value.AnthropicModel, config.Value.OpenRouterModel, _kernel.Plugins.Count);
+        }
+        else
+        {
+            _chatService = _kernel.GetRequiredService<IChatCompletionService>();
+            _logger.LogInformation("Kernel initialized with OpenRouter {Model} and {PluginCount} plugins",
+                config.Value.OpenRouterModel, _kernel.Plugins.Count);
+        }
     }
 
     public async Task<string> GenerateThreadTitleAsync(
@@ -232,20 +268,21 @@ public sealed class KernelService
         // Set active interaction for tool call logging
         _telemetryService.SetActiveInteraction(interaction.Id);
 
-        var chatService = _kernel.GetRequiredService<IChatCompletionService>();
-
-        var settings = new OpenAIPromptExecutionSettings
+        var activeSettings = new PromptExecutionSettings
         {
-            Temperature = 0.7,
-            MaxTokens = maxTokens ?? 2048,
-            ToolCallBehavior = ToolCallBehavior.AutoInvokeKernelFunctions
+            FunctionChoiceBehavior = FunctionChoiceBehavior.Auto(),
+            ExtensionData = new Dictionary<string, object>
+            {
+                ["temperature"] = 0.7,
+                ["max_tokens"] = maxTokens ?? 2048,
+            },
         };
 
         try
         {
-            var response = await chatService.GetChatMessageContentAsync(
+            var response = await _chatService.GetChatMessageContentAsync(
                 history,
-                settings,
+                activeSettings,
                 _kernel,
                 ct);
 

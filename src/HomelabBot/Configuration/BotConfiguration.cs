@@ -14,9 +14,17 @@ public sealed class BotConfiguration
     public const string SectionName = "Bot";
 
     public required string DiscordToken { get; init; }
+
+    // Anthropic (primary) — set AnthropicApiKey + AnthropicBaseUrl to enable
+    public string? AnthropicApiKey { get; init; }
+    public string? AnthropicBaseUrl { get; init; }
+    public string AnthropicModel { get; init; } = "claude-opus-4-6";
+
+    // OpenRouter (fallback)
     public required string OpenRouterApiKey { get; init; }
-    public string OpenRouterModel { get; init; } = "google/gemini-3-flash-preview";
+    public string OpenRouterModel { get; init; } = "anthropic/claude-sonnet-4.6";
     public string OpenRouterEndpoint { get; init; } = "https://openrouter.ai/api/v1";
+
     public List<ulong> DedicatedChannels { get; init; } = [];
     public Dictionary<string, string> ExternalUrls { get; init; } = [];
 }
