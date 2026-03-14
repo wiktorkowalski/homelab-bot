@@ -163,8 +163,7 @@ public sealed class KernelService
                 .UseOpenTelemetry(sourceName: "HomelabBot.Chat", configure: otel =>
                     otel.EnableSensitiveData = true)
                 .Use(inner => new TelemetryChatClient(
-                    inner, telemetryService,
-                    loggerFactory.CreateLogger<TelemetryChatClient>()))
+                    inner, loggerFactory.CreateLogger<TelemetryChatClient>()))
                 .UseFunctionInvocation()
                 .Build()
                 .AsChatCompletionService();

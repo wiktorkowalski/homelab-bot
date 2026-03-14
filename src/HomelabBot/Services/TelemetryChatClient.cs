@@ -11,16 +11,13 @@ namespace HomelabBot.Services;
 public sealed class TelemetryChatClient : DelegatingChatClient
 {
     private static readonly ActivitySource ActivitySource = new("HomelabBot.Chat");
-    private readonly TelemetryService _telemetryService;
     private readonly ILogger<TelemetryChatClient> _logger;
 
     public TelemetryChatClient(
         IChatClient innerClient,
-        TelemetryService telemetryService,
         ILogger<TelemetryChatClient> logger)
         : base(innerClient)
     {
-        _telemetryService = telemetryService;
         _logger = logger;
     }
 
@@ -63,8 +60,7 @@ public sealed class TelemetryChatClient : DelegatingChatClient
                     activity?.SetTag("langfuse.observation.input", argsPreview);
                 }
 
-                // Log to internal telemetry DB
-                LogToolCall(content.Name, content.Arguments?.ToString());
+                _logger.LogDebug("Anthropic tool call: {Tool}", content.Name);
             }
 
             // Log tool results (tool → LLM)
@@ -84,18 +80,5 @@ public sealed class TelemetryChatClient : DelegatingChatClient
                 activity?.SetTag("langfuse.observation.output", resultStr);
             }
         }
-    }
-
-    private void LogToolCall(string? toolName, string? input)
-    {
-        if (string.IsNullOrEmpty(toolName))
-            return;
-
-        // Parse Plugin_Function format
-        var parts = toolName.Split('_', 2);
-        var plugin = parts.Length == 2 ? parts[0] : "Unknown";
-        var function = parts.Length == 2 ? parts[1] : toolName;
-
-        _logger.LogDebug("Anthropic tool call: {Plugin}.{Function}", plugin, function);
     }
 }
