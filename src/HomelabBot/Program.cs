@@ -84,6 +84,9 @@ try
     builder.Services.AddOptions<KnowledgeRefreshConfiguration>()
         .Bind(builder.Configuration.GetSection(KnowledgeRefreshConfiguration.SectionName));
 
+    builder.Services.AddOptions<AutoRemediationConfiguration>()
+        .Bind(builder.Configuration.GetSection(AutoRemediationConfiguration.SectionName));
+
     builder.Services.AddOptions<McpServerConfiguration>()
         .Bind(builder.Configuration.GetSection(McpServerConfiguration.SectionName));
 
@@ -164,6 +167,7 @@ try
     builder.Services.AddSingleton<HealthScoreService>();
     builder.Services.AddSingleton<SummaryDataAggregator>();
     builder.Services.AddHostedService<DailySummaryService>();
+    builder.Services.AddSingleton<AutoRemediationService>();
     builder.Services.AddSingleton<RunbookTriggerService>();
     builder.Services.AddSingleton<AlertWebhookService>();
     builder.Services.AddHostedService<HealthScoreBackgroundService>();

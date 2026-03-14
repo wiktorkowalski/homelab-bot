@@ -32,6 +32,10 @@ public sealed class HomelabDbContext : DbContext
 
     public DbSet<AnomalyEvent> AnomalyEvents => Set<AnomalyEvent>();
 
+    public DbSet<ContainerCriticality> ContainerCriticalities => Set<ContainerCriticality>();
+
+    public DbSet<RemediationAction> RemediationActions => Set<RemediationAction>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<Knowledge>(entity =>
@@ -103,6 +107,16 @@ public sealed class HomelabDbContext : DbContext
         modelBuilder.Entity<AnomalyEvent>(entity =>
         {
             entity.HasIndex(a => a.DetectedAt);
+        });
+
+        modelBuilder.Entity<ContainerCriticality>(entity =>
+        {
+            entity.HasIndex(c => c.ContainerName).IsUnique();
+        });
+
+        modelBuilder.Entity<RemediationAction>(entity =>
+        {
+            entity.HasIndex(a => a.ExecutedAt);
         });
     }
 }

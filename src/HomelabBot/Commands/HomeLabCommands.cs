@@ -16,6 +16,7 @@ public class HomeLabCommands : ApplicationCommandModule
     private readonly SummaryDataAggregator _summaryAggregator;
     private readonly HealthScoreService _healthScoreService;
     private readonly SecurityAuditService _securityAuditService;
+    private readonly AutoRemediationService _autoRemediationService;
     private readonly ILogger<HomeLabCommands> _logger;
 
     public HomeLabCommands(
@@ -27,6 +28,7 @@ public class HomeLabCommands : ApplicationCommandModule
         SummaryDataAggregator summaryAggregator,
         HealthScoreService healthScoreService,
         SecurityAuditService securityAuditService,
+        AutoRemediationService autoRemediationService,
         ILogger<HomeLabCommands> logger)
     {
         _dockerPlugin = dockerPlugin;
@@ -37,6 +39,7 @@ public class HomeLabCommands : ApplicationCommandModule
         _summaryAggregator = summaryAggregator;
         _healthScoreService = healthScoreService;
         _securityAuditService = securityAuditService;
+        _autoRemediationService = autoRemediationService;
         _logger = logger;
     }
 
@@ -624,6 +627,81 @@ public class HomeLabCommands : ApplicationCommandModule
             _logger.LogError(ex, "Error in randomfact command");
             await ctx.EditResponseAsync(new DiscordWebhookBuilder()
                 .WithContent($"Error getting random fact: {ex.Message}"));
+        }
+    }
+
+    [SlashCommand("auto", "Manage auto-remediation")]
+    public async Task AutoCommand(
+        InteractionContext ctx,
+        [Option("action", "Action to perform")]
+        [Choice("Status", "status")]
+        [Choice("Enable", "on")]
+        [Choice("Disable", "off")]
+        [Choice("Set Critical", "critical")]
+        [Choice("List Critical", "list")]
+        string action,
+        [Option("container", "Container name (for critical setting)")] string? container = null)
+    {
+        await ctx.DeferAsync();
+
+        try
+        {
+            _logger.LogDebug("Auto command invoked by {User} with action {Action}", ctx.User.Username, action);
+
+            string response;
+            switch (action)
+            {
+                case "on":
+                    _autoRemediationService.SetEnabled(true);
+                    response = "Auto-remediation **enabled**.";
+                    break;
+
+                case "off":
+                    _autoRemediationService.SetEnabled(false);
+                    response = "Auto-remediation **disabled**.";
+                    break;
+
+                case "status":
+                    response = await _autoRemediationService.GetStatusAsync();
+                    break;
+
+                case "critical":
+                    if (string.IsNullOrWhiteSpace(container))
+                    {
+                        response = "Please specify a container name with the `container` option.";
+                        break;
+                    }
+                    await _autoRemediationService.ToggleCriticalityAsync(container, default);
+                    response = $"Toggled criticality for **{container}**.";
+                    break;
+
+                case "list":
+                    var criticalities = await _autoRemediationService.ListCriticalitiesAsync(default);
+                    if (criticalities.Count == 0)
+                    {
+                        response = "No container criticality settings configured.";
+                    }
+                    else
+                    {
+                        var lines = criticalities.Select(c =>
+                            $"- **{c.ContainerName}**: {(c.IsCritical ? "Critical" : "Non-critical")}"
+                            + (c.Notes != null ? $" ({c.Notes})" : ""));
+                        response = $"**Container Criticality Settings:**\n{string.Join("\n", lines)}";
+                    }
+                    break;
+
+                default:
+                    response = $"Unknown action: {action}";
+                    break;
+            }
+
+            await ctx.EditResponseAsync(new DiscordWebhookBuilder().WithContent(response));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in auto command");
+            await ctx.EditResponseAsync(new DiscordWebhookBuilder()
+                .WithContent($"Error in auto-remediation command: {ex.Message}"));
         }
     }
 
