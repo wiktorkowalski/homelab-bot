@@ -321,38 +321,21 @@ public sealed class KernelService
         }
     }
 
-    private (int? PromptTokens, int? CompletionTokens) ExtractTokenUsage(ChatMessageContent response)
+    private static (int? PromptTokens, int? CompletionTokens) ExtractTokenUsage(ChatMessageContent response)
     {
         if (response.Metadata == null)
             return (null, null);
 
-        // OpenAI format (OpenRouter path)
-        if (response.Metadata.TryGetValue("Usage", out var usage) &&
-            usage is OpenAI.Chat.ChatTokenUsage openAiUsage)
+        if (response.Metadata.TryGetValue("Usage", out var usage))
         {
-            return (openAiUsage.InputTokenCount, openAiUsage.OutputTokenCount);
+            // OpenAI format (OpenRouter path)
+            if (usage is OpenAI.Chat.ChatTokenUsage openAiUsage)
+                return (openAiUsage.InputTokenCount, openAiUsage.OutputTokenCount);
+
+            // M.E.AI format (Anthropic SDK via AsChatCompletionService adapter)
+            if (usage is Microsoft.Extensions.AI.UsageDetails usageDetails)
+                return ((int?)usageDetails.InputTokenCount, (int?)usageDetails.OutputTokenCount);
         }
-
-        // M.E.AI format (Anthropic SDK path) — usage is in the ChatResponse inner content
-        if (response.InnerContent is Microsoft.Extensions.AI.ChatResponse chatResponse &&
-            chatResponse.Usage != null)
-        {
-            return ((int?)chatResponse.Usage.InputTokenCount, (int?)chatResponse.Usage.OutputTokenCount);
-        }
-
-        // Anthropic SDK: usage may be in metadata directly
-        int? promptTokens = null, completionTokens = null;
-        if (response.Metadata.TryGetValue("InputTokenCount", out var input) && input is int inputCount)
-            promptTokens = inputCount;
-        if (response.Metadata.TryGetValue("OutputTokenCount", out var output) && output is int outputCount)
-            completionTokens = outputCount;
-        if (promptTokens != null || completionTokens != null)
-            return (promptTokens, completionTokens);
-
-        // Debug: log available metadata keys to help diagnose
-        _logger.LogDebug("Token extraction miss. Metadata keys: {Keys}, InnerContent type: {Type}",
-            string.Join(", ", response.Metadata.Keys),
-            response.InnerContent?.GetType().FullName ?? "null");
 
         return (null, null);
     }
