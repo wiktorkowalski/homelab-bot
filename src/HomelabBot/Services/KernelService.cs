@@ -321,7 +321,7 @@ public sealed class KernelService
         }
     }
 
-    private static (int? PromptTokens, int? CompletionTokens) ExtractTokenUsage(ChatMessageContent response)
+    private (int? PromptTokens, int? CompletionTokens) ExtractTokenUsage(ChatMessageContent response)
     {
         if (response.Metadata == null)
             return (null, null);
@@ -339,6 +339,20 @@ public sealed class KernelService
         {
             return ((int?)chatResponse.Usage.InputTokenCount, (int?)chatResponse.Usage.OutputTokenCount);
         }
+
+        // Anthropic SDK: usage may be in metadata directly
+        int? promptTokens = null, completionTokens = null;
+        if (response.Metadata.TryGetValue("InputTokenCount", out var input) && input is int inputCount)
+            promptTokens = inputCount;
+        if (response.Metadata.TryGetValue("OutputTokenCount", out var output) && output is int outputCount)
+            completionTokens = outputCount;
+        if (promptTokens != null || completionTokens != null)
+            return (promptTokens, completionTokens);
+
+        // Debug: log available metadata keys to help diagnose
+        _logger.LogDebug("Token extraction miss. Metadata keys: {Keys}, InnerContent type: {Type}",
+            string.Join(", ", response.Metadata.Keys),
+            response.InnerContent?.GetType().FullName ?? "null");
 
         return (null, null);
     }
