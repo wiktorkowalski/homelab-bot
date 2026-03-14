@@ -18,7 +18,7 @@ public sealed class BotConfiguration
     // Anthropic (primary) — set AnthropicApiKey + AnthropicBaseUrl to enable
     public string? AnthropicApiKey { get; init; }
     public string? AnthropicBaseUrl { get; init; }
-    public string AnthropicModel { get; init; } = "claude-opus-4-6-20260205";
+    public string AnthropicModel { get; init; } = "claude-opus-4-6";
 
     // OpenRouter (fallback)
     public required string OpenRouterApiKey { get; init; }

@@ -3,10 +3,10 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using HomelabBot.Configuration;
 using HomelabBot.Plugins;
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Options;
 using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.ChatCompletion;
-using Microsoft.SemanticKernel.Connectors.OpenAI;
 
 namespace HomelabBot.Services;
 
@@ -91,7 +91,6 @@ public sealed class KernelService
     public KernelService(
         IOptions<BotConfiguration> config,
         ILogger<KernelService> logger,
-        ILoggerFactory loggerFactory,
         ILogger<TelemetryFunctionFilter> filterLogger,
         ConversationService conversationService,
         TelemetryService telemetryService,
@@ -144,19 +143,26 @@ public sealed class KernelService
         // Add telemetry filter for tool call logging
         _kernel.FunctionInvocationFilters.Add(new TelemetryFunctionFilter(telemetryService, filterLogger));
 
-        // Use Anthropic as primary with OpenRouter fallback, or just OpenRouter if no Anthropic key
+        // Use Anthropic as primary or just OpenRouter if no Anthropic config
         var useAnthropic = !string.IsNullOrEmpty(config.Value.AnthropicApiKey)
                            && !string.IsNullOrEmpty(config.Value.AnthropicBaseUrl);
 
         if (useAnthropic)
         {
-            var openRouterFallback = _kernel.GetRequiredService<IChatCompletionService>();
-            _chatService = new AnthropicChatCompletionService(
-                config.Value.AnthropicApiKey!,
-                config.Value.AnthropicBaseUrl!,
-                config.Value.AnthropicModel,
-                openRouterFallback,
-                loggerFactory.CreateLogger<AnthropicChatCompletionService>());
+            // Use official Anthropic SDK → IChatClient → IChatCompletionService
+            // UseFunctionInvocation() handles the tool use loop automatically
+            var anthropicClient = new Anthropic.AnthropicClient
+            {
+                ApiKey = config.Value.AnthropicApiKey!,
+                BaseUrl = config.Value.AnthropicBaseUrl!,
+            };
+
+            _chatService = new Microsoft.Extensions.AI.ChatClientBuilder(
+                    anthropicClient.AsIChatClient(config.Value.AnthropicModel))
+                .UseFunctionInvocation()
+                .Build()
+                .AsChatCompletionService();
+
             _logger.LogInformation(
                 "Kernel initialized with Anthropic {Model} (fallback: OpenRouter {Fallback}), {PluginCount} plugins",
                 config.Value.AnthropicModel, config.Value.OpenRouterModel, _kernel.Plugins.Count);
@@ -257,22 +263,15 @@ public sealed class KernelService
         // Set active interaction for tool call logging
         _telemetryService.SetActiveInteraction(interaction.Id);
 
-        // Anthropic service handles its own tool loop + builds proper fallback settings internally.
-        // OpenAI path needs explicit ToolCallBehavior for SK auto-invocation.
-        PromptExecutionSettings activeSettings = _chatService is AnthropicChatCompletionService
-            ? new PromptExecutionSettings
+        var activeSettings = new PromptExecutionSettings
+        {
+            FunctionChoiceBehavior = FunctionChoiceBehavior.Auto(),
+            ExtensionData = new Dictionary<string, object>
             {
-                ExtensionData = new Dictionary<string, object>
-                {
-                    ["max_tokens"] = maxTokens ?? 2048,
-                },
-            }
-            : new OpenAIPromptExecutionSettings
-            {
-                Temperature = 0.7,
-                MaxTokens = maxTokens ?? 2048,
-                ToolCallBehavior = ToolCallBehavior.AutoInvokeKernelFunctions,
-            };
+                ["temperature"] = 0.7,
+                ["max_tokens"] = maxTokens ?? 2048,
+            },
+        };
 
         try
         {
@@ -290,18 +289,11 @@ public sealed class KernelService
             int? promptTokens = null;
             int? completionTokens = null;
 
-            if (response.Metadata?.TryGetValue("Usage", out var usage) == true)
+            if (response.Metadata?.TryGetValue("Usage", out var usage) == true &&
+                usage is OpenAI.Chat.ChatTokenUsage tokenUsage)
             {
-                if (usage is OpenAI.Chat.ChatTokenUsage tokenUsage)
-                {
-                    promptTokens = tokenUsage.InputTokenCount;
-                    completionTokens = tokenUsage.OutputTokenCount;
-                }
-                else if (usage is AnthropicChatCompletionService.AnthropicTokenUsage anthropicUsage)
-                {
-                    promptTokens = anthropicUsage.InputTokenCount;
-                    completionTokens = anthropicUsage.OutputTokenCount;
-                }
+                promptTokens = tokenUsage.InputTokenCount;
+                completionTokens = tokenUsage.OutputTokenCount;
             }
 
             await _telemetryService.LogInteractionCompleteAsync(
