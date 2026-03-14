@@ -301,14 +301,7 @@ public sealed class AnomalyDetectionService : BackgroundService
 
             try
             {
-                if (message.Length > 1900)
-                {
-                    await _discordBot.SendDmFileAsync(userId, message, "anomaly-report.md");
-                }
-                else
-                {
-                    await _discordBot.SendDmAsync(userId, message);
-                }
+                await _discordBot.SendDmSplitAsync(userId, message);
             }
             catch (Exception ex)
             {
