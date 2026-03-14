@@ -10,6 +10,7 @@ public sealed class HealthScoreBackgroundService : BackgroundService
     private readonly HealthScoreService _healthScoreService;
     private readonly DiscordBotService _discordBot;
     private readonly ILogger<HealthScoreBackgroundService> _logger;
+    private int? _lastNotifiedScore;
 
     public HealthScoreBackgroundService(
         IOptionsMonitor<HealthScoreConfiguration> config,
@@ -73,7 +74,9 @@ public sealed class HealthScoreBackgroundService : BackgroundService
 
         await _healthScoreService.PruneOldRecordsAsync(TimeSpan.FromDays(30), ct);
 
-        if (previousScore.HasValue && previousScore.Value - result.Score >= threshold)
+        // Only notify once per drop — skip if we already notified at this score or lower
+        if (previousScore.HasValue && previousScore.Value - result.Score >= threshold
+            && (_lastNotifiedScore == null || result.Score < _lastNotifiedScore))
         {
             var userId = HomelabOwner.DiscordUserId;
             if (userId == 0)
@@ -86,6 +89,7 @@ public sealed class HealthScoreBackgroundService : BackgroundService
             try
             {
                 await _discordBot.SendDmAsync(userId, message);
+                _lastNotifiedScore = result.Score;
             }
             catch (Exception ex)
             {
@@ -94,6 +98,11 @@ public sealed class HealthScoreBackgroundService : BackgroundService
 
             _logger.LogWarning("Health score dropped {Points} points: {Old} → {New}",
                 previousScore.Value - result.Score, previousScore.Value, result.Score);
+        }
+        else if (result.Score == 100)
+        {
+            // Reset notification state when fully recovered
+            _lastNotifiedScore = null;
         }
     }
 

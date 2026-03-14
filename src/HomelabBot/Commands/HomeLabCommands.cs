@@ -145,7 +145,7 @@ public class HomeLabCommands : ApplicationCommandModule
 
             var logs = await _dockerPlugin.GetContainerLogs(containerName, (int)lines);
 
-            await EditResponseWithContentOrFileAsync(ctx, logs, $"{containerName}-logs.txt",
+            await EditResponseWithContentOrSplitAsync(ctx, logs,
                 $"Logs for **{containerName}** (last {lines} lines):");
         }
         catch (Exception ex)
@@ -263,8 +263,8 @@ public class HomeLabCommands : ApplicationCommandModule
                 ctx.Channel.Id,
                 prompt);
 
-            await EditResponseWithContentOrFileAsync(ctx, response, "discovery.txt",
-                $"Discovery ({scope}) complete. See attached:");
+            await EditResponseWithContentOrSplitAsync(ctx, response,
+                $"Discovery ({scope}) complete:");
         }
         catch (Exception ex)
         {
@@ -416,8 +416,8 @@ public class HomeLabCommands : ApplicationCommandModule
 
             _conversationService.ClearHistory(threadId);
 
-            await EditResponseWithContentOrFileAsync(ctx, response, "log-analysis.md",
-                "Log analysis complete. See attached:");
+            await EditResponseWithContentOrSplitAsync(ctx, response,
+                "Log analysis complete:");
         }
         catch (Exception ex)
         {
@@ -470,8 +470,8 @@ public class HomeLabCommands : ApplicationCommandModule
                 maxTokens: HealthcheckPrompts.MaxTokens,
                 systemPromptOverride: HealthcheckPrompts.System);
 
-            await EditResponseWithContentOrFileAsync(ctx, response, "healthcheck.md",
-                "Healthcheck complete. See attached report:");
+            await EditResponseWithContentOrSplitAsync(ctx, response,
+                "Healthcheck complete:");
         }
         catch (Exception ex)
         {
@@ -496,8 +496,8 @@ public class HomeLabCommands : ApplicationCommandModule
 
             var report = await _securityAuditService.RunAuditAsync();
 
-            await EditResponseWithContentOrFileAsync(ctx, report, "security-audit.md",
-                "Security audit complete. See attached report:");
+            await EditResponseWithContentOrSplitAsync(ctx, report,
+                "Security audit complete:");
         }
         catch (Exception ex)
         {
@@ -544,7 +544,7 @@ public class HomeLabCommands : ApplicationCommandModule
             var response = await _kernelService.ProcessMessageAsync(
                 threadId, prompt, ctx.User.Id, TraceType.Chat);
 
-            await EditResponseWithContentOrFileAsync(ctx, response, "recall.md",
+            await EditResponseWithContentOrSplitAsync(ctx, response,
                 $"Recall results for \"{query}\":");
         }
         catch (Exception ex)
@@ -705,20 +705,27 @@ public class HomeLabCommands : ApplicationCommandModule
         }
     }
 
-    private static async Task EditResponseWithContentOrFileAsync(
-        InteractionContext ctx, string content, string filename, string preamble = "")
+    private static async Task EditResponseWithContentOrSplitAsync(
+        InteractionContext ctx, string content, string preamble = "")
     {
-        if (content.Length > 1900)
+        if (!MessageSplitService.IsLongMessage(content))
         {
-            using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(content));
-            var builder = new DiscordWebhookBuilder().AddFile(filename, stream);
-            if (!string.IsNullOrEmpty(preamble))
-                builder.WithContent(preamble);
-            await ctx.EditResponseAsync(builder);
+            var text = string.IsNullOrEmpty(preamble) ? content : $"{preamble}\n{content}";
+            await ctx.EditResponseAsync(new DiscordWebhookBuilder().WithContent(text));
+            return;
         }
-        else
+
+        var chunks = MessageSplitService.SplitIntoSections(content);
+
+        // First chunk as the interaction response
+        var firstChunk = string.IsNullOrEmpty(preamble) ? chunks[0] : $"{preamble}\n{chunks[0]}";
+        await ctx.EditResponseAsync(new DiscordWebhookBuilder().WithContent(firstChunk));
+
+        // Remaining chunks as follow-up messages
+        for (var i = 1; i < chunks.Count; i++)
         {
-            await ctx.EditResponseAsync(new DiscordWebhookBuilder().WithContent(content));
+            await Task.Delay(100);
+            await ctx.FollowUpAsync(new DiscordFollowupMessageBuilder().WithContent(chunks[i]));
         }
     }
 

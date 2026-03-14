@@ -3,6 +3,7 @@ using System.Text.Json;
 using HomelabBot.Configuration;
 using HomelabBot.Data;
 using HomelabBot.Data.Entities;
+using HomelabBot.Plugins;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
@@ -18,6 +19,10 @@ public sealed class AnomalyDetectionService : BackgroundService
     private readonly DiscordBotService _discordBot;
     private readonly IDbContextFactory<HomelabDbContext> _dbFactory;
     private readonly ILogger<AnomalyDetectionService> _logger;
+    private readonly DockerPlugin _dockerPlugin;
+    private readonly string _trueNasUrl;
+    private readonly string _trueNasApiKey;
+    private readonly string _lokiUrl;
 
     // In-memory baselines for rate-of-change detection
     private readonly Dictionary<string, double> _lastMetricValues = new();
@@ -31,7 +36,10 @@ public sealed class AnomalyDetectionService : BackgroundService
         ConversationService conversationService,
         DiscordBotService discordBot,
         IDbContextFactory<HomelabDbContext> dbFactory,
-        ILogger<AnomalyDetectionService> logger)
+        ILogger<AnomalyDetectionService> logger,
+        DockerPlugin dockerPlugin,
+        IOptions<TrueNASConfiguration> trueNasConfig,
+        IOptions<LokiConfiguration> lokiConfig)
     {
         _config = config;
         _httpClient = httpClientFactory.CreateClient("Default");
@@ -41,6 +49,10 @@ public sealed class AnomalyDetectionService : BackgroundService
         _discordBot = discordBot;
         _dbFactory = dbFactory;
         _logger = logger;
+        _dockerPlugin = dockerPlugin;
+        _trueNasUrl = trueNasConfig.Value.Host.TrimEnd('/');
+        _trueNasApiKey = trueNasConfig.Value.ApiKey;
+        _lokiUrl = lokiConfig.Value.Host.TrimEnd('/');
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -101,6 +113,15 @@ public sealed class AnomalyDetectionService : BackgroundService
             CheckMemoryAsync(ct),
             CheckDiskAsync(ct),
             CheckTargetsAsync(ct),
+            CheckContainerHealthAsync(ct),
+            CheckContainerRestartsAsync(ct),
+            CheckRouterHealthAsync(ct),
+            CheckNetworkTrafficAsync(ct),
+            CheckStoragePoolHealthAsync(ct),
+            CheckTraefik5xxAsync(ct),
+            CheckCertExpiryAsync(ct),
+            CheckPrometheusCardinalityAsync(ct),
+            CheckLokiHealthAsync(ct),
         };
 
         await Task.WhenAll(tasks);
@@ -264,6 +285,301 @@ public sealed class AnomalyDetectionService : BackgroundService
         return anomalies;
     }
 
+    private async Task<List<Anomaly>> CheckContainerHealthAsync(CancellationToken ct)
+    {
+        var anomalies = new List<Anomaly>();
+        try
+        {
+            var output = await _dockerPlugin.ListContainers();
+            var stoppedCount = output.Split('\n').Count(l => l.Contains("\ud83d\udd34"));
+            if (stoppedCount > 0)
+            {
+                anomalies.Add(new Anomaly
+                {
+                    Type = "Container",
+                    Message = $"{stoppedCount} container(s) stopped",
+                    Severity = stoppedCount > 3 ? AnomalySeverity.Critical : AnomalySeverity.Warning,
+                    Value = stoppedCount,
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to check container health");
+        }
+
+        return anomalies;
+    }
+
+    private async Task<List<Anomaly>> CheckContainerRestartsAsync(CancellationToken ct)
+    {
+        var anomalies = new List<Anomaly>();
+        try
+        {
+            var restartRate = await QueryPrometheusValueAsync(
+                "sum(increase(container_restart_count{name!=\"\"}[5m]))", ct);
+            if (restartRate is > 0)
+            {
+                anomalies.Add(new Anomaly
+                {
+                    Type = "Container",
+                    Message = $"Container restarts detected in last 5m (rate: {restartRate:F1})",
+                    Severity = restartRate > 3 ? AnomalySeverity.Critical : AnomalySeverity.Warning,
+                    Value = restartRate.Value,
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to check container restarts");
+        }
+
+        return anomalies;
+    }
+
+    private async Task<List<Anomaly>> CheckRouterHealthAsync(CancellationToken ct)
+    {
+        var anomalies = new List<Anomaly>();
+        try
+        {
+            var cpuLoad = await QueryPrometheusValueAsync("mktxp_system_cpu_load", ct);
+            if (cpuLoad is > 80)
+            {
+                anomalies.Add(new Anomaly
+                {
+                    Type = "Router",
+                    Message = $"Router CPU load at {cpuLoad:F0}%",
+                    Severity = cpuLoad > 95 ? AnomalySeverity.Critical : AnomalySeverity.Warning,
+                    Value = cpuLoad.Value,
+                });
+            }
+
+            var temp = await QueryPrometheusValueAsync("mktxp_system_cpu_temperature", ct);
+            if (temp is > 75)
+            {
+                anomalies.Add(new Anomaly
+                {
+                    Type = "Router",
+                    Message = $"Router CPU temperature at {temp:F1}\u00b0C",
+                    Severity = temp > 85 ? AnomalySeverity.Critical : AnomalySeverity.Warning,
+                    Value = temp.Value,
+                });
+            }
+
+            var memTotal = await QueryPrometheusValueAsync("mktxp_system_total_memory", ct);
+            var memFree = await QueryPrometheusValueAsync("mktxp_system_free_memory", ct);
+            if (memTotal is > 0)
+            {
+                var memUsedPct = ((memTotal.Value - (memFree ?? 0)) / memTotal.Value) * 100;
+                if (memUsedPct > 90)
+                {
+                    anomalies.Add(new Anomaly
+                    {
+                        Type = "Router",
+                        Message = $"Router memory at {memUsedPct:F1}%",
+                        Severity = AnomalySeverity.Warning,
+                        Value = memUsedPct,
+                    });
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to check router health");
+        }
+
+        return anomalies;
+    }
+
+    private async Task<List<Anomaly>> CheckNetworkTrafficAsync(CancellationToken ct)
+    {
+        var anomalies = new List<Anomaly>();
+        try
+        {
+            var rxRate = await QueryPrometheusValueAsync(
+                "sum(rate(mktxp_interface_rx_byte[5m]))", ct);
+            if (rxRate == null)
+                return anomalies;
+
+            var key = "network_rx";
+            var previous = _lastMetricValues.GetValueOrDefault(key, rxRate.Value);
+            _lastMetricValues[key] = rxRate.Value;
+
+            if (previous > 0 && rxRate > previous * 3)
+            {
+                anomalies.Add(new Anomaly
+                {
+                    Type = "Network",
+                    Message = $"Network RX spike: {FormatBytes(previous)}/s -> {FormatBytes(rxRate.Value)}/s",
+                    Severity = AnomalySeverity.Warning,
+                    Value = rxRate.Value,
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to check network traffic");
+        }
+
+        return anomalies;
+    }
+
+    private async Task<List<Anomaly>> CheckStoragePoolHealthAsync(CancellationToken ct)
+    {
+        var anomalies = new List<Anomaly>();
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, $"{_trueNasUrl}/api/v2.0/pool");
+            if (!string.IsNullOrEmpty(_trueNasApiKey))
+                request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _trueNasApiKey);
+
+            var response = await _httpClient.SendAsync(request, ct);
+            if (!response.IsSuccessStatusCode)
+                return anomalies;
+
+            var json = await response.Content.ReadAsStringAsync(ct);
+            using var doc = JsonDocument.Parse(json);
+
+            foreach (var pool in doc.RootElement.EnumerateArray())
+            {
+                var name = pool.GetProperty("name").GetString() ?? "unknown";
+                var status = pool.GetProperty("status").GetString() ?? "UNKNOWN";
+                var healthy = pool.TryGetProperty("healthy", out var h) && h.GetBoolean();
+
+                if (status != "ONLINE" || !healthy)
+                {
+                    anomalies.Add(new Anomaly
+                    {
+                        Type = "Storage",
+                        Message = $"Pool '{name}' status: {status} (healthy: {healthy})",
+                        Severity = status == "DEGRADED" ? AnomalySeverity.Warning : AnomalySeverity.Critical,
+                        Value = 0,
+                    });
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to check storage pools");
+        }
+
+        return anomalies;
+    }
+
+    private async Task<List<Anomaly>> CheckTraefik5xxAsync(CancellationToken ct)
+    {
+        var anomalies = new List<Anomaly>();
+        try
+        {
+            var errorRate = await QueryPrometheusValueAsync(
+                "sum(rate(traefik_service_requests_total{code=~\"5..\"}[5m])) / sum(rate(traefik_service_requests_total[5m])) * 100", ct);
+
+            if (errorRate is > 5)
+            {
+                anomalies.Add(new Anomaly
+                {
+                    Type = "Traefik",
+                    Message = $"HTTP 5xx error rate at {errorRate:F1}%",
+                    Severity = errorRate > 20 ? AnomalySeverity.Critical : AnomalySeverity.Warning,
+                    Value = errorRate.Value,
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to check Traefik 5xx rate");
+        }
+
+        return anomalies;
+    }
+
+    private async Task<List<Anomaly>> CheckCertExpiryAsync(CancellationToken ct)
+    {
+        var anomalies = new List<Anomaly>();
+        try
+        {
+            var minExpiry = await QueryPrometheusValueAsync(
+                "min(traefik_tls_certs_not_after - time())", ct);
+
+            if (minExpiry == null)
+                return anomalies;
+
+            var daysLeft = minExpiry.Value / 86400;
+            if (daysLeft < 7)
+            {
+                anomalies.Add(new Anomaly
+                {
+                    Type = "Certificate",
+                    Message = $"TLS certificate expiring in {daysLeft:F0} days",
+                    Severity = daysLeft < 1 ? AnomalySeverity.Critical : AnomalySeverity.Warning,
+                    Value = daysLeft,
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to check cert expiry");
+        }
+
+        return anomalies;
+    }
+
+    private async Task<List<Anomaly>> CheckPrometheusCardinalityAsync(CancellationToken ct)
+    {
+        var anomalies = new List<Anomaly>();
+        try
+        {
+            var headSeries = await QueryPrometheusValueAsync("prometheus_tsdb_head_series", ct);
+            if (headSeries is > 500_000)
+            {
+                anomalies.Add(new Anomaly
+                {
+                    Type = "Monitoring",
+                    Message = $"Prometheus cardinality high: {headSeries:N0} series",
+                    Severity = headSeries > 1_000_000 ? AnomalySeverity.Critical : AnomalySeverity.Warning,
+                    Value = headSeries.Value,
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to check Prometheus cardinality");
+        }
+
+        return anomalies;
+    }
+
+    private async Task<List<Anomaly>> CheckLokiHealthAsync(CancellationToken ct)
+    {
+        var anomalies = new List<Anomaly>();
+        try
+        {
+            var response = await _httpClient.GetAsync($"{_lokiUrl}/ready", ct);
+            if (!response.IsSuccessStatusCode)
+            {
+                anomalies.Add(new Anomaly
+                {
+                    Type = "Logging",
+                    Message = $"Loki not ready (HTTP {(int)response.StatusCode})",
+                    Severity = AnomalySeverity.Warning,
+                    Value = (int)response.StatusCode,
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            anomalies.Add(new Anomaly
+            {
+                Type = "Logging",
+                Message = $"Loki unreachable: {ex.Message}",
+                Severity = AnomalySeverity.Warning,
+                Value = 0,
+            });
+        }
+
+        return anomalies;
+    }
+
     private async Task RunLlmAnalysisAsync(List<Anomaly> anomalies, CancellationToken ct)
     {
         var userId = HomelabOwner.DiscordUserId;
@@ -301,14 +617,7 @@ public sealed class AnomalyDetectionService : BackgroundService
 
             try
             {
-                if (message.Length > 1900)
-                {
-                    await _discordBot.SendDmFileAsync(userId, message, "anomaly-report.md");
-                }
-                else
-                {
-                    await _discordBot.SendDmAsync(userId, message);
-                }
+                await _discordBot.SendDmSplitAsync(userId, message);
             }
             catch (Exception ex)
             {
@@ -399,6 +708,17 @@ public sealed class AnomalyDetectionService : BackgroundService
             _logger.LogDebug(ex, "Failed to query Prometheus: {Query}", query);
             return null;
         }
+    }
+
+    private static string FormatBytes(double bytes)
+    {
+        if (bytes < 1024)
+            return $"{bytes:F0} B";
+        if (bytes < 1024 * 1024)
+            return $"{bytes / 1024:F1} KB";
+        if (bytes < 1024 * 1024 * 1024)
+            return $"{bytes / (1024 * 1024):F1} MB";
+        return $"{bytes / (1024 * 1024 * 1024):F2} GB";
     }
 
 #pragma warning disable SA1201

@@ -433,6 +433,20 @@ public sealed class DiscordBotService : BackgroundService
         await dm.SendMessageAsync(builder);
     }
 
+    public async Task SendDmSplitAsync(ulong userId, string content)
+    {
+        var dm = await GetDmChannelAsync(userId);
+        if (dm == null) return;
+
+        var chunks = MessageSplitService.SplitIntoSections(content);
+        foreach (var chunk in chunks)
+        {
+            await dm.SendMessageAsync(chunk);
+            if (chunks.Count > 1)
+                await Task.Delay(100); // Small delay between messages
+        }
+    }
+
     public async Task SendDmFileAsync(ulong userId, string content, string filename)
     {
         var dm = await GetDmChannelAsync(userId);

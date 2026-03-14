@@ -98,15 +98,7 @@ public sealed class SecurityAuditService : BackgroundService
         {
             var report = await RunAuditAsync(ct);
 
-            if (report.Length > 1900)
-            {
-                var date = DateTime.UtcNow.ToString("yyyy-MM-dd");
-                await _discordBot.SendDmFileAsync(userId, report, $"security-audit-{date}.md");
-            }
-            else
-            {
-                await _discordBot.SendDmAsync(userId, report);
-            }
+            await _discordBot.SendDmSplitAsync(userId, report);
 
             _logger.LogInformation("Security audit delivered to user {UserId}", userId);
         }

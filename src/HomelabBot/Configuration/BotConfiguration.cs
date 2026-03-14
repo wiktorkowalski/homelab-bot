@@ -180,3 +180,11 @@ public sealed class AutoRemediationConfiguration
     public int MinFeedbackCount { get; init; } = 3;
     public int MaxRestartsPerHour { get; init; } = 3;
 }
+
+public sealed class McpServerConfiguration
+{
+    public const string SectionName = "McpServer";
+
+    public bool Enabled { get; init; }
+    public string ApiKey { get; init; } = "";
+}

@@ -2,6 +2,7 @@ using System.Text;
 using DotNetEnv;
 using HomelabBot.Configuration;
 using HomelabBot.Data;
+using HomelabBot.Mcp;
 using HomelabBot.Plugins;
 using HomelabBot.Services;
 using Microsoft.EntityFrameworkCore;
@@ -85,6 +86,18 @@ try
 
     builder.Services.AddOptions<AutoRemediationConfiguration>()
         .Bind(builder.Configuration.GetSection(AutoRemediationConfiguration.SectionName));
+
+    builder.Services.AddOptions<McpServerConfiguration>()
+        .Bind(builder.Configuration.GetSection(McpServerConfiguration.SectionName));
+
+    // MCP Server
+    var mcpConfig = builder.Configuration.GetSection(McpServerConfiguration.SectionName).Get<McpServerConfiguration>();
+    if (mcpConfig is { Enabled: true, ApiKey.Length: > 0 })
+    {
+        builder.Services.AddMcpServer()
+            .WithHttpTransport()
+            .WithTools<HomelabMcpTools>();
+    }
 
     // Langfuse/OpenTelemetry
     var langfuseConfig = builder.Configuration.GetSection(LangfuseConfiguration.SectionName).Get<LangfuseConfiguration>();
@@ -185,6 +198,13 @@ try
     // Static files for Admin Dashboard
     app.UseDefaultFiles();
     app.UseStaticFiles();
+
+    // MCP Server endpoint
+    if (mcpConfig is { Enabled: true, ApiKey.Length: > 0 })
+    {
+        app.UseMiddleware<McpApiKeyMiddleware>();
+        app.MapMcp("/mcp");
+    }
 
     // API endpoints
     app.MapControllers();
