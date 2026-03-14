@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using HomelabBot.Configuration;
 using Microsoft.Extensions.Options;
 
@@ -23,7 +25,11 @@ public sealed class McpApiKeyMiddleware
                 ? authHeader["Bearer ".Length..]
                 : authHeader;
 
-            if (string.IsNullOrEmpty(token) || token != _apiKey)
+            var tokenBytes = Encoding.UTF8.GetBytes(token);
+            var apiKeyBytes = Encoding.UTF8.GetBytes(_apiKey);
+            if (string.IsNullOrEmpty(token)
+                || tokenBytes.Length != apiKeyBytes.Length
+                || !CryptographicOperations.FixedTimeEquals(tokenBytes, apiKeyBytes))
             {
                 context.Response.StatusCode = 401;
                 await context.Response.WriteAsync("Unauthorized");
