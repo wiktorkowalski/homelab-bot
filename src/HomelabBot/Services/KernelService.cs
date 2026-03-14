@@ -91,6 +91,7 @@ public sealed class KernelService
     public KernelService(
         IOptions<BotConfiguration> config,
         ILogger<KernelService> logger,
+        ILoggerFactory loggerFactory,
         ILogger<TelemetryFunctionFilter> filterLogger,
         ConversationService conversationService,
         TelemetryService telemetryService,
@@ -110,15 +111,19 @@ public sealed class KernelService
         _logger = logger;
         _conversationService = conversationService;
         _telemetryService = telemetryService;
-        _modelId = config.Value.OpenRouterModel;
 
         var builder = Kernel.CreateBuilder();
 
-        // Configure OpenRouter as OpenAI-compatible endpoint
+        // Always register OpenRouter as OpenAI-compatible endpoint (used as fallback)
         builder.AddOpenAIChatCompletion(
             modelId: config.Value.OpenRouterModel,
             apiKey: config.Value.OpenRouterApiKey,
             endpoint: new Uri(config.Value.OpenRouterEndpoint));
+
+        // Determine primary model ID for logging/telemetry
+        _modelId = !string.IsNullOrEmpty(config.Value.AnthropicApiKey)
+            ? config.Value.AnthropicModel
+            : config.Value.OpenRouterModel;
 
         // Register plugins
         builder.Plugins.AddFromObject(dockerPlugin, "Docker");
@@ -139,9 +144,29 @@ public sealed class KernelService
         // Add telemetry filter for tool call logging
         _kernel.FunctionInvocationFilters.Add(new TelemetryFunctionFilter(telemetryService, filterLogger));
 
-        _chatService = _kernel.GetRequiredService<IChatCompletionService>();
-        _logger.LogInformation("Kernel initialized with model {Model} and {PluginCount} plugins",
-            config.Value.OpenRouterModel, _kernel.Plugins.Count);
+        // Use Anthropic as primary with OpenRouter fallback, or just OpenRouter if no Anthropic key
+        var useAnthropic = !string.IsNullOrEmpty(config.Value.AnthropicApiKey)
+                           && !string.IsNullOrEmpty(config.Value.AnthropicBaseUrl);
+
+        if (useAnthropic)
+        {
+            var openRouterFallback = _kernel.GetRequiredService<IChatCompletionService>();
+            _chatService = new AnthropicChatCompletionService(
+                config.Value.AnthropicApiKey!,
+                config.Value.AnthropicBaseUrl!,
+                config.Value.AnthropicModel,
+                openRouterFallback,
+                loggerFactory.CreateLogger<AnthropicChatCompletionService>());
+            _logger.LogInformation(
+                "Kernel initialized with Anthropic {Model} (fallback: OpenRouter {Fallback}), {PluginCount} plugins",
+                config.Value.AnthropicModel, config.Value.OpenRouterModel, _kernel.Plugins.Count);
+        }
+        else
+        {
+            _chatService = _kernel.GetRequiredService<IChatCompletionService>();
+            _logger.LogInformation("Kernel initialized with OpenRouter {Model} and {PluginCount} plugins",
+                config.Value.OpenRouterModel, _kernel.Plugins.Count);
+        }
     }
 
     public async Task<string> GenerateThreadTitleAsync(
@@ -232,20 +257,28 @@ public sealed class KernelService
         // Set active interaction for tool call logging
         _telemetryService.SetActiveInteraction(interaction.Id);
 
-        var chatService = _kernel.GetRequiredService<IChatCompletionService>();
-
-        var settings = new OpenAIPromptExecutionSettings
-        {
-            Temperature = 0.7,
-            MaxTokens = maxTokens ?? 2048,
-            ToolCallBehavior = ToolCallBehavior.AutoInvokeKernelFunctions
-        };
+        // Anthropic service handles its own tool loop + builds proper fallback settings internally.
+        // OpenAI path needs explicit ToolCallBehavior for SK auto-invocation.
+        PromptExecutionSettings activeSettings = _chatService is AnthropicChatCompletionService
+            ? new PromptExecutionSettings
+            {
+                ExtensionData = new Dictionary<string, object>
+                {
+                    ["max_tokens"] = maxTokens ?? 2048,
+                },
+            }
+            : new OpenAIPromptExecutionSettings
+            {
+                Temperature = 0.7,
+                MaxTokens = maxTokens ?? 2048,
+                ToolCallBehavior = ToolCallBehavior.AutoInvokeKernelFunctions,
+            };
 
         try
         {
-            var response = await chatService.GetChatMessageContentAsync(
+            var response = await _chatService.GetChatMessageContentAsync(
                 history,
-                settings,
+                activeSettings,
                 _kernel,
                 ct);
 
@@ -257,11 +290,18 @@ public sealed class KernelService
             int? promptTokens = null;
             int? completionTokens = null;
 
-            if (response.Metadata?.TryGetValue("Usage", out var usage) == true &&
-                usage is OpenAI.Chat.ChatTokenUsage tokenUsage)
+            if (response.Metadata?.TryGetValue("Usage", out var usage) == true)
             {
-                promptTokens = tokenUsage.InputTokenCount;
-                completionTokens = tokenUsage.OutputTokenCount;
+                if (usage is OpenAI.Chat.ChatTokenUsage tokenUsage)
+                {
+                    promptTokens = tokenUsage.InputTokenCount;
+                    completionTokens = tokenUsage.OutputTokenCount;
+                }
+                else if (usage is AnthropicChatCompletionService.AnthropicTokenUsage anthropicUsage)
+                {
+                    promptTokens = anthropicUsage.InputTokenCount;
+                    completionTokens = anthropicUsage.OutputTokenCount;
+                }
             }
 
             await _telemetryService.LogInteractionCompleteAsync(
