@@ -245,7 +245,9 @@ public sealed class DiscordBotService : BackgroundService
             }
             else
             {
-                // Feedback on auto-executed remediation (ok/fail)
+                // Feedback on auto-executed remediation (ok/fail) — persist to DB + update pattern
+                await _autoRemediationService.RecordFeedbackAsync(actionId, isApproval, default);
+
                 var emoji = isApproval ? "✅" : "❌";
                 var text = isApproval ? "Noted, remediation was successful." : "Noted, remediation did not help.";
 

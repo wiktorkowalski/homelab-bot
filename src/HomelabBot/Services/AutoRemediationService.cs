@@ -129,6 +129,31 @@ public sealed class AutoRemediationService
         await db.SaveChangesAsync(ct);
     }
 
+    public async Task RecordFeedbackAsync(int actionId, bool success, CancellationToken ct)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(ct);
+        var action = await db.RemediationActions.FindAsync([actionId], ct);
+        if (action == null)
+            return;
+
+        action.Success = success;
+
+        // Update the associated pattern's feedback if present
+        if (action.PatternId.HasValue)
+        {
+            var pattern = await db.Patterns.FindAsync([action.PatternId.Value], ct);
+            if (pattern != null)
+            {
+                if (success)
+                    pattern.SuccessCount++;
+                else
+                    pattern.FailureCount++;
+            }
+        }
+
+        await db.SaveChangesAsync(ct);
+    }
+
     public async Task<string> GetStatusAsync(CancellationToken ct = default)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
