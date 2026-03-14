@@ -116,15 +116,7 @@ public sealed class DailySummaryService : BackgroundService
                 systemPromptOverride: HealthcheckPrompts.System,
                 ct: ct);
 
-            if (report.Length > 1900)
-            {
-                var date = DateTime.UtcNow.ToString("yyyy-MM-dd");
-                await _discordBot.SendDmFileAsync(userId, report, $"healthcheck-{date}.md");
-            }
-            else
-            {
-                await _discordBot.SendDmAsync(userId, report);
-            }
+            await _discordBot.SendDmSplitAsync(userId, report);
 
             _logger.LogInformation("Daily healthcheck delivered to user {UserId}", userId);
         }
