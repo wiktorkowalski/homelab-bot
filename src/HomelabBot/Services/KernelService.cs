@@ -159,6 +159,8 @@ public sealed class KernelService
 
             var anthropicService = new ChatClientBuilder(
                     anthropicClient.AsIChatClient(config.Value.AnthropicModel))
+                .UseOpenTelemetry(sourceName: "HomelabBot.Chat", configure: otel =>
+                    otel.EnableSensitiveData = true)
                 .UseFunctionInvocation()
                 .Build()
                 .AsChatCompletionService();
@@ -291,15 +293,7 @@ public sealed class KernelService
             responseText = StripThinkingBlocks(responseText);
             _conversationService.AddAssistantMessage(threadId, responseText);
 
-            int? promptTokens = null;
-            int? completionTokens = null;
-
-            if (response.Metadata?.TryGetValue("Usage", out var usage) == true &&
-                usage is OpenAI.Chat.ChatTokenUsage tokenUsage)
-            {
-                promptTokens = tokenUsage.InputTokenCount;
-                completionTokens = tokenUsage.OutputTokenCount;
-            }
+            var (promptTokens, completionTokens) = ExtractTokenUsage(response);
 
             await _telemetryService.LogInteractionCompleteAsync(
                 interaction.Id, responseText, promptTokens, completionTokens, sw.ElapsedMilliseconds, ct);
@@ -322,6 +316,28 @@ public sealed class KernelService
         {
             _telemetryService.SetActiveInteraction(null);
         }
+    }
+
+    private static (int? PromptTokens, int? CompletionTokens) ExtractTokenUsage(ChatMessageContent response)
+    {
+        if (response.Metadata == null)
+            return (null, null);
+
+        // OpenAI format (OpenRouter path)
+        if (response.Metadata.TryGetValue("Usage", out var usage) &&
+            usage is OpenAI.Chat.ChatTokenUsage openAiUsage)
+        {
+            return (openAiUsage.InputTokenCount, openAiUsage.OutputTokenCount);
+        }
+
+        // M.E.AI format (Anthropic SDK path) — usage is in the ChatResponse inner content
+        if (response.InnerContent is Microsoft.Extensions.AI.ChatResponse chatResponse &&
+            chatResponse.Usage != null)
+        {
+            return ((int?)chatResponse.Usage.InputTokenCount, (int?)chatResponse.Usage.OutputTokenCount);
+        }
+
+        return (null, null);
     }
 
     private static string StripThinkingBlocks(string text)
