@@ -165,19 +165,29 @@ public sealed class DiscordBotService : BackgroundService
         var isHelpful = customId.StartsWith("pattern_helpful_");
         var prefix = isHelpful ? "pattern_helpful_" : "pattern_notrelevant_";
 
-        if (!int.TryParse(customId[prefix.Length..], out var patternId))
+        var idsString = customId[prefix.Length..];
+        var patternIds = idsString.Split(',')
+            .Select(s => int.TryParse(s, out var id) ? id : (int?)null)
+            .Where(id => id.HasValue)
+            .Select(id => id!.Value)
+            .ToList();
+
+        if (patternIds.Count == 0)
         {
             await e.Interaction.CreateResponseAsync(InteractionResponseType.DeferredMessageUpdate);
             return;
         }
 
-        try
+        foreach (var patternId in patternIds)
         {
-            await _memoryService.RecordPatternFeedbackAsync(patternId, isHelpful);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to record pattern feedback for {PatternId}", patternId);
+            try
+            {
+                await _memoryService.RecordPatternFeedbackAsync(patternId, isHelpful);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to record pattern feedback for {PatternId}", patternId);
+            }
         }
 
         var emoji = isHelpful ? "👍" : "👎";
