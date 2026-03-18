@@ -32,6 +32,8 @@ public sealed class HealthScoreBackgroundService : BackgroundService
         await _discordBot.WaitForReadyAsync(stoppingToken);
         _logger.LogInformation("Discord ready, health score tracking running");
 
+        await InitializeNotificationStateAsync(stoppingToken);
+
         while (!stoppingToken.IsCancellationRequested)
         {
             try
@@ -103,6 +105,28 @@ public sealed class HealthScoreBackgroundService : BackgroundService
         {
             // Reset notification state when fully recovered
             _lastNotifiedScore = null;
+        }
+    }
+
+    private async Task InitializeNotificationStateAsync(CancellationToken ct)
+    {
+        try
+        {
+            var threshold = _config.CurrentValue.AlertDropThreshold;
+            var baseline = await _healthScoreService.GetScoreAtWindowStartAsync(TimeSpan.FromHours(1), ct);
+            var latest = await _healthScoreService.GetLatestScoreAsync(ct);
+
+            if (baseline.HasValue && latest.HasValue && baseline.Value - latest.Value >= threshold)
+            {
+                _lastNotifiedScore = latest.Value;
+                _logger.LogInformation(
+                    "Health score in drop state on startup ({Baseline} → {Latest}), suppressing duplicate notification",
+                    baseline.Value, latest.Value);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to initialize notification state, starting fresh");
         }
     }
 

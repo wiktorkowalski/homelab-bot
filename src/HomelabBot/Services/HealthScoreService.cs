@@ -121,6 +121,16 @@ public sealed class HealthScoreService
             .FirstOrDefaultAsync(ct);
     }
 
+    public async Task<int?> GetLatestScoreAsync(CancellationToken ct = default)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(ct);
+
+        return await db.HealthScoreHistory
+            .OrderByDescending(h => h.RecordedAt)
+            .Select(h => (int?)h.Score)
+            .FirstOrDefaultAsync(ct);
+    }
+
     public async Task PruneOldRecordsAsync(TimeSpan retention, CancellationToken ct = default)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
