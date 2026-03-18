@@ -51,3 +51,26 @@ jobs:
                - REQUEST_CHANGES if there are security vulnerabilities or bugs
 
             Use: gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number || github.event.issue.number }}/reviews
+
+      - name: Review gate
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          sleep 5
+
+          REVIEW_STATE=$(gh api "repos/$REPO/pulls/$PR_NUMBER/reviews" \
+            --jq '[.[] | select(.user.login == "claude[bot]")] | last | .state // empty')
+
+          echo "Claude review state: $REVIEW_STATE"
+
+          if [ "$REVIEW_STATE" = "APPROVED" ]; then
+            gh pr review "$PR_NUMBER" --approve \
+              --body "Approved by GitHub Actions (based on Claude's approval)"
+          elif [ "$REVIEW_STATE" = "CHANGES_REQUESTED" ]; then
+            gh pr review "$PR_NUMBER" --request-changes \
+              --body "Blocked by GitHub Actions (Claude requested changes)"
+            exit 1
+          fi
