@@ -276,10 +276,13 @@ public sealed class LokiPlugin
         return $"No logs found for container '{containerName}' in the last {since}. Try using ListLabels and ListLabelValues to discover available labels.";
     }
 
-    public async Task<Dictionary<string, long>> GetErrorCountsByContainerAsync(string since = "1h")
+    public async Task<Dictionary<string, long>> GetErrorCountsByContainerAsync(string since = "1h", string? containerName = null)
     {
         var normalizedSince = NormalizeDuration(since);
-        var query = $"sum by (compose_service) (count_over_time({{job=~\".+\"}} |~ \"(?i)(\\\\berror\\\\b|\\\\bexception\\\\b|\\\\bfailed\\\\b|\\\\bfailure\\\\b)\" [{normalizedSince}]))";
+        var selector = string.IsNullOrWhiteSpace(containerName)
+            ? "{compose_service=~\".+\"}"
+            : $"{{compose_service=\"{containerName}\"}}";
+        var query = $"sum by (compose_service) (count_over_time({selector} |~ \"(?i)(\\\\berror\\\\b|\\\\bexception\\\\b|\\\\bfailed\\\\b|\\\\bfailure\\\\b)\" [{normalizedSince}]))";
 
         var encodedQuery = Uri.EscapeDataString(query);
         var url = $"{_baseUrl}/loki/api/v1/query?query={encodedQuery}";
@@ -316,13 +319,14 @@ public sealed class LokiPlugin
     [KernelFunction]
     [Description("Counts error/exception log lines per container over a time window. Returns container name and error count.")]
     public async Task<string> CountErrorsByContainer(
-        [Description("Time range like '1h', '6h', '24h' (default 1h)")] string since = "1h")
+        [Description("Time range like '1h', '6h', '24h' (default 1h)")] string since = "1h",
+        string? containerName = null)
     {
         _logger.LogDebug("Counting errors by container since {Since}", since);
 
         try
         {
-            var entries = await GetErrorCountsByContainerAsync(since);
+            var entries = await GetErrorCountsByContainerAsync(since, containerName);
 
             if (entries.Count == 0)
             {
@@ -357,7 +361,7 @@ public sealed class LokiPlugin
         _logger.LogDebug("Detecting critical patterns since {Since}", since);
 
         var duration = ParseDuration(since);
-        var query = "{job=~\".+\"} |~ \"(?i)(fatal|panic|oom|out of memory|killed process|segfault)\"";
+        var query = "{compose_service=~\".+\"} |~ \"(?i)(fatal|panic|oom|out of memory|killed process|segfault)\"";
         var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() * 1_000_000;
         var start = DateTimeOffset.UtcNow.Subtract(duration).ToUnixTimeMilliseconds() * 1_000_000;
 
@@ -433,13 +437,16 @@ public sealed class LokiPlugin
     [Description("Searches all logs for specific text (grep-style search).")]
     public async Task<string> SearchLogs(
         [Description("Text to search for in logs")] string searchText,
-        [Description("Time range like '1h', '30m', '15m' (default 1h)")] string since = "1h")
+        [Description("Time range like '1h', '30m', '15m' (default 1h)")] string since = "1h",
+        string? containerName = null)
     {
         _logger.LogDebug("Searching logs for '{SearchText}' since {Since}", searchText, since);
 
-        // Use line_format to filter
         var escapedText = searchText.Replace("\"", "\\\"");
-        var query = $"{{job=~\".+\"}} |~ \"(?i){escapedText}\"";
+        var selector = string.IsNullOrWhiteSpace(containerName)
+            ? "{compose_service=~\".+\"}"
+            : $"{{compose_service=\"{containerName}\"}}";
+        var query = $"{selector} |~ \"(?i){escapedText}\"";
         var duration = ParseDuration(since);
 
         try
@@ -466,7 +473,8 @@ public sealed class LokiPlugin
 
             foreach (var stream in result.Data.Result)
             {
-                var container = stream.Stream?.GetValueOrDefault("container_name") ?? "unknown";
+                var container = stream.Stream?.GetValueOrDefault("compose_service")
+                    ?? stream.Stream?.GetValueOrDefault("container_name") ?? "unknown";
 
                 if (stream.Values != null)
                 {
