@@ -256,7 +256,14 @@ public sealed class AlertmanagerPlugin
     {
         public Dictionary<string, string>? Labels { get; set; }
         public Dictionary<string, string>? Annotations { get; set; }
-        public string? Status { get; set; }
+        public AlertStatus? Status { get; set; }
+    }
+
+    private sealed class AlertStatus
+    {
+        public string? State { get; set; }
+        public List<string>? SilencedBy { get; set; }
+        public List<string>? InhibitedBy { get; set; }
     }
 
     private sealed class AlertGroup
