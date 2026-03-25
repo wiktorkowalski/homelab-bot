@@ -361,7 +361,7 @@ public sealed class LokiPlugin
         _logger.LogDebug("Detecting critical patterns since {Since}", since);
 
         var duration = ParseDuration(since);
-        var query = "{compose_service=~\".+\"} |~ \"(?i)(fatal|panic|oom|out of memory|killed process|segfault)\"";
+        var query = "{compose_service=~\".+\",compose_service!=\"loki\"} |~ \"(?i)(\\\\bfatal\\\\b|\\\\bpanic\\\\b|\\\\boom\\\\b|out of memory|killed process|segfault)\"";
         var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() * 1_000_000;
         var start = DateTimeOffset.UtcNow.Subtract(duration).ToUnixTimeMilliseconds() * 1_000_000;
 
