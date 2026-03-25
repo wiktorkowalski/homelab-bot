@@ -61,6 +61,7 @@ public sealed class AnomalyDetectionService : BackgroundService
         await _discordBot.WaitForReadyAsync(stoppingToken);
         _logger.LogInformation("Discord ready, anomaly detection running");
 
+        var isFirstRun = true;
         while (!stoppingToken.IsCancellationRequested)
         {
             try
@@ -73,7 +74,9 @@ public sealed class AnomalyDetectionService : BackgroundService
                 }
 
                 var interval = Math.Max(1, _config.CurrentValue.HeuristicIntervalMinutes);
-                await Task.Delay(TimeSpan.FromMinutes(interval), stoppingToken);
+                var delay = isFirstRun ? TimeSpan.FromMinutes(1) : TimeSpan.FromMinutes(interval);
+                isFirstRun = false;
+                await Task.Delay(delay, stoppingToken);
 
                 _heuristicTick++;
                 var anomalies = await RunHeuristicChecksAsync(stoppingToken);
