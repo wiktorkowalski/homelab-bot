@@ -53,8 +53,8 @@ public sealed class HomelabMcpTools
     public Task<string> GetContainerStatus(string containerName) => _docker.GetContainerStatus(containerName);
 
     [McpServerTool]
-    [Description("Get recent logs from a container")]
-    public Task<string> GetContainerLogs(string containerName, int lines = 50) => _docker.GetContainerLogs(containerName, lines);
+    [Description("Get recent logs from a container via Loki (time-based)")]
+    public Task<string> GetContainerLogs(string containerName, string since = "1h") => _loki.GetContainerLogs(containerName, since);
 
     [McpServerTool]
     [Description("Execute a PromQL query against Prometheus")]
@@ -81,12 +81,19 @@ public sealed class HomelabMcpTools
     public Task<string> SearchKnowledge(string query) => _knowledge.RecallKnowledge(query);
 
     [McpServerTool]
-    [Description("Search logs across all containers")]
-    public Task<string> SearchLogs(string searchText, string since = "1h") => _loki.SearchLogs(searchText, since);
+    [Description("Search logs across all containers, optionally filtered by container name")]
+    public Task<string> SearchLogs(string searchText, string since = "1h", string? containerName = null)
+        => _loki.SearchLogs(searchText, since, containerName);
 
     [McpServerTool]
-    [Description("Count error log lines per container")]
-    public Task<string> CountErrors(string since = "1h") => _loki.CountErrorsByContainer(since);
+    [Description("Count error log lines per container, optionally filtered to a specific container")]
+    public Task<string> CountErrors(string since = "1h", string? containerName = null)
+        => _loki.CountErrorsByContainer(since, containerName);
+
+    [McpServerTool]
+    [Description("Execute a raw LogQL query against Loki")]
+    public Task<string> QueryLoki(string query, int limit = 100)
+        => _loki.QueryLogs(query, limit);
 
     [McpServerTool]
     [Description("Get current health score with breakdown")]
