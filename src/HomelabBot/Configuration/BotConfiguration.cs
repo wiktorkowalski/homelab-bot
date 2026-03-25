@@ -130,7 +130,7 @@ public sealed class SecurityAuditConfiguration
 
     public bool Enabled { get; init; } = false;
     public DayOfWeek ScheduleDay { get; init; } = DayOfWeek.Sunday;
-    public string ScheduleTime { get; init; } = "02:00";
+    public string ScheduleTime { get; init; } = "04:00";
     public string TimeZone { get; init; } = "Europe/Warsaw";
 }
 
@@ -166,7 +166,7 @@ public sealed class KnowledgeRefreshConfiguration
     public const string SectionName = "KnowledgeRefresh";
 
     public bool Enabled { get; init; } = false;
-    public string ScheduleTime { get; init; } = "03:00";
+    public string ScheduleTime { get; init; } = "05:00";
     public string TimeZone { get; init; } = "Europe/Warsaw";
     public bool NotifyOnChanges { get; init; } = false;
 }

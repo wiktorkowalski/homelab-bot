@@ -71,8 +71,8 @@ public sealed class KnowledgeRefreshService : BackgroundService
 
         if (!TimeOnly.TryParse(config.ScheduleTime, out var scheduleTime))
         {
-            _logger.LogWarning("Invalid ScheduleTime '{Time}', defaulting to 03:00", config.ScheduleTime);
-            scheduleTime = new TimeOnly(3, 0);
+            _logger.LogWarning("Invalid ScheduleTime '{Time}', defaulting to 05:00", config.ScheduleTime);
+            scheduleTime = new TimeOnly(5, 0);
         }
 
         TimeZoneInfo tz;
@@ -91,6 +91,8 @@ public sealed class KnowledgeRefreshService : BackgroundService
         var todaySchedule = nowLocal.Date + scheduleTime.ToTimeSpan();
 
         var nextRun = nowLocal < todaySchedule ? todaySchedule : todaySchedule.AddDays(1);
+        if (tz.IsInvalidTime(nextRun))
+            nextRun = nextRun.AddHours(1);
         var nextRunUtc = TimeZoneInfo.ConvertTimeToUtc(nextRun, tz);
 
         return nextRunUtc - nowUtc;
