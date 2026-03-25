@@ -114,8 +114,8 @@ public sealed class SecurityAuditService : BackgroundService
 
         if (!TimeOnly.TryParse(config.ScheduleTime, out var scheduleTime))
         {
-            _logger.LogWarning("Invalid ScheduleTime '{Time}', defaulting to 02:00", config.ScheduleTime);
-            scheduleTime = new TimeOnly(2, 0);
+            _logger.LogWarning("Invalid ScheduleTime '{Time}', defaulting to 04:00", config.ScheduleTime);
+            scheduleTime = new TimeOnly(4, 0);
         }
 
         TimeZoneInfo tz;
@@ -142,6 +142,8 @@ public sealed class SecurityAuditService : BackgroundService
             nextRun = nextRun.AddDays(7);
         }
 
+        if (tz.IsInvalidTime(nextRun))
+            nextRun = nextRun.AddHours(1);
         var nextRunUtc = TimeZoneInfo.ConvertTimeToUtc(nextRun, tz);
         return nextRunUtc - nowUtc;
     }
