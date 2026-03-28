@@ -11,66 +11,8 @@ on:
     types: [opened, synchronize]
 
 jobs:
-  claude:
-    runs-on: [self-hosted, homelab-bot]
-    if: |
-      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
-      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
-      (github.event_name == 'issues' && github.event.action == 'assigned' && github.event.assignee.login == 'claude[bot]') ||
-      (github.event_name == 'pull_request')
-
-    permissions:
-      contents: write
-      pull-requests: write
-      issues: write
-      actions: read
-      id-token: write
-
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - uses: anthropics/claude-code-action@v1
-        env:
-          ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_PROXY_URL }}
-          CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: "1"
-        with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          show_full_output: true
-          claude_args: |
-            --model claude-opus-4-5-20251101
-            --allowedTools "Edit,MultiEdit,Write,Read,Glob,Grep,LS,Bash,mcp__github_comment__update_claude_comment"
-          prompt: |
-            You are reviewing PR #${{ github.event.pull_request.number || github.event.issue.number }} in ${{ github.repository }}.
-
-            Review the code changes and:
-            1. Post inline comments on specific lines with issues
-            2. Submit a formal review using gh api:
-               - APPROVE if no critical issues
-               - REQUEST_CHANGES if there are security vulnerabilities or bugs
-
-            Use: gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number || github.event.issue.number }}/reviews
-
-      - name: Review gate
-        if: always() && github.event_name == 'pull_request'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          REPO: ${{ github.repository }}
-        run: |
-          sleep 5
-
-          REVIEW_STATE=$(gh api "repos/$REPO/pulls/$PR_NUMBER/reviews" \
-            --jq '[.[] | select(.user.login == "claude[bot]")] | last | .state // empty')
-
-          echo "Claude review state: $REVIEW_STATE"
-
-          if [ "$REVIEW_STATE" = "APPROVED" ]; then
-            gh pr review "$PR_NUMBER" --approve \
-              --body "Approved by GitHub Actions (based on Claude's approval)"
-          elif [ "$REVIEW_STATE" = "CHANGES_REQUESTED" ]; then
-            gh pr review "$PR_NUMBER" --request-changes \
-              --body "Blocked by GitHub Actions (Claude requested changes)"
-            exit 1
-          fi
+  review:
+    uses: wiktorkowalski/github-workflows/.github/workflows/claude-code-review.yml@master
+    with:
+      runner-labels: '["self-hosted", "homelab-bot"]'
+    secrets: inherit
