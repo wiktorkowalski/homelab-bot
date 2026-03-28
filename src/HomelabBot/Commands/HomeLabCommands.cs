@@ -17,6 +17,7 @@ public class HomeLabCommands : ApplicationCommandModule
     private readonly HealthScoreService _healthScoreService;
     private readonly SecurityAuditService _securityAuditService;
     private readonly AutoRemediationService _autoRemediationService;
+    private readonly MemoryService _memoryService;
     private readonly ILogger<HomeLabCommands> _logger;
 
     public HomeLabCommands(
@@ -29,6 +30,7 @@ public class HomeLabCommands : ApplicationCommandModule
         HealthScoreService healthScoreService,
         SecurityAuditService securityAuditService,
         AutoRemediationService autoRemediationService,
+        MemoryService memoryService,
         ILogger<HomeLabCommands> logger)
     {
         _dockerPlugin = dockerPlugin;
@@ -40,6 +42,7 @@ public class HomeLabCommands : ApplicationCommandModule
         _healthScoreService = healthScoreService;
         _securityAuditService = securityAuditService;
         _autoRemediationService = autoRemediationService;
+        _memoryService = memoryService;
         _logger = logger;
     }
 
@@ -702,6 +705,89 @@ public class HomeLabCommands : ApplicationCommandModule
             _logger.LogError(ex, "Error in auto command");
             await ctx.EditResponseAsync(new DiscordWebhookBuilder()
                 .WithContent($"Error in auto-remediation command: {ex.Message}"));
+        }
+    }
+
+    [SlashCommand("pattern", "Manage remediation patterns")]
+    public async Task PatternCommand(
+        InteractionContext ctx,
+        [Option("action", "Action to perform")]
+        [Choice("List", "list")]
+        [Choice("View", "view")]
+        [Choice("Delete", "delete")]
+        string action,
+        [Option("id", "Pattern ID (for view/delete)")] long? id = null)
+    {
+        await ctx.DeferAsync();
+
+        try
+        {
+            string response;
+            switch (action)
+            {
+                case "list":
+                    var patterns = await _memoryService.ListPatternsAsync();
+                    if (patterns.Count == 0)
+                    {
+                        response = "No remediation patterns found.";
+                    }
+                    else
+                    {
+                        var lines = patterns.Select(p =>
+                            $"**#{p.Id}** {p.Symptom} — {p.SuccessRate:F0}% success ({p.OccurrenceCount}x seen)");
+                        response = $"**Remediation Patterns:**\n{string.Join("\n", lines)}";
+                    }
+
+                    break;
+
+                case "view":
+                    if (!id.HasValue)
+                    {
+                        response = "Please specify a pattern ID.";
+                        break;
+                    }
+
+                    var pattern = await _memoryService.GetPatternByIdAsync((int)id.Value);
+                    if (pattern == null)
+                    {
+                        response = $"Pattern #{id} not found.";
+                    }
+                    else
+                    {
+                        response = $"**Pattern #{pattern.Id}**\n"
+                            + $"**Symptom:** {pattern.Symptom}\n"
+                            + $"**Cause:** {pattern.CommonCause ?? "N/A"}\n"
+                            + $"**Resolution:** {pattern.Resolution ?? "N/A"}\n"
+                            + $"**Success rate:** {pattern.SuccessRate:F0}% ({pattern.SuccessCount}✓ / {pattern.FailureCount}✗)\n"
+                            + $"**Occurrences:** {pattern.OccurrenceCount}\n"
+                            + $"**Last seen:** {pattern.LastSeen:u}";
+                    }
+
+                    break;
+
+                case "delete":
+                    if (!id.HasValue)
+                    {
+                        response = "Please specify a pattern ID.";
+                        break;
+                    }
+
+                    var deleted = await _memoryService.DeletePatternAsync((int)id.Value);
+                    response = deleted ? $"Pattern #{id} deleted." : $"Pattern #{id} not found.";
+                    break;
+
+                default:
+                    response = $"Unknown action: {action}";
+                    break;
+            }
+
+            await ctx.EditResponseAsync(new DiscordWebhookBuilder().WithContent(response));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in pattern command");
+            await ctx.EditResponseAsync(new DiscordWebhookBuilder()
+                .WithContent($"Error: {ex.Message}"));
         }
     }
 

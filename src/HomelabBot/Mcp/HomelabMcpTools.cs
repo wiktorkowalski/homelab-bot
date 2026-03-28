@@ -21,6 +21,7 @@ public sealed class HomelabMcpTools
     private readonly NtfyPlugin _ntfy;
     private readonly RunbookPlugin _runbook;
     private readonly InvestigationPlugin _investigation;
+    private readonly MemoryService _memoryService;
     private readonly HealthScoreService _healthScore;
     private readonly SummaryDataAggregator _summaryAggregator;
     private readonly ConversationService _conversationService;
@@ -38,6 +39,7 @@ public sealed class HomelabMcpTools
         NtfyPlugin ntfy,
         RunbookPlugin runbook,
         InvestigationPlugin investigation,
+        MemoryService memoryService,
         HealthScoreService healthScore,
         SummaryDataAggregator summaryAggregator,
         ConversationService conversationService)
@@ -54,6 +56,7 @@ public sealed class HomelabMcpTools
         _ntfy = ntfy;
         _runbook = runbook;
         _investigation = investigation;
+        _memoryService = memoryService;
         _healthScore = healthScore;
         _summaryAggregator = summaryAggregator;
         _conversationService = conversationService;
@@ -160,4 +163,26 @@ public sealed class HomelabMcpTools
     [McpServerTool]
     [Description("Search past incidents for similar issues")]
     public Task<string> SearchPastIncidents(string symptom) => _investigation.SearchPastIncidents(symptom);
+
+    [McpServerTool]
+    [Description("List all remediation patterns with their success rates")]
+    public async Task<string> ListPatterns()
+    {
+        var patterns = await _memoryService.ListPatternsAsync();
+        if (patterns.Count == 0)
+        {
+            return "No remediation patterns found.";
+        }
+
+        return string.Join("\n", patterns.Select(p =>
+            $"#{p.Id} | {p.Symptom} | {p.SuccessRate:F0}% success | {p.OccurrenceCount}x seen"));
+    }
+
+    [McpServerTool]
+    [Description("Delete a remediation pattern by ID")]
+    public async Task<string> DeletePattern(int patternId)
+    {
+        var deleted = await _memoryService.DeletePatternAsync(patternId);
+        return deleted ? $"Pattern #{patternId} deleted." : $"Pattern #{patternId} not found.";
+    }
 }
