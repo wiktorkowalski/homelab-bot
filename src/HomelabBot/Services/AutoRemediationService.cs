@@ -19,6 +19,7 @@ public sealed class AutoRemediationService
     private readonly ILogger<AutoRemediationService> _logger;
     private readonly ServiceStateStore _stateStore;
     private readonly ConcurrentDictionary<string, List<DateTime>> _cooldowns = new();
+    private readonly Task _initTask;
     private bool _enabled;
 
     public AutoRemediationService(
@@ -34,7 +35,7 @@ public sealed class AutoRemediationService
         _logger = logger;
         _stateStore = stateStore;
         _enabled = _config.Enabled;
-        _ = LoadStateAsync();
+        _initTask = LoadStateAsync();
     }
 
     public bool IsEnabled => _enabled;
@@ -42,7 +43,19 @@ public sealed class AutoRemediationService
     public void SetEnabled(bool enabled)
     {
         _enabled = enabled;
-        _ = _stateStore.SetAsync(StateName, "enabled", enabled.ToString());
+        _ = PersistEnabledAsync(enabled);
+    }
+
+    private async Task PersistEnabledAsync(bool enabled)
+    {
+        try
+        {
+            await _stateStore.SetAsync(StateName, "enabled", enabled.ToString());
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to persist enabled state");
+        }
     }
 
     public async Task<RemediationResult?> TryAutoRemediateAsync(
@@ -50,6 +63,8 @@ public sealed class AutoRemediationService
         List<Pattern> matchedPatterns,
         CancellationToken ct)
     {
+        await _initTask;
+
         if (!_enabled)
             return null;
 
@@ -166,15 +181,26 @@ public sealed class AutoRemediationService
 
     public async Task<string> GetStatusAsync(CancellationToken ct = default)
     {
+        await _initTask;
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
         var recentCount = await db.RemediationActions
             .CountAsync(a => a.ExecutedAt > DateTime.UtcNow.AddHours(-24), ct);
         var successCount = await db.RemediationActions
             .CountAsync(a => a.ExecutedAt > DateTime.UtcNow.AddHours(-24) && a.Success, ct);
 
+        var cutoff = DateTime.UtcNow.AddHours(-1);
         var activeCooldowns = _cooldowns
-            .Where(kv => kv.Value.Count(d => d > DateTime.UtcNow.AddHours(-1)) > 0)
-            .Select(kv => $"{kv.Key}: {kv.Value.Count(d => d > DateTime.UtcNow.AddHours(-1))}/{_config.MaxRestartsPerHour}")
+            .Select(kv =>
+            {
+                int count;
+                lock (kv.Value)
+                {
+                    count = kv.Value.Count(d => d > cutoff);
+                }
+                return (kv.Key, Count: count);
+            })
+            .Where(x => x.Count > 0)
+            .Select(x => $"{x.Key}: {x.Count}/{_config.MaxRestartsPerHour}")
             .ToList();
 
         var lines = new List<string>
@@ -309,7 +335,13 @@ public sealed class AutoRemediationService
         {
             var cutoff = DateTime.UtcNow.AddHours(-1);
             var snapshot = _cooldowns
-                .ToDictionary(kv => kv.Key, kv => kv.Value.Where(t => t > cutoff).ToList())
+                .ToDictionary(kv => kv.Key, kv =>
+                {
+                    lock (kv.Value)
+                    {
+                        return kv.Value.Where(t => t > cutoff).ToList();
+                    }
+                })
                 .Where(kv => kv.Value.Count > 0)
                 .ToDictionary(kv => kv.Key, kv => kv.Value);
             await _stateStore.SetAsync(StateName, "cooldowns", JsonSerializer.Serialize(snapshot));
