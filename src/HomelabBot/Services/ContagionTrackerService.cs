@@ -11,6 +11,7 @@ public sealed class ContagionTrackerService
 
     private List<ContainerNetworkInfo>? _cachedMap;
     private DateTime _cacheExpiry = DateTime.MinValue;
+    private readonly SemaphoreSlim _cacheLock = new(1, 1);
     private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(5);
 
     public ContagionTrackerService(
@@ -116,8 +117,15 @@ public sealed class ContagionTrackerService
             return _cachedMap;
         }
 
+        await _cacheLock.WaitAsync();
         try
         {
+            // Double-check after acquiring lock
+            if (_cachedMap != null && DateTime.UtcNow < _cacheExpiry)
+            {
+                return _cachedMap;
+            }
+
             _cachedMap = await _dockerPlugin.GetContainerNetworkMapAsync();
             _cacheExpiry = DateTime.UtcNow.Add(CacheDuration);
         }
@@ -125,6 +133,10 @@ public sealed class ContagionTrackerService
         {
             _logger.LogWarning(ex, "Failed to refresh container network map");
             _cachedMap ??= [];
+        }
+        finally
+        {
+            _cacheLock.Release();
         }
 
         return _cachedMap;
@@ -153,11 +165,15 @@ public sealed class ContagionTrackerService
             return $"same compose project ({sourceProject})";
         }
 
-        // depends_on relationship
-        if (other.Labels.TryGetValue("com.docker.compose.depends_on", out var dependsOn) &&
-            dependsOn.Contains(source.Name, StringComparison.OrdinalIgnoreCase))
+        // depends_on relationship (format: "service:condition:flag,service2:condition:flag")
+        if (other.Labels.TryGetValue("com.docker.compose.depends_on", out var dependsOn))
         {
-            return "depends on source";
+            var dependencies = dependsOn.Split(',', StringSplitOptions.RemoveEmptyEntries);
+            if (dependencies.Any(d =>
+                d.Split(':')[0].Equals(source.Name, StringComparison.OrdinalIgnoreCase)))
+            {
+                return "depends on source";
+            }
         }
 
         return null;
