@@ -104,14 +104,12 @@ public class IncidentSimilarityServiceTests : IClassFixture<DatabaseFixture>, ID
 
         var results = await _service.FindSimilarAsync("memory usage high", containerName: "nginx");
 
-        Assert.True(results.Count >= 1);
-        // The one mentioning nginx should score higher
+        Assert.True(results.Count >= 2);
         var nginxResult = results.FirstOrDefault(r => r.Trigger.Contains("nginx"));
         var otherResult = results.FirstOrDefault(r => !r.Trigger.Contains("nginx"));
-        if (nginxResult != null && otherResult != null)
-        {
-            Assert.True(nginxResult.SimilarityScore > otherResult.SimilarityScore);
-        }
+        Assert.NotNull(nginxResult);
+        Assert.NotNull(otherResult);
+        Assert.True(nginxResult.SimilarityScore > otherResult.SimilarityScore);
     }
 
     [Fact]

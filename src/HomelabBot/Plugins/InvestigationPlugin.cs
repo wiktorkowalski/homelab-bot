@@ -59,7 +59,9 @@ public sealed class InvestigationPlugin
             foreach (var similar in similarIncidents)
             {
                 var age = DateTime.UtcNow - similar.OccurredAt;
-                var timeAgo = age.TotalDays > 1 ? $"{(int)age.TotalDays}d ago" : $"{(int)age.TotalHours}h ago";
+                var timeAgo = age.TotalDays > 1 ? $"{(int)age.TotalDays}d ago"
+                    : age.TotalHours >= 1 ? $"{(int)age.TotalHours}h ago"
+                    : $"{(int)age.TotalMinutes}m ago";
                 sb.AppendLine($"- **#{similar.InvestigationId}** ({similar.SimilarityScore:F0}% match, {timeAgo}): {similar.Trigger}");
                 if (!string.IsNullOrEmpty(similar.Resolution))
                 {

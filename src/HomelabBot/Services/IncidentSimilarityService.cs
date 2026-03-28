@@ -30,6 +30,7 @@ public sealed class IncidentSimilarityService
         var keywords = symptom.ToLowerInvariant()
             .Split(' ', StringSplitOptions.RemoveEmptyEntries)
             .Where(k => k.Length > 2)
+            .Distinct()
             .ToArray();
 
         if (keywords.Length == 0)
@@ -39,7 +40,7 @@ public sealed class IncidentSimilarityService
 
         var alertName = alertLabels?.GetValueOrDefault("alertname");
 
-        var investigationsTask = db.Investigations
+        var investigations = await db.Investigations
             .Where(i => i.Resolved)
             .OrderByDescending(i => i.StartedAt)
             .Take(100)
@@ -48,8 +49,9 @@ public sealed class IncidentSimilarityService
         var remediationsByContainer = new Dictionary<string, List<RemediationAction>>();
         if (containerName != null)
         {
+            await using var remDb = await _dbFactory.CreateDbContextAsync(ct);
             var containerLower = containerName.ToLowerInvariant();
-            var remediations = await db.RemediationActions
+            var remediations = await remDb.RemediationActions
                 .Where(a => a.Success && a.ContainerName == containerName)
                 .OrderByDescending(a => a.ExecutedAt)
                 .Take(50)
@@ -60,8 +62,6 @@ public sealed class IncidentSimilarityService
                 remediationsByContainer[containerLower] = remediations;
             }
         }
-
-        var investigations = await investigationsTask;
         var scored = new List<SimilarIncident>();
 
         foreach (var investigation in investigations)
@@ -76,6 +76,7 @@ public sealed class IncidentSimilarityService
 
             var successfulRemediations = new List<RemediationAction>();
             if (containerName != null &&
+                reasons.Contains("same container") &&
                 remediationsByContainer.TryGetValue(containerName.ToLowerInvariant(), out var containerRemediations))
             {
                 successfulRemediations = containerRemediations
