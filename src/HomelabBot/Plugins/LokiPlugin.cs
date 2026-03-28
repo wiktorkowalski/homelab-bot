@@ -297,7 +297,8 @@ public sealed class LokiPlugin
 
         foreach (var stream in result.Data.Result)
         {
-            var container = stream.Stream?.GetValueOrDefault("compose_service") ?? "unknown";
+            var labels = stream.Stream ?? stream.Metric;
+            var container = labels?.GetValueOrDefault("compose_service") ?? "unknown";
             long count = 0;
 
             if (stream.Values is { Count: > 0 } && stream.Values[0].Length >= 2)
@@ -588,6 +589,7 @@ public sealed class LokiPlugin
     private sealed class LokiStream
     {
         public Dictionary<string, string>? Stream { get; set; }
+        public Dictionary<string, string>? Metric { get; set; }
         public List<JsonElement[]>? Values { get; set; }
         public JsonElement[]? Value { get; set; }
     }
