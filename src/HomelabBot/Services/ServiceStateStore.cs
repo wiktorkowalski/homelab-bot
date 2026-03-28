@@ -4,7 +4,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace HomelabBot.Services;
 
-public sealed class ServiceStateStore
+public class ServiceStateStore
 {
     private readonly IDbContextFactory<HomelabDbContext> _dbFactory;
 
@@ -13,7 +13,7 @@ public sealed class ServiceStateStore
         _dbFactory = dbFactory;
     }
 
-    public async Task<string?> GetAsync(string serviceName, string key)
+    public virtual async Task<string?> GetAsync(string serviceName, string key)
     {
         await using var db = await _dbFactory.CreateDbContextAsync();
         var entry = await db.ServiceStates
@@ -21,7 +21,7 @@ public sealed class ServiceStateStore
         return entry?.Value;
     }
 
-    public async Task SetAsync(string serviceName, string key, string value)
+    public virtual async Task SetAsync(string serviceName, string key, string value)
     {
         await using var db = await _dbFactory.CreateDbContextAsync();
         var entry = await db.ServiceStates

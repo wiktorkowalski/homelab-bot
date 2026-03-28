@@ -6,7 +6,7 @@ using Microsoft.SemanticKernel;
 
 namespace HomelabBot.Plugins;
 
-public sealed class DockerPlugin
+public class DockerPlugin
 {
     private readonly DockerClient _client;
     private readonly ILogger<DockerPlugin> _logger;
@@ -62,7 +62,7 @@ public sealed class DockerPlugin
 
     [KernelFunction]
     [Description("Gets detailed status information for a specific container by name or ID.")]
-    public async Task<string> GetContainerStatus([Description("Container name or ID")] string containerName)
+    public virtual async Task<string> GetContainerStatus([Description("Container name or ID")] string containerName)
     {
         _logger.LogDebug("Getting status for container {Container}...", containerName);
 
@@ -137,7 +137,7 @@ public sealed class DockerPlugin
 
     [KernelFunction]
     [Description("Starts a stopped container. This is a safe operation.")]
-    public async Task<string> StartContainer([Description("Container name or ID")] string containerName)
+    public virtual async Task<string> StartContainer([Description("Container name or ID")] string containerName)
     {
         _logger.LogInformation("Starting container {Container}...", containerName);
 
@@ -190,7 +190,7 @@ public sealed class DockerPlugin
 
     [KernelFunction]
     [Description("Restarts a container. DANGEROUS: Ask for confirmation before executing.")]
-    public async Task<string> RestartContainer([Description("Container name or ID")] string containerName)
+    public virtual async Task<string> RestartContainer([Description("Container name or ID")] string containerName)
     {
         _logger.LogWarning("Restarting container {Container}...", containerName);
 

@@ -406,4 +406,102 @@ public class KnowledgeServiceTests : IClassFixture<DatabaseFixture>
         var results = await _service.RecallAsync(topic);
         Assert.Single(results);
     }
+
+    [Fact]
+    public async Task DecayConfidenceAsync_ReducesStaleFactConfidence()
+    {
+        // Arrange
+        var topic = $"decay-stale-{Guid.NewGuid()}";
+        var fact = await _service.RememberFactAsync(topic, "stale fact", confidence: 0.9);
+
+        using (var db = _fixture.DbContextFactory.CreateDbContext())
+        {
+            var entity = await db.Knowledge.FindAsync(fact.Id);
+            entity!.LastVerified = DateTime.UtcNow.AddDays(-60);
+            await db.SaveChangesAsync();
+        }
+
+        // Act
+        await _service.DecayConfidenceAsync();
+
+        // Assert
+        using (var db = _fixture.DbContextFactory.CreateDbContext())
+        {
+            var updated = await db.Knowledge.FindAsync(fact.Id);
+            Assert.True(updated!.Confidence < 0.9);
+        }
+    }
+
+    [Fact]
+    public async Task DecayConfidenceAsync_ReducesUnusedFactConfidence()
+    {
+        // Arrange
+        var topic = $"decay-unused-{Guid.NewGuid()}";
+        var fact = await _service.RememberFactAsync(topic, "unused fact", confidence: 0.9);
+
+        using (var db = _fixture.DbContextFactory.CreateDbContext())
+        {
+            var entity = await db.Knowledge.FindAsync(fact.Id);
+            entity!.LastUsed = DateTime.UtcNow.AddDays(-90);
+            // Keep LastVerified recent so only the unused penalty applies
+            entity.LastVerified = DateTime.UtcNow;
+            await db.SaveChangesAsync();
+        }
+
+        // Act
+        await _service.DecayConfidenceAsync();
+
+        // Assert
+        using (var db = _fixture.DbContextFactory.CreateDbContext())
+        {
+            var updated = await db.Knowledge.FindAsync(fact.Id);
+            Assert.True(updated!.Confidence < 0.9);
+        }
+    }
+
+    [Fact]
+    public async Task DecayConfidenceAsync_ClampsToMinimum()
+    {
+        // Arrange
+        var topic = $"decay-clamp-{Guid.NewGuid()}";
+        var fact = await _service.RememberFactAsync(topic, "nearly gone", confidence: 0.05);
+
+        using (var db = _fixture.DbContextFactory.CreateDbContext())
+        {
+            var entity = await db.Knowledge.FindAsync(fact.Id);
+            entity!.Confidence = 0.05;
+            entity.LastVerified = DateTime.UtcNow.AddDays(-365);
+            entity.LastUsed = DateTime.UtcNow.AddDays(-365);
+            await db.SaveChangesAsync();
+        }
+
+        // Act
+        await _service.DecayConfidenceAsync();
+
+        // Assert
+        using (var db = _fixture.DbContextFactory.CreateDbContext())
+        {
+            var updated = await db.Knowledge.FindAsync(fact.Id);
+            Assert.True(updated!.Confidence >= 0);
+        }
+    }
+
+    [Fact]
+    public async Task RecallAsync_UpdatesLastUsed()
+    {
+        // Arrange
+        var topic = $"recall-lastused-{Guid.NewGuid()}";
+        var fact = await _service.RememberFactAsync(topic, "track usage");
+        Assert.Null(fact.LastUsed);
+
+        // Act
+        var before = DateTime.UtcNow;
+        await _service.RecallAsync(topic);
+
+        // Assert
+        using var db = _fixture.DbContextFactory.CreateDbContext();
+        var updated = await db.Knowledge.FindAsync(fact.Id);
+        Assert.NotNull(updated!.LastUsed);
+        Assert.True(updated.LastUsed >= before);
+    }
 }
