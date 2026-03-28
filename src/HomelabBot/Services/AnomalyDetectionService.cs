@@ -24,6 +24,8 @@ public sealed class AnomalyDetectionService : BackgroundService
     private readonly string _trueNasApiKey;
     private readonly string _lokiUrl;
 
+    private readonly ServiceStateStore _stateStore;
+
     // In-memory baselines for rate-of-change detection
     private readonly Dictionary<string, double> _lastMetricValues = new();
     private int _heuristicTick;
@@ -39,7 +41,8 @@ public sealed class AnomalyDetectionService : BackgroundService
         ILogger<AnomalyDetectionService> logger,
         DockerPlugin dockerPlugin,
         IOptions<TrueNASConfiguration> trueNasConfig,
-        IOptions<LokiConfiguration> lokiConfig)
+        IOptions<LokiConfiguration> lokiConfig,
+        ServiceStateStore stateStore)
     {
         _config = config;
         _httpClient = httpClientFactory.CreateClient("Default");
@@ -53,6 +56,7 @@ public sealed class AnomalyDetectionService : BackgroundService
         _trueNasUrl = trueNasConfig.Value.Host.TrimEnd('/');
         _trueNasApiKey = trueNasConfig.Value.ApiKey;
         _lokiUrl = lokiConfig.Value.Host.TrimEnd('/');
+        _stateStore = stateStore;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -60,6 +64,7 @@ public sealed class AnomalyDetectionService : BackgroundService
         _logger.LogInformation("Anomaly detection service started, waiting for Discord...");
         await _discordBot.WaitForReadyAsync(stoppingToken);
         _logger.LogInformation("Discord ready, anomaly detection running");
+        await LoadBaselineAsync();
 
         var isFirstRun = true;
         while (!stoppingToken.IsCancellationRequested)
@@ -80,6 +85,7 @@ public sealed class AnomalyDetectionService : BackgroundService
 
                 _heuristicTick++;
                 var anomalies = await RunHeuristicChecksAsync(stoppingToken);
+                await PersistBaselineAsync();
 
                 // Every N heuristic ticks, run LLM analysis if anomalies detected
                 var llmInterval = Math.Max(1, _config.CurrentValue.LlmIntervalTicks);
@@ -737,6 +743,40 @@ public sealed class AnomalyDetectionService : BackgroundService
         public required string Message { get; init; }
         public required AnomalySeverity Severity { get; init; }
         public required double Value { get; init; }
+    }
+
+    private async Task LoadBaselineAsync()
+    {
+        try
+        {
+            var json = await _stateStore.GetAsync("AnomalyDetection", "lastMetricValues");
+            if (json != null)
+            {
+                var data = JsonSerializer.Deserialize<Dictionary<string, double>>(json);
+                if (data != null)
+                {
+                    foreach (var (key, value) in data)
+                        _lastMetricValues[key] = value;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to load anomaly detection baselines");
+        }
+    }
+
+    private async Task PersistBaselineAsync()
+    {
+        try
+        {
+            await _stateStore.SetAsync("AnomalyDetection", "lastMetricValues",
+                JsonSerializer.Serialize(_lastMetricValues));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to persist anomaly detection baselines");
+        }
     }
 #pragma warning restore SA1201
 }

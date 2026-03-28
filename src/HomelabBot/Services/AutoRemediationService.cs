@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text.Json;
 using HomelabBot.Configuration;
 using HomelabBot.Data;
 using HomelabBot.Data.Entities;
@@ -11,10 +12,12 @@ namespace HomelabBot.Services;
 
 public sealed class AutoRemediationService
 {
+    private const string StateName = "AutoRemediation";
     private readonly DockerPlugin _dockerPlugin;
     private readonly IDbContextFactory<HomelabDbContext> _dbFactory;
     private readonly AutoRemediationConfiguration _config;
     private readonly ILogger<AutoRemediationService> _logger;
+    private readonly ServiceStateStore _stateStore;
     private readonly ConcurrentDictionary<string, List<DateTime>> _cooldowns = new();
     private bool _enabled;
 
@@ -22,18 +25,25 @@ public sealed class AutoRemediationService
         DockerPlugin dockerPlugin,
         IDbContextFactory<HomelabDbContext> dbFactory,
         IOptions<AutoRemediationConfiguration> config,
-        ILogger<AutoRemediationService> logger)
+        ILogger<AutoRemediationService> logger,
+        ServiceStateStore stateStore)
     {
         _dockerPlugin = dockerPlugin;
         _dbFactory = dbFactory;
         _config = config.Value;
         _logger = logger;
+        _stateStore = stateStore;
         _enabled = _config.Enabled;
+        _ = LoadStateAsync();
     }
 
     public bool IsEnabled => _enabled;
 
-    public void SetEnabled(bool enabled) => _enabled = enabled;
+    public void SetEnabled(bool enabled)
+    {
+        _enabled = enabled;
+        _ = _stateStore.SetAsync(StateName, "enabled", enabled.ToString());
+    }
 
     public async Task<RemediationResult?> TryAutoRemediateAsync(
         AlertmanagerWebhookAlert alert,
@@ -258,6 +268,55 @@ public sealed class AutoRemediationService
         lock (timestamps)
         {
             timestamps.Add(DateTime.UtcNow);
+        }
+
+        _ = PersistCooldownsAsync();
+    }
+
+    private async Task LoadStateAsync()
+    {
+        try
+        {
+            var enabledStr = await _stateStore.GetAsync(StateName, "enabled");
+            if (enabledStr != null && bool.TryParse(enabledStr, out var enabled))
+                _enabled = enabled;
+
+            var cooldownJson = await _stateStore.GetAsync(StateName, "cooldowns");
+            if (cooldownJson != null)
+            {
+                var data = JsonSerializer.Deserialize<Dictionary<string, List<DateTime>>>(cooldownJson);
+                if (data != null)
+                {
+                    var cutoff = DateTime.UtcNow.AddHours(-1);
+                    foreach (var (container, timestamps) in data)
+                    {
+                        var recent = timestamps.Where(t => t > cutoff).ToList();
+                        if (recent.Count > 0)
+                            _cooldowns[container] = recent;
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to load persisted auto-remediation state");
+        }
+    }
+
+    private async Task PersistCooldownsAsync()
+    {
+        try
+        {
+            var cutoff = DateTime.UtcNow.AddHours(-1);
+            var snapshot = _cooldowns
+                .ToDictionary(kv => kv.Key, kv => kv.Value.Where(t => t > cutoff).ToList())
+                .Where(kv => kv.Value.Count > 0)
+                .ToDictionary(kv => kv.Key, kv => kv.Value);
+            await _stateStore.SetAsync(StateName, "cooldowns", JsonSerializer.Serialize(snapshot));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to persist cooldowns");
         }
     }
 
