@@ -33,9 +33,9 @@ public sealed class Runbook
 
 public enum RunbookSourceType
 {
-    Manual,
-    AutoCompiled,
-    HealingChain,
+    Manual = 0,
+    AutoCompiled = 1,
+    HealingChain = 2,
 }
 
 public enum TrustLevel

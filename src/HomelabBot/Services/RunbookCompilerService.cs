@@ -99,9 +99,9 @@ public sealed class RunbookCompilerService
         {
             var versioned = new Runbook
             {
-                Name = existing.Name,
+                Name = name,
                 Description = existing.Description,
-                TriggerCondition = existing.TriggerCondition,
+                TriggerCondition = trigger,
                 StepsJson = stepsJson,
                 TrustLevel = trustLevel,
                 Version = existing.Version + 1,
