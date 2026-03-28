@@ -36,6 +36,8 @@ public sealed class HomelabDbContext : DbContext
 
     public DbSet<RemediationAction> RemediationActions => Set<RemediationAction>();
 
+    public DbSet<HealingChain> HealingChains => Set<HealingChain>();
+
     public DbSet<ServiceState> ServiceStates => Set<ServiceState>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -119,6 +121,11 @@ public sealed class HomelabDbContext : DbContext
         modelBuilder.Entity<RemediationAction>(entity =>
         {
             entity.HasIndex(a => a.ExecutedAt);
+        });
+
+        modelBuilder.Entity<HealingChain>(entity =>
+        {
+            entity.HasIndex(h => h.Status);
         });
 
         modelBuilder.Entity<ServiceState>(entity =>

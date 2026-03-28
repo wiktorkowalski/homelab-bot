@@ -236,7 +236,7 @@ public sealed class RunbookPlugin
         return sb.ToString();
     }
 
-    private static KernelFunction? FindFunction(Kernel kernel, RunbookStep step)
+    internal static KernelFunction? FindFunction(Kernel kernel, RunbookStep step)
     {
         return kernel.Plugins
             .SelectMany(p => p)

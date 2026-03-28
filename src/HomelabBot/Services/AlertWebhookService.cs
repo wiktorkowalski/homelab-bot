@@ -16,6 +16,7 @@ public sealed class AlertWebhookService
     private readonly RunbookTriggerService _runbookTriggerService;
     private readonly AutoRemediationService _autoRemediationService;
     private readonly IncidentSimilarityService _similarityService;
+    private readonly HealingChainService _healingChainService;
     private readonly AlertWebhookConfiguration _config;
     private readonly ILogger<AlertWebhookService> _logger;
 
@@ -30,6 +31,7 @@ public sealed class AlertWebhookService
         RunbookTriggerService runbookTriggerService,
         AutoRemediationService autoRemediationService,
         IncidentSimilarityService similarityService,
+        HealingChainService healingChainService,
         IOptions<AlertWebhookConfiguration> config,
         ILogger<AlertWebhookService> logger)
     {
@@ -39,6 +41,7 @@ public sealed class AlertWebhookService
         _runbookTriggerService = runbookTriggerService;
         _autoRemediationService = autoRemediationService;
         _similarityService = similarityService;
+        _healingChainService = healingChainService;
         _config = config.Value;
         _logger = logger;
     }
@@ -84,6 +87,7 @@ public sealed class AlertWebhookService
             matchedPatterns = await _memoryService.GetRelevantPatternsAsync(searchTerms);
 
             // Try auto-remediation before LLM investigation
+            var containerName = AutoRemediationService.ExtractContainerName(alert);
             var remediationResult = await _autoRemediationService.TryAutoRemediateAsync(alert, matchedPatterns, ct);
             if (remediationResult != null)
             {
@@ -104,8 +108,16 @@ public sealed class AlertWebhookService
                 }
             }
 
+            // Escalate to healing chain if simple remediation didn't handle it
+            var chainResult = await _healingChainService.PlanAndExecuteAsync(searchTerms, containerName, ct);
+            if (chainResult is { Success: true })
+            {
+                var chainEmbed = BuildAlertEmbed(alert, chainResult.Message);
+                await _discordService.SendDmAsync(HomelabOwner.DiscordUserId, chainEmbed);
+                return;
+            }
+
             // Check for similar past incidents (Deja Vu)
-            var containerName = AutoRemediationService.ExtractContainerName(alert);
             var similarIncidents = await _similarityService.FindSimilarAsync(
                 searchTerms, containerName, alert.Labels, limit: 3, ct: ct);
             var dejaVuContext = IncidentSimilarityService.FormatDejaVuContext(similarIncidents);

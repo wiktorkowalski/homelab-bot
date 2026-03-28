@@ -87,6 +87,9 @@ try
     builder.Services.AddOptions<AutoRemediationConfiguration>()
         .Bind(builder.Configuration.GetSection(AutoRemediationConfiguration.SectionName));
 
+    builder.Services.AddOptions<HealingChainConfiguration>()
+        .Bind(builder.Configuration.GetSection(HealingChainConfiguration.SectionName));
+
     builder.Services.AddOptions<McpServerConfiguration>()
         .Bind(builder.Configuration.GetSection(McpServerConfiguration.SectionName));
 
@@ -171,6 +174,7 @@ try
     builder.Services.AddSingleton<SummaryDataAggregator>();
     builder.Services.AddHostedService<DailySummaryService>();
     builder.Services.AddSingleton<AutoRemediationService>();
+    builder.Services.AddSingleton<HealingChainService>();
     builder.Services.AddSingleton<RunbookTriggerService>();
     builder.Services.AddSingleton<AlertWebhookService>();
     builder.Services.AddHostedService<HealthScoreBackgroundService>();
