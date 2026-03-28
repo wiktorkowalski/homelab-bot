@@ -6,13 +6,13 @@ namespace HomelabBot.Services;
 
 public sealed class ContagionTrackerService
 {
+    private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(5);
     private readonly DockerPlugin _dockerPlugin;
     private readonly ILogger<ContagionTrackerService> _logger;
+    private readonly SemaphoreSlim _cacheLock = new(1, 1);
 
     private List<ContainerNetworkInfo>? _cachedMap;
     private DateTime _cacheExpiry = DateTime.MinValue;
-    private readonly SemaphoreSlim _cacheLock = new(1, 1);
-    private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(5);
 
     public ContagionTrackerService(
         DockerPlugin dockerPlugin,
