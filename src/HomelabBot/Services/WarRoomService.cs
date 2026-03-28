@@ -119,7 +119,7 @@ public sealed class WarRoomService
         warRoom.Status = WarRoomStatus.Resolved;
         warRoom.Resolution = resolution;
         warRoom.ResolvedAt = DateTime.UtcNow;
-        warRoom.Mttr = DateTime.UtcNow - warRoom.CreatedAt;
+        warRoom.Mttr = warRoom.ResolvedAt.Value - warRoom.CreatedAt;
 
         var timeline = JsonSerializer.Deserialize<List<TimelineEvent>>(warRoom.TimelineJson) ?? [];
         timeline.Add(new TimelineEvent { Event = $"Resolved: {resolution}", Timestamp = DateTime.UtcNow });
