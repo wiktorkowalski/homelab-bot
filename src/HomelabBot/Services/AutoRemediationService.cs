@@ -264,7 +264,7 @@ public sealed class AutoRemediationService
         return await db.ContainerCriticalities.OrderBy(c => c.ContainerName).ToListAsync(ct);
     }
 
-    private static string? ExtractContainerName(AlertmanagerWebhookAlert alert)
+    internal static string? ExtractContainerName(AlertmanagerWebhookAlert alert)
     {
         if (alert.Labels.TryGetValue("container", out var container))
         {

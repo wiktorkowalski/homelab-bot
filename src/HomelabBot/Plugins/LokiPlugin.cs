@@ -522,7 +522,7 @@ public sealed class LokiPlugin
         }
     }
 
-    private static string NormalizeDuration(string input)
+    internal static string NormalizeDuration(string input)
     {
         var duration = ParseDuration(input);
         var totalMinutes = (int)duration.TotalMinutes;
@@ -534,7 +534,7 @@ public sealed class LokiPlugin
         };
     }
 
-    private static string FormatLabels(Dictionary<string, string>? labels)
+    internal static string FormatLabels(Dictionary<string, string>? labels)
     {
         if (labels == null || labels.Count == 0)
         {
@@ -545,7 +545,7 @@ public sealed class LokiPlugin
         return container;
     }
 
-    private static DateTime ParseNanoseconds(string nanoseconds)
+    internal static DateTime ParseNanoseconds(string nanoseconds)
     {
         if (long.TryParse(nanoseconds, out var ns))
         {
@@ -555,7 +555,7 @@ public sealed class LokiPlugin
         return DateTime.UtcNow;
     }
 
-    private static TimeSpan ParseDuration(string duration)
+    internal static TimeSpan ParseDuration(string duration)
     {
         if (string.IsNullOrWhiteSpace(duration))
         {

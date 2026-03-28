@@ -213,4 +213,101 @@ public class MemoryServiceTests : IClassFixture<DatabaseFixture>
         Assert.Equal("step 2", updated.Steps[1].Action);
         Assert.Equal("step 3", updated.Steps[2].Action);
     }
+
+    [Fact]
+    public async Task ResolveInvestigation_Nonexistent_ReturnsNull()
+    {
+        // Act
+        var result = await _service.ResolveInvestigationAsync(999999, "some resolution");
+
+        // Assert
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task ResolveInvestigation_SetsCommonCause_FromSteps()
+    {
+        // Arrange
+        var threadId = (ulong)Random.Shared.NextInt64();
+        var trigger = $"cause-test-{Guid.NewGuid()}";
+        var inv = await _service.StartInvestigationAsync(threadId, trigger);
+        await _service.RecordStepAsync(inv.Id, "check logs", null, "OOM detected");
+        await _service.RecordStepAsync(inv.Id, "check memory", null, "swap exhausted");
+
+        // Act
+        await _service.ResolveInvestigationAsync(inv.Id, "added more memory");
+
+        // Assert
+        using var db = _fixture.DbContextFactory.CreateDbContext();
+        var pattern = db.Patterns.FirstOrDefault(p => p.Symptom == trigger);
+        Assert.NotNull(pattern);
+        Assert.Contains("OOM detected", pattern.CommonCause);
+        Assert.Contains("swap exhausted", pattern.CommonCause);
+    }
+
+    [Fact]
+    public async Task TryCreatePattern_ExistingSymptom_IncrementsOccurrenceCount()
+    {
+        // Arrange
+        var trigger = $"recurring-{Guid.NewGuid()}";
+
+        var threadId1 = (ulong)Random.Shared.NextInt64();
+        var inv1 = await _service.StartInvestigationAsync(threadId1, trigger);
+        await _service.RecordStepAsync(inv1.Id, "step", null, "result");
+        await _service.ResolveInvestigationAsync(inv1.Id, "fix 1");
+
+        var threadId2 = (ulong)Random.Shared.NextInt64();
+        var inv2 = await _service.StartInvestigationAsync(threadId2, trigger);
+        await _service.RecordStepAsync(inv2.Id, "step", null, "result");
+        await _service.ResolveInvestigationAsync(inv2.Id, "fix 2");
+
+        // Assert
+        using var db = _fixture.DbContextFactory.CreateDbContext();
+        var pattern = db.Patterns.FirstOrDefault(p => p.Symptom == trigger);
+        Assert.NotNull(pattern);
+        Assert.Equal(2, pattern.OccurrenceCount);
+    }
+
+    [Fact]
+    public async Task ListPatterns_ReturnsOrderedByOccurrenceCount()
+    {
+        // Arrange — create patterns with different occurrence counts
+        var trigger1 = $"list-low-{Guid.NewGuid()}";
+        var trigger2 = $"list-high-{Guid.NewGuid()}";
+
+        // Create pattern with 1 occurrence
+        var t1 = (ulong)Random.Shared.NextInt64();
+        var inv1 = await _service.StartInvestigationAsync(t1, trigger1);
+        await _service.RecordStepAsync(inv1.Id, "s", null, "r");
+        await _service.ResolveInvestigationAsync(inv1.Id, "fix");
+
+        // Create pattern with 2 occurrences
+        var t2 = (ulong)Random.Shared.NextInt64();
+        var inv2 = await _service.StartInvestigationAsync(t2, trigger2);
+        await _service.RecordStepAsync(inv2.Id, "s", null, "r");
+        await _service.ResolveInvestigationAsync(inv2.Id, "fix");
+
+        var t3 = (ulong)Random.Shared.NextInt64();
+        var inv3 = await _service.StartInvestigationAsync(t3, trigger2);
+        await _service.RecordStepAsync(inv3.Id, "s", null, "r");
+        await _service.ResolveInvestigationAsync(inv3.Id, "fix again");
+
+        // Act
+        var patterns = await _service.ListPatternsAsync();
+
+        // Assert
+        var idx1 = patterns.FindIndex(p => p.Symptom == trigger1);
+        var idx2 = patterns.FindIndex(p => p.Symptom == trigger2);
+        Assert.True(idx2 < idx1, "Higher occurrence pattern should come first");
+    }
+
+    [Fact]
+    public async Task DeletePattern_Nonexistent_ReturnsFalse()
+    {
+        // Act
+        var result = await _service.DeletePatternAsync(999999);
+
+        // Assert
+        Assert.False(result);
+    }
 }
