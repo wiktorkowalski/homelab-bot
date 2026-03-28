@@ -236,14 +236,17 @@ public sealed class HealingChainService
             }
         }
 
-        var finalStatus = success ? HealingChainStatus.Completed : HealingChainStatus.Failed;
+        var finalStatus = success && stepsExecuted > 0
+            ? HealingChainStatus.Completed
+            : success ? HealingChainStatus.Aborted : HealingChainStatus.Failed;
         int? runbookId = null;
         if (success && stepsExecuted > 0)
         {
             runbookId = await TryCompileRunbookAsync(chain, steps, ct);
         }
 
-        await UpdateChainStatusAsync(chain.Id, finalStatus, executionLog, runbookId, ct);
+        await UpdateChainStatusAsync(chain.Id, finalStatus, executionLog, runbookId, ct,
+            chain.RequiredConfirmation);
 
         var message = success
             ? $"Healing chain completed: {stepsExecuted}/{steps.Count} steps executed."
@@ -259,7 +262,8 @@ public sealed class HealingChainService
 
     private async Task UpdateChainStatusAsync(
         int chainId, HealingChainStatus status, List<StepExecutionLog> log,
-        int? generatedRunbookId, CancellationToken ct)
+        int? generatedRunbookId, CancellationToken ct,
+        bool requiredConfirmation = false)
     {
         try
         {
@@ -270,6 +274,7 @@ public sealed class HealingChainService
                 chain.Status = status;
                 chain.ExecutionLogJson = JsonSerializer.Serialize(log);
                 chain.GeneratedRunbookId = generatedRunbookId;
+                chain.RequiredConfirmation = requiredConfirmation;
                 if (status is HealingChainStatus.Completed or HealingChainStatus.Failed or HealingChainStatus.Aborted)
                 {
                     chain.CompletedAt = DateTime.UtcNow;
