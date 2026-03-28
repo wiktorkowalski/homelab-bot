@@ -182,10 +182,30 @@ public class AutoRemediationServiceTests : IClassFixture<DatabaseFixture>, IDisp
 
         var result = await svc.TryAutoRemediateAsync(alert, [pattern], CancellationToken.None);
 
+        // Verify result fields
         Assert.NotNull(result);
         Assert.True(result.WasAutoExecuted);
         Assert.False(result.NeedsConfirmation);
-        await _dockerPlugin.Received(1).RestartContainer("nginx");
+        Assert.NotNull(result.ActionId);
+        Assert.True(result.ActionId > 0);
+        Assert.Equal("nginx", result.ContainerName);
+        Assert.Contains("restart", result.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("nginx", result.Message);
+        Assert.Contains("[OK]", result.Message);
+        Assert.Contains("80%", result.Message); // 8 success / (8+2) = 80%
+
+        // Verify DB record was persisted correctly
+        using (var db = _fixture.DbContextFactory.CreateDbContext())
+        {
+            var action = db.RemediationActions.Find(result.ActionId);
+            Assert.NotNull(action);
+            Assert.Equal("nginx", action.ContainerName);
+            Assert.Equal("restart", action.ActionType);
+            Assert.Equal("Status: running", action.BeforeState);
+            Assert.Equal("Status: running", action.AfterState);
+            Assert.True(action.Success);
+            Assert.Equal(pattern.Id, action.PatternId);
+        }
     }
 
     // --- ExtractContainerName ---
