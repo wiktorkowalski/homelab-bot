@@ -310,13 +310,13 @@ public class HealthScoreServiceTests : IClassFixture<DatabaseFixture>
     [Fact]
     public async Task GetTrendAsync_NotEnoughData_ReturnsMessage()
     {
-        // Use a service with its own DB to ensure isolation
+        using var fixture = new DatabaseFixture();
         var svc = new HealthScoreService(
-            _fixture.DbContextFactory,
+            fixture.DbContextFactory,
             _configMonitor,
             NullLogger<HealthScoreService>.Instance);
 
-        var trend = await svc.GetTrendAsync(TimeSpan.FromSeconds(1));
+        var trend = await svc.GetTrendAsync(TimeSpan.FromHours(1));
 
         Assert.Equal("Not enough data for trend analysis", trend);
     }
@@ -388,5 +388,39 @@ public class HealthScoreServiceTests : IClassFixture<DatabaseFixture>
         var trend = await svc.GetTrendAsync(TimeSpan.FromHours(1));
 
         Assert.Contains("Dropping", trend);
+    }
+
+    [Fact]
+    public async Task GetTrendAsync_Stable_ReturnsStableMessage()
+    {
+        using var fixture = new DatabaseFixture();
+        var svc = new HealthScoreService(
+            fixture.DbContextFactory,
+            _configMonitor,
+            NullLogger<HealthScoreService>.Instance);
+
+        await svc.RecordScoreAsync(new HealthScoreResult
+        {
+            Score = 80,
+            AlertDeductions = 0,
+            ContainerDeductions = 0,
+            PoolDeductions = 0,
+            MonitoringDeductions = 0,
+            ConnectivityDeductions = 0,
+        });
+
+        await svc.RecordScoreAsync(new HealthScoreResult
+        {
+            Score = 82,
+            AlertDeductions = 0,
+            ContainerDeductions = 0,
+            PoolDeductions = 0,
+            MonitoringDeductions = 0,
+            ConnectivityDeductions = 0,
+        });
+
+        var trend = await svc.GetTrendAsync(TimeSpan.FromHours(1));
+
+        Assert.Contains("Stable", trend);
     }
 }
