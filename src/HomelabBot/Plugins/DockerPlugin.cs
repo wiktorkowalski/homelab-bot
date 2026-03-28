@@ -270,10 +270,35 @@ public class DockerPlugin
     }
 
     [KernelFunction]
-    [Description("Lists all Docker networks with connected containers. Useful for understanding service relationships.")]
+    [Description("Lists all Docker networks with their connected containers. Useful for understanding service relationships.")]
     public async Task<string> ListNetworks()
     {
         _logger.LogDebug("Listing Docker networks...");
+
+        // Build network → containers mapping from container data (more reliable than network inspect)
+        var containers = await _client.Containers.ListContainersAsync(
+            new ContainersListParameters { All = true });
+
+        var networkMap = new Dictionary<string, List<string>>();
+        foreach (var container in containers)
+        {
+            var name = container.Names.FirstOrDefault()?.TrimStart('/') ?? container.ID[..12];
+            if (container.NetworkSettings?.Networks == null)
+            {
+                continue;
+            }
+
+            foreach (var network in container.NetworkSettings.Networks)
+            {
+                if (!networkMap.TryGetValue(network.Key, out var members))
+                {
+                    members = [];
+                    networkMap[network.Key] = members;
+                }
+
+                members.Add($"{name} ({network.Value.IPAddress})");
+            }
+        }
 
         var networks = await _client.Networks.ListNetworksAsync();
         var sb = new StringBuilder();
@@ -281,14 +306,11 @@ public class DockerPlugin
 
         foreach (var network in networks.OrderBy(n => n.Name))
         {
-            var containerCount = network.Containers?.Count ?? 0;
-            sb.AppendLine($"- **{network.Name}** ({network.Driver}) — {containerCount} containers");
-            if (network.Containers != null)
+            var members = networkMap.GetValueOrDefault(network.Name, []);
+            sb.AppendLine($"- **{network.Name}** ({network.Driver}) — {members.Count} containers");
+            foreach (var member in members)
             {
-                foreach (var (_, endpoint) in network.Containers)
-                {
-                    sb.AppendLine($"  - {endpoint.Name}: {endpoint.IPv4Address}");
-                }
+                sb.AppendLine($"  - {member}");
             }
         }
 

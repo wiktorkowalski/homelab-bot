@@ -133,6 +133,7 @@ public sealed class ContagionTrackerService
         {
             _logger.LogWarning(ex, "Failed to refresh container network map");
             _cachedMap ??= [];
+            _cacheExpiry = DateTime.UtcNow.AddMinutes(1);
         }
         finally
         {
