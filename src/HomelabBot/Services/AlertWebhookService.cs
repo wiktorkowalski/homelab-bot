@@ -15,6 +15,7 @@ public sealed class AlertWebhookService
     private readonly MemoryService _memoryService;
     private readonly RunbookTriggerService _runbookTriggerService;
     private readonly AutoRemediationService _autoRemediationService;
+    private readonly IncidentSimilarityService _similarityService;
     private readonly AlertWebhookConfiguration _config;
     private readonly ILogger<AlertWebhookService> _logger;
 
@@ -28,6 +29,7 @@ public sealed class AlertWebhookService
         MemoryService memoryService,
         RunbookTriggerService runbookTriggerService,
         AutoRemediationService autoRemediationService,
+        IncidentSimilarityService similarityService,
         IOptions<AlertWebhookConfiguration> config,
         ILogger<AlertWebhookService> logger)
     {
@@ -36,6 +38,7 @@ public sealed class AlertWebhookService
         _memoryService = memoryService;
         _runbookTriggerService = runbookTriggerService;
         _autoRemediationService = autoRemediationService;
+        _similarityService = similarityService;
         _config = config.Value;
         _logger = logger;
     }
@@ -101,6 +104,12 @@ public sealed class AlertWebhookService
                 }
             }
 
+            // Check for similar past incidents (Deja Vu)
+            var containerName = AutoRemediationService.ExtractContainerName(alert);
+            var similarIncidents = await _similarityService.FindSimilarAsync(
+                searchTerms, containerName, alert.Labels, limit: 3, ct: ct);
+            var dejaVuContext = IncidentSimilarityService.FormatDejaVuContext(similarIncidents);
+
             var patternContext = "";
             if (matchedPatterns.Count > 0)
             {
@@ -114,6 +123,10 @@ public sealed class AlertWebhookService
                 patternContext = $"\n\nKNOWN PATTERNS for this type of issue (consider these first):\n{string.Join("\n", patternLines)}\n";
             }
 
+            var dejaVuPrompt = !string.IsNullOrEmpty(dejaVuContext)
+                ? $"\n\nPAST INCIDENT MATCH:\n{dejaVuContext}\n"
+                : "";
+
             var prompt = $"""
                 ALERT FIRING - Investigate this:
                 Alert: {alert.AlertName}
@@ -121,7 +134,7 @@ public sealed class AlertWebhookService
                 Instance: {alert.Instance ?? "unknown"}
                 Description: {alert.Description ?? alert.Summary ?? "none"}
                 Started: {alert.StartsAt:u}
-                {patternContext}
+                {patternContext}{dejaVuPrompt}
                 Use your tools to investigate what's happening. Check relevant logs, metrics, container status, etc.
                 Provide a brief summary of what you found and any recommended actions.
                 """;

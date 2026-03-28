@@ -155,6 +155,7 @@ try
     builder.Services.AddSingleton<RunbookPlugin>();
 
     // Services
+    builder.Services.AddSingleton<IncidentSimilarityService>();
     builder.Services.AddSingleton<RunbookCompilerService>();
     builder.Services.AddSingleton<KnowledgeService>();
     builder.Services.AddSingleton<MemoryService>();
