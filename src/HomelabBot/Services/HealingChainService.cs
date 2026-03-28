@@ -15,7 +15,6 @@ public sealed class HealingChainService
 {
     private readonly IDbContextFactory<HomelabDbContext> _dbFactory;
     private readonly KernelService _kernelService;
-    private readonly RunbookPlugin _runbookPlugin;
     private readonly RunbookCompilerService _runbookCompiler;
     private readonly IncidentSimilarityService _similarityService;
     private readonly HealingChainConfiguration _config;
@@ -25,7 +24,6 @@ public sealed class HealingChainService
     public HealingChainService(
         IDbContextFactory<HomelabDbContext> dbFactory,
         KernelService kernelService,
-        RunbookPlugin runbookPlugin,
         RunbookCompilerService runbookCompiler,
         IncidentSimilarityService similarityService,
         IOptions<HealingChainConfiguration> config,
@@ -33,7 +31,6 @@ public sealed class HealingChainService
     {
         _dbFactory = dbFactory;
         _kernelService = kernelService;
-        _runbookPlugin = runbookPlugin;
         _runbookCompiler = runbookCompiler;
         _similarityService = similarityService;
         _config = config.Value;
@@ -236,11 +233,16 @@ public sealed class HealingChainService
             }
         }
 
-        var finalStatus = success && stepsExecuted > 0
+        if (stepsExecuted == 0)
+        {
+            success = false;
+        }
+
+        var finalStatus = success
             ? HealingChainStatus.Completed
-            : success ? HealingChainStatus.Aborted : HealingChainStatus.Failed;
+            : stepsExecuted == 0 ? HealingChainStatus.Aborted : HealingChainStatus.Failed;
         int? runbookId = null;
-        if (success && stepsExecuted > 0)
+        if (success)
         {
             runbookId = await TryCompileRunbookAsync(chain, steps, ct);
         }

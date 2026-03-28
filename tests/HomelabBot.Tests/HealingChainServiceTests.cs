@@ -152,7 +152,6 @@ public class HealingChainServiceTests : IClassFixture<DatabaseFixture>, IDisposa
         return new HealingChainService(
             _fixture.DbContextFactory,
             null!, // KernelService - not needed for disabled/entity tests
-            null!, // RunbookPlugin - not needed for disabled/entity tests
             runbookCompiler,
             similarityService,
             Options.Create(config),
