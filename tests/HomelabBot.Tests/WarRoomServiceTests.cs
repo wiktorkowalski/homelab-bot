@@ -171,7 +171,6 @@ public class WarRoomServiceTests : IClassFixture<DatabaseFixture>, IDisposable
         return new WarRoomService(
             _fixture.DbContextFactory,
             null!, // DiscordBotService not needed for DB/config tests
-            null!, // KernelService not needed for DB/config tests
             Options.Create(config),
             NullLogger<WarRoomService>.Instance);
     }

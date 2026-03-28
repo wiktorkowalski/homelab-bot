@@ -13,20 +13,17 @@ public sealed class WarRoomService
 {
     private readonly IDbContextFactory<HomelabDbContext> _dbFactory;
     private readonly DiscordBotService _discordService;
-    private readonly KernelService _kernelService;
     private readonly WarRoomConfiguration _config;
     private readonly ILogger<WarRoomService> _logger;
 
     public WarRoomService(
         IDbContextFactory<HomelabDbContext> dbFactory,
         DiscordBotService discordService,
-        KernelService kernelService,
         IOptions<WarRoomConfiguration> config,
         ILogger<WarRoomService> logger)
     {
         _dbFactory = dbFactory;
         _discordService = discordService;
-        _kernelService = kernelService;
         _config = config.Value;
         _logger = logger;
     }
