@@ -63,7 +63,9 @@ public sealed class MemoryService
         var query = db.Investigations.AsQueryable();
 
         if (resolved.HasValue)
+        {
             query = query.Where(i => i.Resolved == resolved.Value);
+        }
 
         var totalCount = await query.CountAsync();
 
@@ -165,7 +167,9 @@ public sealed class MemoryService
             .ToArray();
 
         if (keywords.Length == 0)
+        {
             return [];
+        }
 
         var patterns = await db.Patterns
             .OrderByDescending(p => p.OccurrenceCount)
@@ -182,13 +186,19 @@ public sealed class MemoryService
                 foreach (var keyword in keywords)
                 {
                     if (symptomWords.Contains(keyword))
+                    {
                         keywordScore += 2;
+                    }
                     else if (symptomLower.Contains(keyword))
+                    {
                         keywordScore += 1;
+                    }
                 }
 
                 if (keywordScore == 0)
+                {
                     return new { Pattern = p, Score = 0 };
+                }
 
                 // Frequency bonus only when there's a keyword match
                 var score = keywordScore + Math.Min(p.OccurrenceCount / 3, 3);
@@ -211,12 +221,18 @@ public sealed class MemoryService
 
         var pattern = await db.Patterns.FindAsync(patternId);
         if (pattern == null)
+        {
             return;
+        }
 
         if (helpful)
+        {
             pattern.SuccessCount++;
+        }
         else
+        {
             pattern.FailureCount++;
+        }
 
         await db.SaveChangesAsync();
         _logger.LogDebug("Recorded {Feedback} feedback for pattern {Id}", helpful ? "positive" : "negative", patternId);

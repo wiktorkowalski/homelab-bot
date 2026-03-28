@@ -237,7 +237,11 @@ public sealed class MikroTikPlugin
 
             // Build magic packet: 6 bytes of 0xFF followed by MAC repeated 16 times
             var packet = new byte[102];
-            for (int i = 0; i < 6; i++) packet[i] = 0xFF;
+            for (int i = 0; i < 6; i++)
+            {
+                packet[i] = 0xFF;
+            }
+
             for (int i = 0; i < 16; i++)
             {
                 Array.Copy(macBytes, 0, packet, 6 + (i * 6), 6);
@@ -321,17 +325,41 @@ public sealed class MikroTikPlugin
 
     private static string FormatBytes(double bytes)
     {
-        if (bytes < 1024) return $"{bytes:F0} B";
-        if (bytes < 1024 * 1024) return $"{bytes / 1024:F1} KB";
-        if (bytes < 1024 * 1024 * 1024) return $"{bytes / (1024 * 1024):F1} MB";
+        if (bytes < 1024)
+        {
+            return $"{bytes:F0} B";
+        }
+
+        if (bytes < 1024 * 1024)
+        {
+            return $"{bytes / 1024:F1} KB";
+        }
+
+        if (bytes < 1024 * 1024 * 1024)
+        {
+            return $"{bytes / (1024 * 1024):F1} MB";
+        }
+
         return $"{bytes / (1024 * 1024 * 1024):F2} GB";
     }
 
     private static string FormatBitsPerSecond(double bps)
     {
-        if (bps < 1000) return $"{bps:F0} bps";
-        if (bps < 1_000_000) return $"{bps / 1000:F1} Kbps";
-        if (bps < 1_000_000_000) return $"{bps / 1_000_000:F1} Mbps";
+        if (bps < 1000)
+        {
+            return $"{bps:F0} bps";
+        }
+
+        if (bps < 1_000_000)
+        {
+            return $"{bps / 1000:F1} Kbps";
+        }
+
+        if (bps < 1_000_000_000)
+        {
+            return $"{bps / 1_000_000:F1} Mbps";
+        }
+
         return $"{bps / 1_000_000_000:F2} Gbps";
     }
 
@@ -350,24 +378,28 @@ public sealed class MikroTikPlugin
     private sealed class MetricResult
     {
         public Dictionary<string, string> Labels { get; set; } = [];
+
         public double Value { get; set; }
     }
 
     private sealed class PrometheusResponse
     {
         public string Status { get; set; } = "";
+
         public PrometheusData? Data { get; set; }
     }
 
     private sealed class PrometheusData
     {
         public string ResultType { get; set; } = "";
+
         public List<PrometheusResult>? Result { get; set; }
     }
 
     private sealed class PrometheusResult
     {
         public Dictionary<string, string>? Metric { get; set; }
+
         public JsonElement[]? Value { get; set; }
     }
 }

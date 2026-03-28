@@ -31,13 +31,24 @@ public sealed class HealthScoreService
         // Connectivity deductions (missing data sources)
         var connectivityDeductions = 0;
         if (data.Containers.Count == 0)
+        {
             connectivityDeductions += cfg.MissingContainersWeight;
+        }
+
         if (data.Pools.Count == 0)
+        {
             connectivityDeductions += cfg.MissingPoolsWeight;
+        }
+
         if (data.Router == null)
+        {
             connectivityDeductions += cfg.MissingRouterWeight;
+        }
+
         if (data.Monitoring == null)
+        {
             connectivityDeductions += cfg.MissingMonitoringWeight;
+        }
 
         // Alert deductions
         var alertDeductions = 0;
@@ -95,7 +106,9 @@ public sealed class HealthScoreService
             .ToListAsync(ct);
 
         if (records.Count < 2)
+        {
             return "Not enough data for trend analysis";
+        }
 
         var oldest = records[0].Score;
         var newest = records[^1].Score;
@@ -141,7 +154,9 @@ public sealed class HealthScoreService
             .ExecuteDeleteAsync(ct);
 
         if (deleted > 0)
+        {
             _logger.LogDebug("Pruned {Count} old health score records", deleted);
+        }
     }
 
     private static string FormatWindow(TimeSpan window) => window.TotalHours switch

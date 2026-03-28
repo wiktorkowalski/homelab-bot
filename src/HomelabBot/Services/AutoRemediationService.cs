@@ -66,7 +66,9 @@ public sealed class AutoRemediationService
         await _initTask;
 
         if (!_enabled)
+        {
             return null;
+        }
 
         // Filter patterns by success rate and feedback count
         var qualifiedPatterns = matchedPatterns
@@ -76,12 +78,16 @@ public sealed class AutoRemediationService
             .ToList();
 
         if (qualifiedPatterns.Count == 0)
+        {
             return null;
+        }
 
         // Extract container name from alert labels
         var containerName = ExtractContainerName(alert);
         if (containerName == null)
+        {
             return null;
+        }
 
         // Check cooldown
         if (IsCooldownExceeded(containerName))
@@ -159,7 +165,9 @@ public sealed class AutoRemediationService
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
         var action = await db.RemediationActions.FindAsync([actionId], ct);
         if (action == null)
+        {
             return;
+        }
 
         action.Success = success;
 
@@ -170,9 +178,13 @@ public sealed class AutoRemediationService
             if (pattern != null)
             {
                 if (success)
+                {
                     pattern.SuccessCount++;
+                }
                 else
+                {
                     pattern.FailureCount++;
+                }
             }
         }
 
@@ -197,6 +209,7 @@ public sealed class AutoRemediationService
                 {
                     count = kv.Value.Count(d => d > cutoff);
                 }
+
                 return (kv.Key, Count: count);
             })
             .Where(x => x.Count > 0)
@@ -254,10 +267,14 @@ public sealed class AutoRemediationService
     private static string? ExtractContainerName(AlertmanagerWebhookAlert alert)
     {
         if (alert.Labels.TryGetValue("container", out var container))
+        {
             return container;
+        }
 
         if (alert.Labels.TryGetValue("container_name", out var containerName))
+        {
             return containerName;
+        }
 
         if (alert.Labels.TryGetValue("instance", out var instance))
         {
@@ -305,7 +322,9 @@ public sealed class AutoRemediationService
         {
             var enabledStr = await _stateStore.GetAsync(StateName, "enabled");
             if (enabledStr != null && bool.TryParse(enabledStr, out var enabled))
+            {
                 _enabled = enabled;
+            }
 
             var cooldownJson = await _stateStore.GetAsync(StateName, "cooldowns");
             if (cooldownJson != null)
@@ -318,7 +337,9 @@ public sealed class AutoRemediationService
                     {
                         var recent = timestamps.Where(t => t > cutoff).ToList();
                         if (recent.Count > 0)
+                        {
                             _cooldowns[container] = recent;
+                        }
                     }
                 }
             }

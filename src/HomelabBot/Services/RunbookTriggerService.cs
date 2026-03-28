@@ -29,7 +29,9 @@ public sealed class RunbookTriggerService
     public async Task<string?> TryMatchAndExecuteAsync(AlertmanagerWebhookAlert alert, CancellationToken ct = default)
     {
         if (!alert.IsFiring)
+        {
             return null;
+        }
 
         Runbook? matched;
         await using (var db = await _dbFactory.CreateDbContextAsync(ct))
@@ -42,7 +44,9 @@ public sealed class RunbookTriggerService
         }
 
         if (matched == null)
+        {
             return null;
+        }
 
         _logger.LogInformation("Alert {AlertName} matched runbook '{Runbook}' (ID {Id})",
             alert.AlertName, matched.Name, matched.Id);
@@ -106,7 +110,9 @@ public sealed class RunbookTriggerService
         }
 
         if (await db.Runbooks.AnyAsync(ct))
+        {
             return;
+        }
 
         var defaults = new List<Runbook>
         {

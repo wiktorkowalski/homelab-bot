@@ -324,17 +324,23 @@ public sealed class KernelService
     private static (int? PromptTokens, int? CompletionTokens) ExtractTokenUsage(ChatMessageContent response)
     {
         if (response.Metadata == null)
+        {
             return (null, null);
+        }
 
         if (response.Metadata.TryGetValue("Usage", out var usage))
         {
             // OpenAI format (OpenRouter path)
             if (usage is OpenAI.Chat.ChatTokenUsage openAiUsage)
+            {
                 return (openAiUsage.InputTokenCount, openAiUsage.OutputTokenCount);
+            }
 
             // M.E.AI format (Anthropic SDK via AsChatCompletionService adapter)
             if (usage is Microsoft.Extensions.AI.UsageDetails usageDetails)
+            {
                 return ((int?)usageDetails.InputTokenCount, (int?)usageDetails.OutputTokenCount);
+            }
         }
 
         return (null, null);
@@ -343,7 +349,9 @@ public sealed class KernelService
     private static string StripThinkingBlocks(string text)
     {
         if (string.IsNullOrEmpty(text))
+        {
             return text;
+        }
 
         return ThinkingBlockRegex.Replace(text, "").Trim();
     }

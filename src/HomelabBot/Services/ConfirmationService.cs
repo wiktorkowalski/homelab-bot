@@ -187,10 +187,15 @@ public sealed class ConfirmationService
     private sealed class PendingConfirmation
     {
         public required string Action { get; init; }
+
         public required string Details { get; init; }
+
         public required DiscordMessage Message { get; init; }
+
         public required DateTime ExpiresAt { get; init; }
+
         public bool Confirmed { get; set; }
+
         public TaskCompletionSource<bool> CompletionSource { get; } = new();
     }
 }

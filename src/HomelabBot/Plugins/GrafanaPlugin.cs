@@ -66,6 +66,7 @@ public sealed class GrafanaPlugin
                 {
                     sb.AppendLine($"  - {dashboard.Title} (uid: `{dashboard.Uid}`)");
                 }
+
                 sb.AppendLine();
             }
 
@@ -219,30 +220,40 @@ public sealed class GrafanaPlugin
     private sealed class GrafanaDashboard
     {
         public int Id { get; set; }
+
         public string? Uid { get; set; }
+
         public string? Title { get; set; }
+
         public string? FolderTitle { get; set; }
+
         public string? Type { get; set; }
     }
 
     private sealed class GrafanaDashboardResponse
     {
         public DashboardDetail? Dashboard { get; set; }
+
         public DashboardMeta? Meta { get; set; }
     }
 
     private sealed class DashboardDetail
     {
         public int Id { get; set; }
+
         public string? Uid { get; set; }
+
         public string? Title { get; set; }
+
         public List<DashboardPanel>? Panels { get; set; }
     }
 
     private sealed class DashboardPanel
     {
         public int Id { get; set; }
+
         public string? Title { get; set; }
+
         public string? Type { get; set; }
     }
 
@@ -254,7 +265,9 @@ public sealed class GrafanaPlugin
     private sealed class GrafanaHealth
     {
         public string? Database { get; set; }
+
         public string? Version { get; set; }
+
         public string? Commit { get; set; }
     }
 }

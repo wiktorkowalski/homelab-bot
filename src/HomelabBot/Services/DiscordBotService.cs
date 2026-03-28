@@ -290,7 +290,9 @@ public sealed class DiscordBotService : BackgroundService
     {
         // Ignore bots and system messages
         if (e.Author.IsBot || e.Message.MessageType != MessageType.Default)
+        {
             return;
+        }
 
         // Check if we should respond
         var isMentioned = e.Message.MentionedUsers.Any(u => u.Id == client.CurrentUser.Id);
@@ -299,7 +301,9 @@ public sealed class DiscordBotService : BackgroundService
 
         // Respond in: mentions anywhere, dedicated channels, or threads we're already in
         if (!isMentioned && !isDedicatedChannel && !isThread)
+        {
             return;
+        }
 
         // Use thread ID for conversation, or channel ID if not in thread
         var conversationId = e.Channel.IsThread ? e.Channel.Id : e.Message.Id;
@@ -331,6 +335,7 @@ public sealed class DiscordBotService : BackgroundService
             {
                 content = content.Replace($"<@{mention.Id}>", "").Replace($"<@!{mention.Id}>", "");
             }
+
             content = content.Trim();
 
             if (string.IsNullOrWhiteSpace(content))
@@ -392,6 +397,7 @@ public sealed class DiscordBotService : BackgroundService
                 // No newline found, split at space
                 splitIndex = remaining.LastIndexOf(' ', maxLength - 1);
             }
+
             if (splitIndex <= 0)
             {
                 // No space found, hard split
@@ -421,20 +427,27 @@ public sealed class DiscordBotService : BackgroundService
     {
         var dm = await GetDmChannelAsync(userId);
         if (dm != null)
+        {
             await dm.SendMessageAsync(embed: embed);
+        }
     }
 
     public async Task SendDmAsync(ulong userId, string message)
     {
         var dm = await GetDmChannelAsync(userId);
         if (dm != null)
+        {
             await dm.SendMessageAsync(message);
+        }
     }
 
     public async Task SendDmWithComponentsAsync(ulong userId, DiscordEmbed embed, List<DiscordComponent> components)
     {
         var dm = await GetDmChannelAsync(userId);
-        if (dm == null) return;
+        if (dm == null)
+        {
+            return;
+        }
 
         var builder = new DiscordMessageBuilder()
             .WithEmbed(embed)
@@ -446,21 +459,29 @@ public sealed class DiscordBotService : BackgroundService
     public async Task SendDmSplitAsync(ulong userId, string content)
     {
         var dm = await GetDmChannelAsync(userId);
-        if (dm == null) return;
+        if (dm == null)
+        {
+            return;
+        }
 
         var chunks = MessageSplitService.SplitIntoSections(content);
         foreach (var chunk in chunks)
         {
             await dm.SendMessageAsync(chunk);
             if (chunks.Count > 1)
+            {
                 await Task.Delay(100); // Small delay between messages
+            }
         }
     }
 
     public async Task SendDmFileAsync(ulong userId, string content, string filename)
     {
         var dm = await GetDmChannelAsync(userId);
-        if (dm == null) return;
+        if (dm == null)
+        {
+            return;
+        }
 
         using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(content));
         var message = new DiscordMessageBuilder()
@@ -492,6 +513,7 @@ public sealed class DiscordBotService : BackgroundService
                     _logger.LogDebug(ex, "User {UserId} not found in guild {Guild}", userId, guild.Name);
                 }
             }
+
             _logger.LogWarning("Could not find user {UserId} in any guild", userId);
         }
         catch (Exception ex)

@@ -47,7 +47,9 @@ public class InvestigationsController : ControllerBase
         var item = await _memoryService.GetInvestigationByIdAsync(id);
 
         if (item is null)
+        {
             return NotFound();
+        }
 
         return Ok(new InvestigationDetailDto
         {
@@ -95,10 +97,14 @@ public class InvestigationsController : ControllerBase
     {
         var investigation = await _memoryService.GetInvestigationByIdAsync(id);
         if (investigation is null)
+        {
             return NotFound();
+        }
 
         if (investigation.Resolved)
+        {
             return BadRequest("Cannot add steps to a resolved investigation");
+        }
 
         await _memoryService.RecordStepAsync(id, request.Action, request.Plugin, request.ResultSummary);
 
@@ -124,7 +130,9 @@ public class InvestigationsController : ControllerBase
         var investigation = await _memoryService.ResolveInvestigationAsync(id, request.Resolution);
 
         if (investigation is null)
+        {
             return NotFound();
+        }
 
         return Ok(new InvestigationDetailDto
         {

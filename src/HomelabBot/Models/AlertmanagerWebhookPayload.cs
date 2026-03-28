@@ -50,12 +50,17 @@ public sealed class AlertmanagerWebhookAlert
     public string? Fingerprint { get; init; }
 
     public string AlertName => Labels.GetValueOrDefault("alertname", "Unknown Alert");
+
     public string Severity => Labels.GetValueOrDefault("severity", "unknown");
+
     public string? Instance => Labels.GetValueOrDefault("instance");
+
     public string? Summary => Annotations.GetValueOrDefault("summary");
+
     public string? Description => Annotations.GetValueOrDefault("description");
 
     public bool IsFiring => Status.Equals("firing", StringComparison.OrdinalIgnoreCase);
+
     public bool IsResolved => Status.Equals("resolved", StringComparison.OrdinalIgnoreCase);
 
     public TimeSpan? Duration
@@ -63,9 +68,15 @@ public sealed class AlertmanagerWebhookAlert
         get
         {
             if (EndsAt.HasValue && EndsAt.Value > StartsAt)
+            {
                 return EndsAt.Value - StartsAt;
+            }
+
             if (IsFiring)
+            {
                 return DateTime.UtcNow - StartsAt;
+            }
+
             return null;
         }
     }

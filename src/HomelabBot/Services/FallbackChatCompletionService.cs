@@ -51,8 +51,14 @@ public sealed class FallbackChatCompletionService : IChatCompletionService
             var maxTokens = 2048;
             if (executionSettings?.ExtensionData?.TryGetValue("max_tokens", out var mt) == true)
             {
-                if (mt is int i) maxTokens = i;
-                else if (mt is long l) maxTokens = (int)l;
+                if (mt is int i)
+                {
+                    maxTokens = i;
+                }
+                else if (mt is long l)
+                {
+                    maxTokens = (int)l;
+                }
             }
 
             var fallbackSettings = new OpenAIPromptExecutionSettings

@@ -1,40 +1,39 @@
-﻿using Microsoft.EntityFrameworkCore.Migrations;
+using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
 
-namespace HomelabBot.Data.Migrations
+namespace HomelabBot.Data.Migrations;
+
+/// <inheritdoc />
+public partial class AddPatternFeedback : Migration
 {
     /// <inheritdoc />
-    public partial class AddPatternFeedback : Migration
+    protected override void Up(MigrationBuilder migrationBuilder)
     {
-        /// <inheritdoc />
-        protected override void Up(MigrationBuilder migrationBuilder)
-        {
-            migrationBuilder.AddColumn<int>(
-                name: "FailureCount",
-                table: "Patterns",
-                type: "INTEGER",
-                nullable: false,
-                defaultValue: 0);
+        migrationBuilder.AddColumn<int>(
+            name: "FailureCount",
+            table: "Patterns",
+            type: "INTEGER",
+            nullable: false,
+            defaultValue: 0);
 
-            migrationBuilder.AddColumn<int>(
-                name: "SuccessCount",
-                table: "Patterns",
-                type: "INTEGER",
-                nullable: false,
-                defaultValue: 0);
-        }
+        migrationBuilder.AddColumn<int>(
+            name: "SuccessCount",
+            table: "Patterns",
+            type: "INTEGER",
+            nullable: false,
+            defaultValue: 0);
+    }
 
-        /// <inheritdoc />
-        protected override void Down(MigrationBuilder migrationBuilder)
-        {
-            migrationBuilder.DropColumn(
-                name: "FailureCount",
-                table: "Patterns");
+    /// <inheritdoc />
+    protected override void Down(MigrationBuilder migrationBuilder)
+    {
+        migrationBuilder.DropColumn(
+            name: "FailureCount",
+            table: "Patterns");
 
-            migrationBuilder.DropColumn(
-                name: "SuccessCount",
-                table: "Patterns");
-        }
+        migrationBuilder.DropColumn(
+            name: "SuccessCount",
+            table: "Patterns");
     }
 }

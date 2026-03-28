@@ -143,7 +143,10 @@ public sealed class SecurityAuditService : BackgroundService
         }
 
         if (tz.IsInvalidTime(nextRun))
+        {
             nextRun = nextRun.AddHours(1);
+        }
+
         var nextRunUtc = TimeZoneInfo.ConvertTimeToUtc(nextRun, tz);
         return nextRunUtc - nowUtc;
     }

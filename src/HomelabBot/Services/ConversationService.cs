@@ -42,9 +42,13 @@ public sealed class ConversationService
             foreach (var msg in conversation.Messages)
             {
                 if (msg.Role == "user")
+                {
                     history.AddUserMessage(msg.Content);
+                }
                 else if (msg.Role == "assistant")
+                {
                     history.AddAssistantMessage(msg.Content);
+                }
             }
 
             _logger.LogDebug("Loaded {Count} messages for thread {ThreadId}", conversation.Messages.Count, threadId);
@@ -138,7 +142,9 @@ public sealed class ConversationService
             .ToArray();
 
         if (keywords.Length == 0)
+        {
             return [];
+        }
 
         var conversations = await db.Conversations
             .AsNoTracking()

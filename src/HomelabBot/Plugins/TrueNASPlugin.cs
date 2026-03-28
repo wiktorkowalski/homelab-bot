@@ -232,19 +232,33 @@ public sealed class TrueNASPlugin
 
     private static string FormatSize(double gb)
     {
-        if (gb < 1) return $"{gb * 1024:F0} MB";
-        if (gb < 1024) return $"{gb:F1} GB";
+        if (gb < 1)
+        {
+            return $"{gb * 1024:F0} MB";
+        }
+
+        if (gb < 1024)
+        {
+            return $"{gb:F1} GB";
+        }
+
         return $"{gb / 1024:F2} TB";
     }
 
     private sealed class TrueNASPool
     {
         public string? Name { get; set; }
+
         public string? Status { get; set; }
+
         public bool? Healthy { get; set; }
+
         public long? Size { get; set; }
+
         public long? Allocated { get; set; }
+
         public TrueNASTopology? Topology { get; set; }
+
         public TrueNASScan? ScanInfo { get; set; }
     }
 
@@ -261,7 +275,9 @@ public sealed class TrueNASPlugin
     private sealed class TrueNASDataset
     {
         public string? Name { get; set; }
+
         public TrueNASSize? Used { get; set; }
+
         public TrueNASSize? Available { get; set; }
     }
 
@@ -273,16 +289,22 @@ public sealed class TrueNASPlugin
     private sealed class TrueNASSystemInfo
     {
         public string? Hostname { get; set; }
+
         public string? Version { get; set; }
+
         public string? Uptime { get; set; }
+
         public double? UptimeSeconds { get; set; }
     }
 
     private sealed class TrueNASAlert
     {
         public string? Level { get; set; }
+
         public string? Text { get; set; }
+
         public string? FormattedText { get; set; }
+
         public bool? Dismissed { get; set; }
     }
 }

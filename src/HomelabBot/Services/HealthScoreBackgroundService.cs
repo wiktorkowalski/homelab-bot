@@ -82,7 +82,9 @@ public sealed class HealthScoreBackgroundService : BackgroundService
         {
             var userId = HomelabOwner.DiscordUserId;
             if (userId == 0)
+            {
                 return;
+            }
 
             var message = $"⚠️ **Health Score Drop Detected**\n" +
                           $"Score went from **{previousScore.Value}** → **{result.Score}** in the last hour\n" +
@@ -133,11 +135,30 @@ public sealed class HealthScoreBackgroundService : BackgroundService
     private static string BuildBreakdown(Models.HealthScoreResult result)
     {
         var parts = new List<string>();
-        if (result.AlertDeductions > 0) parts.Add($"Alerts: -{result.AlertDeductions}");
-        if (result.ContainerDeductions > 0) parts.Add($"Containers: -{result.ContainerDeductions}");
-        if (result.PoolDeductions > 0) parts.Add($"Pools: -{result.PoolDeductions}");
-        if (result.MonitoringDeductions > 0) parts.Add($"Monitoring: -{result.MonitoringDeductions}");
-        if (result.ConnectivityDeductions > 0) parts.Add($"Connectivity: -{result.ConnectivityDeductions}");
+        if (result.AlertDeductions > 0)
+        {
+            parts.Add($"Alerts: -{result.AlertDeductions}");
+        }
+
+        if (result.ContainerDeductions > 0)
+        {
+            parts.Add($"Containers: -{result.ContainerDeductions}");
+        }
+
+        if (result.PoolDeductions > 0)
+        {
+            parts.Add($"Pools: -{result.PoolDeductions}");
+        }
+
+        if (result.MonitoringDeductions > 0)
+        {
+            parts.Add($"Monitoring: -{result.MonitoringDeductions}");
+        }
+
+        if (result.ConnectivityDeductions > 0)
+        {
+            parts.Add($"Connectivity: -{result.ConnectivityDeductions}");
+        }
 
         return parts.Count > 0 ? $"Deductions: {string.Join(", ", parts)}" : "No deductions";
     }
