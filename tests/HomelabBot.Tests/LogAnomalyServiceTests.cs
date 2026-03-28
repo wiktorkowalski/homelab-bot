@@ -176,4 +176,28 @@ public class LogAnomalyServiceTests
 
         Assert.Empty(spikes);
     }
+
+    [Fact]
+    public void DetectErrorSpikes_SpikeValues_ContainCorrectCounts()
+    {
+        _service.DetectErrorSpikes(new Dictionary<string, long>
+        {
+            ["nginx"] = 20,
+            ["redis"] = 30,
+        });
+
+        var spikes = _service.DetectErrorSpikes(new Dictionary<string, long>
+        {
+            ["nginx"] = 100,
+            ["redis"] = 200,
+        });
+
+        Assert.Equal(2, spikes.Count);
+        var nginx = spikes.First(s => s.Container == "nginx");
+        Assert.Equal(20, nginx.PreviousCount);
+        Assert.Equal(100, nginx.CurrentCount);
+        var redis = spikes.First(s => s.Container == "redis");
+        Assert.Equal(30, redis.PreviousCount);
+        Assert.Equal(200, redis.CurrentCount);
+    }
 }

@@ -70,13 +70,18 @@ public class KnowledgeServiceTests : IClassFixture<DatabaseFixture>
     [Fact]
     public async Task RecallAsync_ReturnsAllWhenNoTopic()
     {
-        // Arrange - facts already exist from other tests
+        // Arrange — seed our own data with unique topics
+        var topic1 = $"all-recall-a-{Guid.NewGuid()}";
+        var topic2 = $"all-recall-b-{Guid.NewGuid()}";
+        await _service.RememberFactAsync(topic1, "fact one");
+        await _service.RememberFactAsync(topic2, "fact two");
 
         // Act
         var results = await _service.RecallAsync();
 
         // Assert
-        Assert.NotEmpty(results);
+        Assert.Contains(results, r => r.Topic == topic1);
+        Assert.Contains(results, r => r.Topic == topic2);
     }
 
     [Fact]
@@ -360,5 +365,45 @@ public class KnowledgeServiceTests : IClassFixture<DatabaseFixture>
         using var db = _fixture.DbContextFactory.CreateDbContext();
         var loaded = await db.Knowledge.FindAsync(results[0].Id);
         Assert.Null(loaded!.LastUsed);
+    }
+
+    [Fact]
+    public async Task RememberFact_KeepsHigherConfidence_WhenNewIsLower()
+    {
+        var topic = $"confidence-keep-{Guid.NewGuid()}";
+        await _service.RememberFactAsync(topic, "some fact", confidence: 0.9);
+        await _service.RememberFactAsync(topic, "some fact", confidence: 0.5);
+
+        using var db = _fixture.DbContextFactory.CreateDbContext();
+        var fact = db.Knowledge.First(k => k.Topic == topic);
+        Assert.Equal(0.9, fact.Confidence);
+    }
+
+    [Fact]
+    public async Task RecallAsync_ExcludesExactlyAtThreshold()
+    {
+        // Threshold is > 0.3, so 0.3 should be excluded
+        var topic = $"boundary-{Guid.NewGuid()}";
+        var fact = await _service.RememberFactAsync(topic, "boundary fact", confidence: 0.3);
+
+        using (var db = _fixture.DbContextFactory.CreateDbContext())
+        {
+            var entity = await db.Knowledge.FindAsync(fact.Id);
+            entity!.Confidence = 0.3;
+            await db.SaveChangesAsync();
+        }
+
+        var results = await _service.RecallAsync(topic);
+        Assert.DoesNotContain(results, r => r.Id == fact.Id);
+    }
+
+    [Fact]
+    public async Task RecallAsync_IncludesJustAboveThreshold()
+    {
+        var topic = $"above-boundary-{Guid.NewGuid()}";
+        await _service.RememberFactAsync(topic, "above fact", confidence: 0.31);
+
+        var results = await _service.RecallAsync(topic);
+        Assert.Single(results);
     }
 }
