@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Text;
 using Docker.DotNet;
 using Docker.DotNet.Models;
+using HomelabBot.Models;
 using Microsoft.SemanticKernel;
 
 namespace HomelabBot.Plugins;
@@ -266,6 +267,85 @@ public class DockerPlugin
         output.AppendLine("\n```");
 
         return output.ToString();
+    }
+
+    [KernelFunction]
+    [Description("Lists all Docker networks with their connected containers. Useful for understanding service relationships.")]
+    public async Task<string> ListNetworks()
+    {
+        _logger.LogDebug("Listing Docker networks...");
+
+        // Build network → containers mapping from container data (more reliable than network inspect)
+        var containers = await _client.Containers.ListContainersAsync(
+            new ContainersListParameters { All = true });
+
+        var networkMap = new Dictionary<string, List<string>>();
+        foreach (var container in containers)
+        {
+            var name = container.Names.FirstOrDefault()?.TrimStart('/') ?? container.ID[..12];
+            if (container.NetworkSettings?.Networks == null)
+            {
+                continue;
+            }
+
+            foreach (var network in container.NetworkSettings.Networks)
+            {
+                if (!networkMap.TryGetValue(network.Key, out var members))
+                {
+                    members = [];
+                    networkMap[network.Key] = members;
+                }
+
+                members.Add($"{name} ({network.Value.IPAddress})");
+            }
+        }
+
+        var networks = await _client.Networks.ListNetworksAsync();
+        var sb = new StringBuilder();
+        sb.AppendLine($"**Docker Networks** ({networks.Count}):\n");
+
+        foreach (var network in networks.OrderBy(n => n.Name))
+        {
+            var members = networkMap.GetValueOrDefault(network.Name, []);
+            sb.AppendLine($"- **{network.Name}** ({network.Driver}) — {members.Count} containers");
+            foreach (var member in members)
+            {
+                sb.AppendLine($"  - {member}");
+            }
+        }
+
+        return sb.ToString();
+    }
+
+    internal async Task<List<ContainerNetworkInfo>> GetContainerNetworkMapAsync()
+    {
+        var containers = await _client.Containers.ListContainersAsync(
+            new ContainersListParameters { All = true });
+
+        var result = new List<ContainerNetworkInfo>();
+        foreach (var container in containers)
+        {
+            var name = container.Names.FirstOrDefault()?.TrimStart('/') ?? container.ID[..12];
+            var networks = container.NetworkSettings?.Networks?.Keys.ToList() ?? [];
+            var ports = container.Ports?
+                .Select(p => $"{p.PrivatePort}/{p.Type}")
+                .ToList() ?? [];
+            var labels = container.Labels != null
+                ? new Dictionary<string, string>(container.Labels)
+                : new Dictionary<string, string>();
+
+            result.Add(new ContainerNetworkInfo
+            {
+                Name = name,
+                State = container.State,
+                Networks = networks,
+                Ports = ports,
+                Labels = labels,
+                Image = container.Image
+            });
+        }
+
+        return result;
     }
 
     private async Task<ContainerListResponse?> FindContainerAsync(string nameOrId)

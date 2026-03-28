@@ -17,6 +17,7 @@ public sealed class AlertWebhookService
     private readonly AutoRemediationService _autoRemediationService;
     private readonly IncidentSimilarityService _similarityService;
     private readonly HealingChainService _healingChainService;
+    private readonly ContagionTrackerService _contagionTracker;
     private readonly AlertWebhookConfiguration _config;
     private readonly ILogger<AlertWebhookService> _logger;
 
@@ -32,6 +33,7 @@ public sealed class AlertWebhookService
         AutoRemediationService autoRemediationService,
         IncidentSimilarityService similarityService,
         HealingChainService healingChainService,
+        ContagionTrackerService contagionTracker,
         IOptions<AlertWebhookConfiguration> config,
         ILogger<AlertWebhookService> logger)
     {
@@ -42,6 +44,7 @@ public sealed class AlertWebhookService
         _autoRemediationService = autoRemediationService;
         _similarityService = similarityService;
         _healingChainService = healingChainService;
+        _contagionTracker = contagionTracker;
         _config = config.Value;
         _logger = logger;
     }
@@ -139,6 +142,18 @@ public sealed class AlertWebhookService
                 ? $"\n\nPAST INCIDENT MATCH:\n{dejaVuContext}\n"
                 : "";
 
+            var blastRadiusPrompt = "";
+            if (containerName != null)
+            {
+                var blastRadius = await _contagionTracker.AnalyzeBlastRadiusAsync(
+                    containerName, alert.AlertName, ct);
+                var blastRadiusText = ContagionTrackerService.FormatBlastRadius(blastRadius);
+                if (!string.IsNullOrEmpty(blastRadiusText))
+                {
+                    blastRadiusPrompt = $"\n\nBLAST RADIUS:\n{blastRadiusText}\n";
+                }
+            }
+
             var prompt = $"""
                 ALERT FIRING - Investigate this:
                 Alert: {alert.AlertName}
@@ -146,7 +161,7 @@ public sealed class AlertWebhookService
                 Instance: {alert.Instance ?? "unknown"}
                 Description: {alert.Description ?? alert.Summary ?? "none"}
                 Started: {alert.StartsAt:u}
-                {patternContext}{dejaVuPrompt}
+                {patternContext}{dejaVuPrompt}{blastRadiusPrompt}
                 Use your tools to investigate what's happening. Check relevant logs, metrics, container status, etc.
                 Provide a brief summary of what you found and any recommended actions.
                 """;
