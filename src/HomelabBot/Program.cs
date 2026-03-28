@@ -165,6 +165,7 @@ try
     builder.Services.AddSingleton<DiscordBotService>();
     builder.Services.AddHostedService(sp => sp.GetRequiredService<DiscordBotService>());
     builder.Services.AddSingleton<HealthScoreService>();
+    builder.Services.AddSingleton<ServiceStateStore>();
     builder.Services.AddSingleton<SummaryDataAggregator>();
     builder.Services.AddHostedService<DailySummaryService>();
     builder.Services.AddSingleton<AutoRemediationService>();

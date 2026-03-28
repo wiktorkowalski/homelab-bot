@@ -1,3 +1,4 @@
+using System.Text.Json;
 using HomelabBot.Configuration;
 using HomelabBot.Plugins;
 using Microsoft.Extensions.Options;
@@ -12,6 +13,7 @@ public sealed class LogAnomalyService : BackgroundService
     private readonly ConversationService _conversationService;
     private readonly DiscordBotService _discordBot;
     private readonly ILogger<LogAnomalyService> _logger;
+    private readonly ServiceStateStore _stateStore;
     private readonly Dictionary<string, long> _lastKnownErrorCounts = new();
     private bool _firstRun = true;
 
@@ -21,7 +23,8 @@ public sealed class LogAnomalyService : BackgroundService
         KernelService kernelService,
         ConversationService conversationService,
         DiscordBotService discordBot,
-        ILogger<LogAnomalyService> logger)
+        ILogger<LogAnomalyService> logger,
+        ServiceStateStore stateStore)
     {
         _config = config;
         _lokiPlugin = lokiPlugin;
@@ -29,6 +32,7 @@ public sealed class LogAnomalyService : BackgroundService
         _conversationService = conversationService;
         _discordBot = discordBot;
         _logger = logger;
+        _stateStore = stateStore;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -36,6 +40,7 @@ public sealed class LogAnomalyService : BackgroundService
         _logger.LogInformation("Log anomaly service started, waiting for Discord...");
         await _discordBot.WaitForReadyAsync(stoppingToken);
         _logger.LogInformation("Discord ready, log anomaly detection running");
+        await LoadBaselineAsync();
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -75,6 +80,7 @@ public sealed class LogAnomalyService : BackgroundService
 
         var hasCritical = !criticalPatterns.Contains("No critical patterns");
         var newSpikes = DetectErrorSpikes(errorCounts);
+        await PersistBaselineAsync();
 
         if (!hasCritical && newSpikes.Count == 0)
         {
@@ -139,6 +145,41 @@ public sealed class LogAnomalyService : BackgroundService
     private static string TruncateForDiscord(string text)
     {
         return text.Length > 1800 ? text[..1797] + "..." : text;
+    }
+
+    private async Task LoadBaselineAsync()
+    {
+        try
+        {
+            var json = await _stateStore.GetAsync("LogAnomaly", "lastKnownErrorCounts");
+            if (json != null)
+            {
+                var data = JsonSerializer.Deserialize<Dictionary<string, long>>(json);
+                if (data != null)
+                {
+                    foreach (var (key, value) in data)
+                        _lastKnownErrorCounts[key] = value;
+                    _firstRun = false;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to load log anomaly baselines");
+        }
+    }
+
+    private async Task PersistBaselineAsync()
+    {
+        try
+        {
+            await _stateStore.SetAsync("LogAnomaly", "lastKnownErrorCounts",
+                JsonSerializer.Serialize(_lastKnownErrorCounts));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to persist log anomaly baselines");
+        }
     }
 
     private sealed class ErrorSpike

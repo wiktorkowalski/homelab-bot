@@ -36,6 +36,8 @@ public sealed class HomelabDbContext : DbContext
 
     public DbSet<RemediationAction> RemediationActions => Set<RemediationAction>();
 
+    public DbSet<ServiceState> ServiceStates => Set<ServiceState>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<Knowledge>(entity =>
@@ -117,6 +119,11 @@ public sealed class HomelabDbContext : DbContext
         modelBuilder.Entity<RemediationAction>(entity =>
         {
             entity.HasIndex(a => a.ExecutedAt);
+        });
+
+        modelBuilder.Entity<ServiceState>(entity =>
+        {
+            entity.HasIndex(s => new { s.ServiceName, s.Key }).IsUnique();
         });
     }
 }
