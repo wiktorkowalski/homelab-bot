@@ -11,9 +11,13 @@ public class MemoryServiceTests : IClassFixture<DatabaseFixture>
     public MemoryServiceTests(DatabaseFixture fixture)
     {
         _fixture = fixture;
+        var runbookCompiler = new RunbookCompilerService(
+            _fixture.DbContextFactory,
+            NullLogger<RunbookCompilerService>.Instance);
         _service = new MemoryService(
             _fixture.DbContextFactory,
-            NullLogger<MemoryService>.Instance);
+            NullLogger<MemoryService>.Instance,
+            runbookCompiler);
     }
 
     [Fact]
