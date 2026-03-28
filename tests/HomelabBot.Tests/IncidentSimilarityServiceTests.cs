@@ -194,7 +194,7 @@ public class IncidentSimilarityServiceTests : IClassFixture<DatabaseFixture>, ID
     }
 
     [Fact]
-    public async Task FormatDejaVuContext_EmptyList_ReturnsEmpty()
+    public void FormatDejaVuContext_EmptyList_ReturnsEmpty()
     {
         var result = IncidentSimilarityService.FormatDejaVuContext([]);
 
@@ -202,7 +202,7 @@ public class IncidentSimilarityServiceTests : IClassFixture<DatabaseFixture>, ID
     }
 
     [Fact]
-    public async Task FormatDejaVuContext_WithResults_FormatsCorrectly()
+    public void FormatDejaVuContext_WithResults_FormatsCorrectly()
     {
         var incidents = new List<Models.SimilarIncident>
         {
