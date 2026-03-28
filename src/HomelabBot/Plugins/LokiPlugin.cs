@@ -133,7 +133,7 @@ public sealed class LokiPlugin
 
             foreach (var stream in result.Data.Result)
             {
-                var streamLabels = FormatLabels(stream.Stream);
+                var streamLabels = FormatLabels(stream.Labels);
 
                 if (stream.Values != null)
                 {
@@ -297,8 +297,7 @@ public sealed class LokiPlugin
 
         foreach (var stream in result.Data.Result)
         {
-            var labels = stream.Stream ?? stream.Metric;
-            var container = labels?.GetValueOrDefault("compose_service") ?? "unknown";
+            var container = stream.Labels?.GetValueOrDefault("compose_service") ?? "unknown";
             long count = 0;
 
             if (stream.Values is { Count: > 0 } && stream.Values[0].Length >= 2)
@@ -387,8 +386,8 @@ public sealed class LokiPlugin
 
             foreach (var stream in result.Data.Result)
             {
-                var container = stream.Stream?.GetValueOrDefault("compose_service")
-                    ?? stream.Stream?.GetValueOrDefault("container_name")
+                var container = stream.Labels?.GetValueOrDefault("compose_service")
+                    ?? stream.Labels?.GetValueOrDefault("container_name")
                     ?? "unknown";
 
                 if (stream.Values != null)
@@ -474,8 +473,8 @@ public sealed class LokiPlugin
 
             foreach (var stream in result.Data.Result)
             {
-                var container = stream.Stream?.GetValueOrDefault("compose_service")
-                    ?? stream.Stream?.GetValueOrDefault("container_name") ?? "unknown";
+                var container = stream.Labels?.GetValueOrDefault("compose_service")
+                    ?? stream.Labels?.GetValueOrDefault("container_name") ?? "unknown";
 
                 if (stream.Values != null)
                 {
@@ -590,6 +589,7 @@ public sealed class LokiPlugin
     {
         public Dictionary<string, string>? Stream { get; set; }
         public Dictionary<string, string>? Metric { get; set; }
+        public Dictionary<string, string>? Labels => Stream ?? Metric;
         public List<JsonElement[]>? Values { get; set; }
         public JsonElement[]? Value { get; set; }
     }
