@@ -88,7 +88,10 @@ public sealed class DailySummaryService : BackgroundService
 
         var nextRun = nowLocal < todaySchedule ? todaySchedule : todaySchedule.AddDays(1);
         if (tz.IsInvalidTime(nextRun))
+        {
             nextRun = nextRun.AddHours(1);
+        }
+
         var nextRunUtc = TimeZoneInfo.ConvertTimeToUtc(nextRun, tz);
 
         return nextRunUtc - nowUtc;

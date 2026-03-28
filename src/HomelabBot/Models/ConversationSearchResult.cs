@@ -6,10 +6,15 @@ namespace HomelabBot.Models;
 public sealed class ConversationSearchResult
 {
     public required int ConversationId { get; init; }
+
     public required ulong ThreadId { get; init; }
+
     public string? Title { get; init; }
+
     public required DateTime Date { get; init; }
+
     public required int Score { get; init; }
+
     public required List<ConversationMessage> RelevantMessages { get; init; }
 
     public string TimeAgo
@@ -48,8 +53,10 @@ public sealed class ConversationSearchResult
     public static string Truncate(string text, int maxLength)
     {
         if (maxLength < 4 || text.Length <= maxLength)
+        {
             return text;
+        }
 
-        return text[.. (maxLength - 3)] + "...";
+        return text[..(maxLength - 3)] + "...";
     }
 }

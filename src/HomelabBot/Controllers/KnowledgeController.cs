@@ -27,10 +27,14 @@ public class KnowledgeController : ControllerBase
         var query = db.Knowledge.AsQueryable();
 
         if (!string.IsNullOrEmpty(topic))
+        {
             query = query.Where(k => k.Topic.Contains(topic));
+        }
 
         if (isValid.HasValue)
+        {
             query = query.Where(k => k.IsValid == isValid.Value);
+        }
 
         var items = await query
             .OrderByDescending(k => k.CreatedAt)
@@ -60,7 +64,9 @@ public class KnowledgeController : ControllerBase
 
         var item = await db.Knowledge.FindAsync([id], ct);
         if (item is null)
+        {
             return NotFound();
+        }
 
         return Ok(new KnowledgeDto
         {
@@ -121,13 +127,34 @@ public class KnowledgeController : ControllerBase
 
         var item = await db.Knowledge.FindAsync([id], ct);
         if (item is null)
+        {
             return NotFound();
+        }
 
-        if (request.Topic is not null) item.Topic = request.Topic;
-        if (request.Fact is not null) item.Fact = request.Fact;
-        if (request.Context is not null) item.Context = request.Context;
-        if (request.Confidence.HasValue) item.Confidence = request.Confidence.Value;
-        if (request.IsValid.HasValue) item.IsValid = request.IsValid.Value;
+        if (request.Topic is not null)
+        {
+            item.Topic = request.Topic;
+        }
+
+        if (request.Fact is not null)
+        {
+            item.Fact = request.Fact;
+        }
+
+        if (request.Context is not null)
+        {
+            item.Context = request.Context;
+        }
+
+        if (request.Confidence.HasValue)
+        {
+            item.Confidence = request.Confidence.Value;
+        }
+
+        if (request.IsValid.HasValue)
+        {
+            item.IsValid = request.IsValid.Value;
+        }
 
         await db.SaveChangesAsync(ct);
 
@@ -153,7 +180,9 @@ public class KnowledgeController : ControllerBase
 
         var item = await db.Knowledge.FindAsync([id], ct);
         if (item is null)
+        {
             return NotFound();
+        }
 
         item.IsValid = false;
         await db.SaveChangesAsync(ct);

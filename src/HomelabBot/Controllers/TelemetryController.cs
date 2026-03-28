@@ -28,10 +28,14 @@ public class TelemetryController : ControllerBase
         var query = db.LlmInteractions.AsQueryable();
 
         if (!string.IsNullOrEmpty(threadId) && ulong.TryParse(threadId, out var tid))
+        {
             query = query.Where(i => i.ThreadId == tid);
+        }
 
         if (success.HasValue)
+        {
             query = query.Where(i => i.Success == success.Value);
+        }
 
         var totalCount = await query.CountAsync(ct);
 
@@ -73,7 +77,9 @@ public class TelemetryController : ControllerBase
             .FirstOrDefaultAsync(i => i.Id == id, ct);
 
         if (item is null)
+        {
             return NotFound();
+        }
 
         return Ok(new LlmInteractionDetailDto
         {

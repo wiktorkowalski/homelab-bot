@@ -57,6 +57,7 @@ public static class SummaryEmbedBuilder
                 .Select(c => c.Name);
             containerText += "\n" + string.Join(", ", stoppedNames);
         }
+
         builder.AddField("🐳 Containers", containerText, true);
 
         // Storage
@@ -86,6 +87,7 @@ public static class SummaryEmbedBuilder
             {
                 monText += $"\n❌ {data.Monitoring.DownTargets} down";
             }
+
             builder.AddField("📊 Monitoring", monText, true);
         }
 

@@ -97,7 +97,9 @@ public sealed class LogAnomalyService : BackgroundService
 
         var userId = HomelabOwner.DiscordUserId;
         if (userId == 0)
+        {
             return;
+        }
 
         if (hasCritical)
         {
@@ -185,7 +187,9 @@ public sealed class LogAnomalyService : BackgroundService
     internal sealed class ErrorSpike
     {
         public required string Container { get; init; }
+
         public required long PreviousCount { get; init; }
+
         public required long CurrentCount { get; init; }
     }
 }

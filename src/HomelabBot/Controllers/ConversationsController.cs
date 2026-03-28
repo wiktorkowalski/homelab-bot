@@ -55,7 +55,9 @@ public class ConversationsController : ControllerBase
         CancellationToken ct = default)
     {
         if (!ulong.TryParse(threadId, out var tid))
+        {
             return this.BadRequest("Invalid thread ID");
+        }
 
         await using var db = await this._dbFactory.CreateDbContextAsync(ct);
 
@@ -64,7 +66,9 @@ public class ConversationsController : ControllerBase
             .FirstOrDefaultAsync(c => c.ThreadId == tid, ct);
 
         if (conversation is null)
+        {
             return this.NotFound();
+        }
 
         return this.Ok(new ConversationDetailDto
         {

@@ -39,7 +39,9 @@ public sealed class RunbookPlugin
         [Description("JSON array of steps with Order, Description, PluginName, FunctionName, Parameters")] string stepsJson)
     {
         if (!TryParseSteps(stepsJson, out var steps, out var error))
+        {
             return error;
+        }
 
         var trustLevel = DetermineTrustLevel(steps);
 
@@ -67,7 +69,9 @@ public sealed class RunbookPlugin
         var runbooks = await db.Runbooks.OrderBy(r => r.Name).ToListAsync();
 
         if (runbooks.Count == 0)
+        {
             return "No runbooks configured.";
+        }
 
         var sb = new StringBuilder();
         sb.AppendLine($"**Runbooks** ({runbooks.Count}):\n");
@@ -100,9 +104,14 @@ public sealed class RunbookPlugin
         {
             var runbook = await db.Runbooks.FindAsync(runbookId);
             if (runbook == null)
+            {
                 return $"Runbook {runbookId} not found.";
+            }
+
             if (!runbook.Enabled)
+            {
                 return $"Runbook **{runbook.Name}** is disabled.";
+            }
 
             runbookName = runbook.Name;
             stepsJson = runbook.StepsJson;
@@ -110,7 +119,9 @@ public sealed class RunbookPlugin
         }
 
         if (!TryParseSteps(stepsJson, out var steps, out var error))
+        {
             return $"Error: runbook **{runbookName}** has invalid steps — {error}";
+        }
 
         if (trustLevel == TrustLevel.Risky)
         {
@@ -194,10 +205,14 @@ public sealed class RunbookPlugin
         var runbook = await db.Runbooks.FindAsync(runbookId);
 
         if (runbook == null)
+        {
             return $"Runbook {runbookId} not found.";
+        }
 
         if (!TryParseSteps(runbook.StepsJson, out var steps, out var error))
+        {
             return $"❌ Invalid steps: {error}";
+        }
 
         var sb = new StringBuilder();
         sb.AppendLine($"**Dry-run: {runbook.Name}** (Trust: {runbook.TrustLevel})\n");
@@ -257,7 +272,9 @@ public sealed class RunbookPlugin
     private static TrustLevel DetermineTrustLevel(List<RunbookStep> steps)
     {
         if (steps.Any(s => RiskyFunctions.Contains(s.FunctionName)))
+        {
             return TrustLevel.Risky;
+        }
 
         return TrustLevel.ReadOnly;
     }
@@ -279,7 +296,9 @@ public sealed class RunbookPlugin
                 var preview = r.Result is { Length: > 100 } ? r.Result[..97] + "..." : r.Result;
                 sb.AppendLine($"✅ Step {r.StepOrder}: {r.Description}");
                 if (!string.IsNullOrEmpty(preview))
+                {
                     sb.AppendLine($"   → {preview}");
+                }
             }
             else
             {

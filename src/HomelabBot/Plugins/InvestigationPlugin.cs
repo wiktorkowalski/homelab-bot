@@ -64,7 +64,9 @@ public sealed class InvestigationPlugin
             {
                 sb.AppendLine($"- [{r.TimeAgo}] {r.DisplayTitle}");
                 if (r.RelevantMessages.Count > 0)
+                {
                     sb.AppendLine($"  > {ConversationSearchResult.Truncate(r.RelevantMessages[0].Content, 100)}");
+                }
             }
         }
 
@@ -195,7 +197,9 @@ public sealed class InvestigationPlugin
         var results = await _conversationService.SearchConversationsAsync(query);
 
         if (results.Count == 0)
+        {
             return $"No past conversations found matching '{query}'.";
+        }
 
         return ConversationSearchResult.FormatResults(results);
     }

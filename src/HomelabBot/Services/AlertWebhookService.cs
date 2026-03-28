@@ -91,6 +91,7 @@ public sealed class AlertWebhookService
                     await _discordService.SendDmWithComponentsAsync(HomelabOwner.DiscordUserId, remEmbed, remButtons);
                     return;
                 }
+
                 if (remediationResult.NeedsConfirmation)
                 {
                     var remEmbed = BuildAlertEmbed(alert, remediationResult.Message);
@@ -216,7 +217,7 @@ public sealed class AlertWebhookService
 
     private static string Truncate(string text, int maxLength)
     {
-        return text.Length > maxLength ? text[.. (maxLength - 3)] + "..." : text;
+        return text.Length > maxLength ? text[..(maxLength - 3)] + "..." : text;
     }
 
     private DiscordEmbed BuildAlertEmbed(AlertmanagerWebhookAlert alert, string analysis)
@@ -243,14 +244,20 @@ public sealed class AlertWebhookService
         builder.AddField("Severity", $"{severityEmoji} {alert.Severity}", true);
 
         if (!string.IsNullOrEmpty(alert.Instance))
+        {
             builder.AddField("Instance", alert.Instance, true);
+        }
 
         if (alert.IsResolved && alert.Duration.HasValue)
+        {
             builder.AddField("Duration", FormatDuration(alert.Duration.Value), true);
+        }
 
         // LLM analysis as description
         if (analysis.Length > 4096)
+        {
             analysis = analysis[..4093] + "...";
+        }
 
         builder.WithDescription(analysis);
 
@@ -260,7 +267,9 @@ public sealed class AlertWebhookService
     private static DiscordColor GetAlertColor(AlertmanagerWebhookAlert alert)
     {
         if (alert.IsResolved)
+        {
             return ColorResolved;
+        }
 
         return alert.Severity.ToLowerInvariant() switch
         {
@@ -273,11 +282,20 @@ public sealed class AlertWebhookService
     private static string FormatDuration(TimeSpan duration)
     {
         if (duration.TotalDays >= 1)
+        {
             return $"{(int)duration.TotalDays}d {duration.Hours}h";
+        }
+
         if (duration.TotalHours >= 1)
+        {
             return $"{(int)duration.TotalHours}h {duration.Minutes}m";
+        }
+
         if (duration.TotalMinutes >= 1)
+        {
             return $"{(int)duration.TotalMinutes}m {duration.Seconds}s";
+        }
+
         return $"{(int)duration.TotalSeconds}s";
     }
 }

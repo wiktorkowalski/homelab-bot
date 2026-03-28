@@ -67,6 +67,7 @@ public sealed class NtfyPlugin
             {
                 sb.AppendLine($"Title: {title}");
             }
+
             sb.AppendLine($"Priority: {priorityName}");
             sb.AppendLine($"Message: {message}");
 
@@ -139,24 +140,33 @@ public sealed class NtfyPlugin
     private sealed class NtfyMessage
     {
         public string Topic { get; set; } = "";
+
         public string Message { get; set; } = "";
+
         public string? Title { get; set; }
+
         public int Priority { get; set; } = 3;
     }
 
     private sealed class NtfyMessageWithActions
     {
         public string Topic { get; set; } = "";
+
         public string Message { get; set; } = "";
+
         public string? Title { get; set; }
+
         public int Priority { get; set; } = 3;
+
         public List<NtfyAction> Actions { get; set; } = [];
     }
 
     private sealed class NtfyAction
     {
         public string Action { get; set; } = "view";
+
         public string Label { get; set; } = "";
+
         public string Url { get; set; } = "";
     }
 }

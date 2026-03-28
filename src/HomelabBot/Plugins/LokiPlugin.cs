@@ -293,7 +293,9 @@ public sealed class LokiPlugin
         var entries = new Dictionary<string, long>();
 
         if (result?.Data?.Result == null)
+        {
             return entries;
+        }
 
         foreach (var stream in result.Data.Result)
         {
@@ -310,7 +312,9 @@ public sealed class LokiPlugin
             }
 
             if (count > 0)
+            {
                 entries[container] = count;
+            }
         }
 
         return entries;
@@ -576,27 +580,34 @@ public sealed class LokiPlugin
     private sealed class LokiQueryResponse
     {
         public string Status { get; set; } = "";
+
         public LokiData? Data { get; set; }
     }
 
     private sealed class LokiData
     {
         public string ResultType { get; set; } = "";
+
         public List<LokiStream> Result { get; set; } = [];
     }
 
     private sealed class LokiStream
     {
         public Dictionary<string, string>? Stream { get; set; }
+
         public Dictionary<string, string>? Metric { get; set; }
+
         public Dictionary<string, string>? Labels => Stream ?? Metric;
+
         public List<JsonElement[]>? Values { get; set; }
+
         public JsonElement[]? Value { get; set; }
     }
 
     private sealed class LokiLabelsResponse
     {
         public string Status { get; set; } = "";
+
         public List<string> Data { get; set; } = [];
     }
 }

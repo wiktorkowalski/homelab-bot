@@ -334,18 +334,34 @@ public class HomeLabCommands : ApplicationCommandModule
 
             // Breakdown fields — only show categories with deductions
             if (result.AlertDeductions > 0)
+            {
                 embed.AddField("⚠️ Alerts", $"-{result.AlertDeductions} pts", true);
+            }
+
             if (result.ContainerDeductions > 0)
+            {
                 embed.AddField("🐳 Containers", $"-{result.ContainerDeductions} pts", true);
+            }
+
             if (result.PoolDeductions > 0)
+            {
                 embed.AddField("💾 Pools", $"-{result.PoolDeductions} pts", true);
+            }
+
             if (result.MonitoringDeductions > 0)
+            {
                 embed.AddField("📊 Monitoring", $"-{result.MonitoringDeductions} pts", true);
+            }
+
             if (result.ConnectivityDeductions > 0)
+            {
                 embed.AddField("🔌 Connectivity", $"-{result.ConnectivityDeductions} pts", true);
+            }
 
             if (result.Score == 100)
+            {
                 embed.WithDescription("All systems healthy — no deductions.");
+            }
 
             embed.WithFooter(trend);
 
@@ -380,7 +396,10 @@ public class HomeLabCommands : ApplicationCommandModule
                 var logs = await _lokiPlugin.GetContainerLogs(container, "1h");
 
                 // Truncate for token efficiency
-                if (logs.Length > 2000) logs = logs[..2000] + "\n... (truncated)";
+                if (logs.Length > 2000)
+                {
+                    logs = logs[..2000] + "\n... (truncated)";
+                }
 
                 prompt = $"""
                     Analyze the logs for container "{container}". Here's the data:
@@ -674,6 +693,7 @@ public class HomeLabCommands : ApplicationCommandModule
                         response = "Please specify a container name with the `container` option.";
                         break;
                     }
+
                     await _autoRemediationService.ToggleCriticalityAsync(container, default);
                     response = $"Toggled criticality for **{container}**.";
                     break;
@@ -691,6 +711,7 @@ public class HomeLabCommands : ApplicationCommandModule
                             + (c.Notes != null ? $" ({c.Notes})" : ""));
                         response = $"**Container Criticality Settings:**\n{string.Join("\n", lines)}";
                     }
+
                     break;
 
                 default:

@@ -92,7 +92,10 @@ public sealed class KnowledgeRefreshService : BackgroundService
 
         var nextRun = nowLocal < todaySchedule ? todaySchedule : todaySchedule.AddDays(1);
         if (tz.IsInvalidTime(nextRun))
+        {
             nextRun = nextRun.AddHours(1);
+        }
+
         var nextRunUtc = TimeZoneInfo.ConvertTimeToUtc(nextRun, tz);
 
         return nextRunUtc - nowUtc;
@@ -216,9 +219,13 @@ public sealed class KnowledgeRefreshService : BackgroundService
                     disc.Topic, disc.Fact, disc.Context, "auto_refresh", disc.Confidence);
 
                 if (existingByTopic.ContainsKey(disc.Topic))
+                {
                     result.VerifiedFacts++;
+                }
                 else
+                {
                     result.AddedFacts++;
+                }
             }
             catch (Exception ex)
             {
@@ -235,15 +242,21 @@ public sealed class KnowledgeRefreshService : BackgroundService
         foreach (var (topic, facts) in existingByTopic)
         {
             if (discoveredTopics.Contains(topic))
+            {
                 continue;
+            }
 
             if (!activePrefixes.Any(p => topic.StartsWith(p)))
+            {
                 continue;
+            }
 
             foreach (var fact in facts)
             {
                 if (fact.Source == "user_told")
+                {
                     continue;
+                }
 
                 try
                 {
@@ -275,13 +288,24 @@ public sealed class KnowledgeRefreshService : BackgroundService
         var lines = new List<string> { "**Knowledge Refresh Summary**" };
 
         if (result.AddedFacts > 0)
+        {
             lines.Add($"+ {result.AddedFacts} new facts discovered");
+        }
+
         if (result.VerifiedFacts > 0)
+        {
             lines.Add($"~ {result.VerifiedFacts} facts verified");
+        }
+
         if (result.StaleFacts > 0)
+        {
             lines.Add($"- {result.StaleFacts} facts went stale");
+        }
+
         if (result.Errors.Count > 0)
+        {
             lines.Add($"! {result.Errors.Count} errors");
+        }
 
         var message = string.Join("\n", lines);
 

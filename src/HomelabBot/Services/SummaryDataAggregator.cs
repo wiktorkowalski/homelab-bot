@@ -133,7 +133,9 @@ public sealed class SummaryDataAggregator
         {
             using var request = new HttpRequestMessage(HttpMethod.Get, $"{_truenasUrl}/api/v2.0/pool");
             if (!string.IsNullOrEmpty(_truenasApiKey))
+            {
                 request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _truenasApiKey);
+            }
 
             var response = await _httpClient.SendAsync(request, ct);
             response.EnsureSuccessStatusCode();
@@ -221,8 +223,11 @@ public sealed class SummaryDataAggregator
             if (result?.Data?.Result?.FirstOrDefault()?.Value?.Length > 1)
             {
                 if (double.TryParse(result.Data.Result[0].Value![1].ToString(), out var value))
+                {
                     return value;
+                }
             }
+
             return 0;
         }
         catch (Exception ex)
@@ -235,8 +240,11 @@ public sealed class SummaryDataAggregator
     private sealed class TrueNASPool
     {
         public string? Name { get; set; }
+
         public string? Status { get; set; }
+
         public long? Size { get; set; }
+
         public long? Allocated { get; set; }
     }
 

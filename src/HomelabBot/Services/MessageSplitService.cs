@@ -10,7 +10,9 @@ public static class MessageSplitService
     public static List<string> SplitIntoSections(string content, int maxLength = DefaultMaxLength)
     {
         if (content.Length <= maxLength)
+        {
             return [content];
+        }
 
         var chunks = new List<string>();
         var remaining = content;
@@ -23,7 +25,9 @@ public static class MessageSplitService
         }
 
         if (!string.IsNullOrWhiteSpace(remaining))
+        {
             chunks.Add(remaining);
+        }
 
         return chunks;
     }
@@ -35,19 +39,27 @@ public static class MessageSplitService
         foreach (var splitter in sectionSplitters)
         {
             var idx = text.LastIndexOf(splitter, maxLength - 1, StringComparison.Ordinal);
-            if (idx > maxLength / 4) // Don't split too early
+
+            // Don't split too early
+            if (idx > maxLength / 4)
+            {
                 return idx;
+            }
         }
 
         // Priority 2: Single newline
         var newlineIdx = text.LastIndexOf('\n', maxLength - 1);
         if (newlineIdx > maxLength / 4)
+        {
             return newlineIdx;
+        }
 
         // Priority 3: Space
         var spaceIdx = text.LastIndexOf(' ', maxLength - 1);
         if (spaceIdx > maxLength / 4)
+        {
             return spaceIdx;
+        }
 
         // Fallback: hard split
         return maxLength;

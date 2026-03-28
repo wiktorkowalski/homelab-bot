@@ -156,7 +156,9 @@ public sealed class AnomalyDetectionService : BackgroundService
             "100 - (avg(rate(node_cpu_seconds_total{mode=\"idle\"}[5m])) * 100)", ct);
 
         if (cpuUsage == null)
+        {
             return anomalies;
+        }
 
         var previous = _lastMetricValues.GetValueOrDefault("cpu", cpuUsage.Value);
         _lastMetricValues["cpu"] = cpuUsage.Value;
@@ -193,7 +195,9 @@ public sealed class AnomalyDetectionService : BackgroundService
             "(1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * 100", ct);
 
         if (memUsage == null)
+        {
             return anomalies;
+        }
 
         if (memUsage > 90)
         {
@@ -217,7 +221,9 @@ public sealed class AnomalyDetectionService : BackgroundService
             "(1 - node_filesystem_avail_bytes{mountpoint=\"/\"} / node_filesystem_size_bytes{mountpoint=\"/\"}) * 100", ct);
 
         if (diskUsage == null)
+        {
             return anomalies;
+        }
 
         if (diskUsage > 85)
         {
@@ -256,7 +262,9 @@ public sealed class AnomalyDetectionService : BackgroundService
         {
             var response = await _httpClient.GetAsync($"{_prometheusUrl}/api/v1/targets", ct);
             if (!response.IsSuccessStatusCode)
+            {
                 return anomalies;
+            }
 
             var json = await response.Content.ReadAsStringAsync(ct);
             using var doc = JsonDocument.Parse(json);
@@ -408,7 +416,9 @@ public sealed class AnomalyDetectionService : BackgroundService
             var rxRate = await QueryPrometheusValueAsync(
                 "sum(rate(mktxp_interface_rx_byte[5m]))", ct);
             if (rxRate == null)
+            {
                 return anomalies;
+            }
 
             var key = "network_rx";
             var previous = _lastMetricValues.GetValueOrDefault(key, rxRate.Value);
@@ -440,11 +450,15 @@ public sealed class AnomalyDetectionService : BackgroundService
         {
             using var request = new HttpRequestMessage(HttpMethod.Get, $"{_trueNasUrl}/api/v2.0/pool");
             if (!string.IsNullOrEmpty(_trueNasApiKey))
+            {
                 request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _trueNasApiKey);
+            }
 
             var response = await _httpClient.SendAsync(request, ct);
             if (!response.IsSuccessStatusCode)
+            {
                 return anomalies;
+            }
 
             var json = await response.Content.ReadAsStringAsync(ct);
             using var doc = JsonDocument.Parse(json);
@@ -511,7 +525,9 @@ public sealed class AnomalyDetectionService : BackgroundService
                 "min(traefik_tls_certs_not_after - time())", ct);
 
             if (minExpiry == null)
+            {
                 return anomalies;
+            }
 
             var daysLeft = minExpiry.Value / 86400;
             if (daysLeft < 7)
@@ -593,7 +609,9 @@ public sealed class AnomalyDetectionService : BackgroundService
     {
         var userId = HomelabOwner.DiscordUserId;
         if (userId == 0)
+        {
             return;
+        }
 
         var anomalySummary = new StringBuilder();
         anomalySummary.AppendLine("The following anomalies were detected by automated monitoring:");
@@ -646,7 +664,9 @@ public sealed class AnomalyDetectionService : BackgroundService
     {
         var userId = HomelabOwner.DiscordUserId;
         if (userId == 0)
+        {
             return;
+        }
 
         var criticals = anomalies.Where(a => a.Severity == AnomalySeverity.Critical).ToList();
         var message = $"🚨 **Critical Anomalies Detected**\n\n" +
@@ -691,7 +711,9 @@ public sealed class AnomalyDetectionService : BackgroundService
                 $"{_prometheusUrl}/api/v1/query?query={encodedQuery}", ct);
 
             if (!response.IsSuccessStatusCode)
+            {
                 return null;
+            }
 
             var json = await response.Content.ReadAsStringAsync(ct);
             using var doc = JsonDocument.Parse(json);
@@ -701,7 +723,9 @@ public sealed class AnomalyDetectionService : BackgroundService
                 .GetProperty("result");
 
             if (results.GetArrayLength() == 0)
+            {
                 return null;
+            }
 
             var valueStr = results[0].GetProperty("value")[1].GetString();
             if (double.TryParse(valueStr, System.Globalization.NumberStyles.Float,
@@ -722,11 +746,20 @@ public sealed class AnomalyDetectionService : BackgroundService
     private static string FormatBytes(double bytes)
     {
         if (bytes < 1024)
+        {
             return $"{bytes:F0} B";
+        }
+
         if (bytes < 1024 * 1024)
+        {
             return $"{bytes / 1024:F1} KB";
+        }
+
         if (bytes < 1024 * 1024 * 1024)
+        {
             return $"{bytes / (1024 * 1024):F1} MB";
+        }
+
         return $"{bytes / (1024 * 1024 * 1024):F2} GB";
     }
 
@@ -740,8 +773,11 @@ public sealed class AnomalyDetectionService : BackgroundService
     private sealed class Anomaly
     {
         public required string Type { get; init; }
+
         public required string Message { get; init; }
+
         public required AnomalySeverity Severity { get; init; }
+
         public required double Value { get; init; }
     }
 

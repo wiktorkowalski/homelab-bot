@@ -255,20 +255,25 @@ public sealed class AlertmanagerPlugin
     private sealed class AlertmanagerAlert
     {
         public Dictionary<string, string>? Labels { get; set; }
+
         public Dictionary<string, string>? Annotations { get; set; }
+
         public AlertStatus? Status { get; set; }
     }
 
     private sealed class AlertStatus
     {
         public string? State { get; set; }
+
         public List<string>? SilencedBy { get; set; }
+
         public List<string>? InhibitedBy { get; set; }
     }
 
     private sealed class AlertGroup
     {
         public Dictionary<string, string>? Labels { get; set; }
+
         public List<AlertmanagerAlert>? Alerts { get; set; }
     }
 
@@ -281,19 +286,28 @@ public sealed class AlertmanagerPlugin
     private sealed class Silence
     {
         public string? Id { get; set; }
+
         public List<SilenceMatcher>? Matchers { get; set; }
+
         public DateTime StartsAt { get; set; }
+
         public DateTime EndsAt { get; set; }
+
         public string? CreatedBy { get; set; }
+
         public string? Comment { get; set; }
+
         public SilenceStatus? Status { get; set; }
     }
 
     private sealed class SilenceMatcher
     {
         public string? Name { get; set; }
+
         public string? Value { get; set; }
+
         public bool IsRegex { get; set; }
+
         public bool IsEqual { get; set; }
     }
 

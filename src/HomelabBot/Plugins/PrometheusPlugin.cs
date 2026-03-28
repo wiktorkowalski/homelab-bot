@@ -73,6 +73,7 @@ public sealed class PrometheusPlugin
                 {
                     sb.AppendLine($"  - {metric}");
                 }
+
                 if (group.Count() > 5)
                 {
                     sb.AppendLine($"  - ... and {group.Count() - 5} more");
@@ -307,39 +308,56 @@ public sealed class PrometheusPlugin
 
     private static string FormatBytes(double bytes)
     {
-        if (bytes < 1024) return $"{bytes:F0} B";
-        if (bytes < 1024 * 1024) return $"{bytes / 1024:F1} KB";
-        if (bytes < 1024 * 1024 * 1024) return $"{bytes / (1024 * 1024):F1} MB";
+        if (bytes < 1024)
+        {
+            return $"{bytes:F0} B";
+        }
+
+        if (bytes < 1024 * 1024)
+        {
+            return $"{bytes / 1024:F1} KB";
+        }
+
+        if (bytes < 1024 * 1024 * 1024)
+        {
+            return $"{bytes / (1024 * 1024):F1} MB";
+        }
+
         return $"{bytes / (1024 * 1024 * 1024):F2} GB";
     }
 
     private sealed class PrometheusLabelResponse
     {
         public string Status { get; set; } = "";
+
         public List<string> Data { get; set; } = [];
     }
 
     private sealed class PrometheusQueryResponse
     {
         public string Status { get; set; } = "";
+
         public PrometheusQueryData? Data { get; set; }
     }
 
     private sealed class PrometheusQueryData
     {
         public string ResultType { get; set; } = "";
+
         public List<PrometheusResult> Result { get; set; } = [];
     }
 
     private sealed class PrometheusResult
     {
         public Dictionary<string, string>? Metric { get; set; }
+
         public JsonElement[]? Value { get; set; }
     }
 
     private sealed class PrometheusTargetsResponse
     {
         public string Status { get; set; } = "";
+
         public PrometheusTargetsData? Data { get; set; }
     }
 
@@ -351,7 +369,9 @@ public sealed class PrometheusPlugin
     private sealed class PrometheusTarget
     {
         public Dictionary<string, string>? Labels { get; set; }
+
         public string? ScrapeUrl { get; set; }
+
         public string Health { get; set; } = "";
     }
 }
