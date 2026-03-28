@@ -284,8 +284,7 @@ public sealed class LokiPlugin
             : $"{{compose_service=\"{containerName}\"}}";
         var query = $"sum by (compose_service) (count_over_time({selector} |~ \"(?i)(\\\\berror\\\\b|\\\\bexception\\\\b|\\\\bfailed\\\\b|\\\\bfailure\\\\b)\" [{normalizedSince}]))";
 
-        var encodedQuery = Uri.EscapeDataString(query);
-        var url = $"{_baseUrl}/loki/api/v1/query?query={encodedQuery}";
+        var url = $"{_baseUrl}/loki/api/v1/query?query={query}";
         var response = await _httpClient.GetAsync(url);
         response.EnsureSuccessStatusCode();
 
