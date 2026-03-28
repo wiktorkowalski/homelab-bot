@@ -16,6 +16,11 @@ public sealed class HomelabMcpTools
     private readonly MikroTikPlugin _mikrotik;
     private readonly KnowledgePlugin _knowledge;
     private readonly LokiPlugin _loki;
+    private readonly GrafanaPlugin _grafana;
+    private readonly HomeAssistantPlugin _homeAssistant;
+    private readonly NtfyPlugin _ntfy;
+    private readonly RunbookPlugin _runbook;
+    private readonly InvestigationPlugin _investigation;
     private readonly HealthScoreService _healthScore;
     private readonly SummaryDataAggregator _summaryAggregator;
     private readonly ConversationService _conversationService;
@@ -28,6 +33,11 @@ public sealed class HomelabMcpTools
         MikroTikPlugin mikrotik,
         KnowledgePlugin knowledge,
         LokiPlugin loki,
+        GrafanaPlugin grafana,
+        HomeAssistantPlugin homeAssistant,
+        NtfyPlugin ntfy,
+        RunbookPlugin runbook,
+        InvestigationPlugin investigation,
         HealthScoreService healthScore,
         SummaryDataAggregator summaryAggregator,
         ConversationService conversationService)
@@ -39,6 +49,11 @@ public sealed class HomelabMcpTools
         _mikrotik = mikrotik;
         _knowledge = knowledge;
         _loki = loki;
+        _grafana = grafana;
+        _homeAssistant = homeAssistant;
+        _ntfy = ntfy;
+        _runbook = runbook;
+        _investigation = investigation;
         _healthScore = healthScore;
         _summaryAggregator = summaryAggregator;
         _conversationService = conversationService;
@@ -116,4 +131,33 @@ public sealed class HomelabMcpTools
 
         return ConversationSearchResult.FormatResults(results);
     }
+
+    [McpServerTool]
+    [Description("List all available Grafana dashboards")]
+    public Task<string> ListGrafanaDashboards() => _grafana.ListDashboards();
+
+    [McpServerTool]
+    [Description("Get the current state of a Home Assistant entity")]
+    public Task<string> GetEntityState(string entityId) => _homeAssistant.GetEntityState(entityId);
+
+    [McpServerTool]
+    [Description("Turn on a Home Assistant entity (light, switch, etc.)")]
+    public Task<string> TurnOn(string entityId) => _homeAssistant.TurnOn(entityId);
+
+    [McpServerTool]
+    [Description("Turn off a Home Assistant entity (light, switch, etc.)")]
+    public Task<string> TurnOff(string entityId) => _homeAssistant.TurnOff(entityId);
+
+    [McpServerTool]
+    [Description("Send a push notification via ntfy")]
+    public Task<string> SendNotification(string message, string? topic = null, string? title = null, int priority = 3)
+        => _ntfy.SendNotification(message, topic, title, priority);
+
+    [McpServerTool]
+    [Description("List all runbooks with their status and trigger conditions")]
+    public Task<string> ListRunbooks() => _runbook.ListRunbooks();
+
+    [McpServerTool]
+    [Description("Search past incidents for similar issues")]
+    public Task<string> SearchPastIncidents(string symptom) => _investigation.SearchPastIncidents(symptom);
 }
