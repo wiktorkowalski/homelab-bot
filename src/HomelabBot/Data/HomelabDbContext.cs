@@ -38,6 +38,8 @@ public sealed class HomelabDbContext : DbContext
 
     public DbSet<HealingChain> HealingChains => Set<HealingChain>();
 
+    public DbSet<WarRoom> WarRooms => Set<WarRoom>();
+
     public DbSet<ServiceState> ServiceStates => Set<ServiceState>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -126,6 +128,12 @@ public sealed class HomelabDbContext : DbContext
         modelBuilder.Entity<HealingChain>(entity =>
         {
             entity.HasIndex(h => h.Status);
+        });
+
+        modelBuilder.Entity<WarRoom>(entity =>
+        {
+            entity.HasIndex(w => w.Status);
+            entity.HasIndex(w => w.DiscordThreadId);
         });
 
         modelBuilder.Entity<ServiceState>(entity =>

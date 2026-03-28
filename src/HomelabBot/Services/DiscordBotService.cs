@@ -475,6 +475,64 @@ public sealed class DiscordBotService : BackgroundService
         }
     }
 
+    public async Task<(ulong ThreadId, ulong MessageId)?> CreateThreadInChannelAsync(
+        ulong channelId, string name, string initialMessage)
+    {
+        if (_client == null)
+        {
+            return null;
+        }
+
+        try
+        {
+            var channel = await _client.GetChannelAsync(channelId);
+            var message = await channel.SendMessageAsync(initialMessage);
+            var thread = await message.CreateThreadAsync(name, DSharpPlus.AutoArchiveDuration.Day);
+            return (thread.Id, message.Id);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to create thread in channel {ChannelId}", channelId);
+            return null;
+        }
+    }
+
+    public async Task SendToThreadAsync(ulong threadId, string message)
+    {
+        if (_client == null)
+        {
+            return;
+        }
+
+        try
+        {
+            var thread = await _client.GetChannelAsync(threadId);
+            await thread.SendMessageAsync(message);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to send message to thread {ThreadId}", threadId);
+        }
+    }
+
+    public async Task SendToThreadAsync(ulong threadId, DiscordEmbed embed)
+    {
+        if (_client == null)
+        {
+            return;
+        }
+
+        try
+        {
+            var thread = await _client.GetChannelAsync(threadId);
+            await thread.SendMessageAsync(embed: embed);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to send embed to thread {ThreadId}", threadId);
+        }
+    }
+
     public async Task SendDmFileAsync(ulong userId, string content, string filename)
     {
         var dm = await GetDmChannelAsync(userId);
