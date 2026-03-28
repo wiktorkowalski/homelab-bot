@@ -111,7 +111,7 @@ public sealed class LogAnomalyService : BackgroundService
         }
     }
 
-    private List<ErrorSpike> DetectErrorSpikes(Dictionary<string, long> errorCounts)
+    internal List<ErrorSpike> DetectErrorSpikes(Dictionary<string, long> errorCounts)
     {
         var spikes = new List<ErrorSpike>();
         var threshold = _config.CurrentValue.ErrorThreshold;
@@ -182,7 +182,7 @@ public sealed class LogAnomalyService : BackgroundService
         }
     }
 
-    private sealed class ErrorSpike
+    internal sealed class ErrorSpike
     {
         public required string Container { get; init; }
         public required long PreviousCount { get; init; }
