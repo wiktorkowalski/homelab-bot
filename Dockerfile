@@ -9,6 +9,7 @@ RUN npm run build -- --outDir=dist
 # Stage 2: Build .NET backend
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS backend-build
 WORKDIR /src
+COPY .editorconfig /src/
 COPY src/HomelabBot/*.csproj ./
 RUN dotnet restore
 COPY src/HomelabBot/ ./

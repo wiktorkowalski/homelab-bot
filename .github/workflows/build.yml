@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [master]
 
+permissions:
+  contents: read
+  packages: write
+
 jobs:
   build-deploy:
     uses: wiktorkowalski/github-workflows/.github/workflows/dotnet-docker-deploy.yml@master
