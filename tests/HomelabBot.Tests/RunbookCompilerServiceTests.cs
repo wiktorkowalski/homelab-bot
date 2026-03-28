@@ -172,7 +172,7 @@ public class RunbookCompilerServiceTests : IClassFixture<DatabaseFixture>, IDisp
 
         var pattern = new Pattern
         {
-            Symptom = "nginx container down restart",
+            Symptom = "nginx container down",
             CommonCause = "OOM",
             Resolution = "restart"
         };
@@ -220,5 +220,55 @@ public class RunbookCompilerServiceTests : IClassFixture<DatabaseFixture>, IDisp
         Assert.NotNull(result);
         Assert.Contains("\"Order\":1", result.StepsJson);
         Assert.DoesNotContain("\"Order\":2", result.StepsJson);
+    }
+
+    [Fact]
+    public async Task Compile_WeakKeywordOverlap_DoesNotVersionUnrelatedRunbook()
+    {
+        // Existing runbook for grafana
+        using (var db = _fixture.DbContextFactory.CreateDbContext())
+        {
+            db.Runbooks.Add(new Runbook
+            {
+                Name = "Auto: grafana container down",
+                TriggerCondition = "grafana container down",
+                StepsJson = "[]",
+                TrustLevel = TrustLevel.ReadOnly,
+                Version = 1
+            });
+            await db.SaveChangesAsync();
+        }
+
+        // Remediation for nginx - shares "container" and "down" but not "grafana"
+        var action = new RemediationAction
+        {
+            ContainerName = "nginx",
+            ActionType = "restart",
+            Trigger = "pattern",
+            BeforeState = "exited",
+            AfterState = "running",
+            Success = true
+        };
+
+        var pattern = new Pattern
+        {
+            Symptom = "nginx down",
+            CommonCause = "crash",
+            Resolution = "restart"
+        };
+
+        var result = await _service.CompileFromRemediationAsync(action, pattern);
+
+        Assert.NotNull(result);
+        // Should create a NEW runbook, not version the grafana one
+        Assert.Equal(1, result.Version);
+        Assert.Null(result.ParentRunbookId);
+
+        // Grafana runbook should still be enabled
+        using (var db = _fixture.DbContextFactory.CreateDbContext())
+        {
+            var grafana = await db.Runbooks.FirstAsync(r => r.Name.Contains("grafana"));
+            Assert.True(grafana.Enabled);
+        }
     }
 }

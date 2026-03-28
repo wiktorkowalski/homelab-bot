@@ -159,7 +159,7 @@ public sealed class RunbookCompilerService
         {
             var triggerLower = r.TriggerCondition.ToLowerInvariant();
             var matchCount = keywords.Count(k => triggerLower.Contains(k));
-            return matchCount >= Math.Max(1, keywords.Length / 2);
+            return matchCount >= Math.Max(2, (keywords.Length + 1) / 2);
         });
     }
 
