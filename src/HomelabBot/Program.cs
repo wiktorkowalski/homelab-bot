@@ -175,6 +175,7 @@ try
     builder.Services.AddHostedService<DailySummaryService>();
     builder.Services.AddSingleton<AutoRemediationService>();
     builder.Services.AddSingleton<HealingChainService>();
+    builder.Services.AddSingleton<ContagionTrackerService>();
     builder.Services.AddSingleton<RunbookTriggerService>();
     builder.Services.AddSingleton<AlertWebhookService>();
     builder.Services.AddHostedService<HealthScoreBackgroundService>();

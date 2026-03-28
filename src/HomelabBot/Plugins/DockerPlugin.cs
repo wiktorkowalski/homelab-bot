@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Text;
 using Docker.DotNet;
 using Docker.DotNet.Models;
+using HomelabBot.Models;
 using Microsoft.SemanticKernel;
 
 namespace HomelabBot.Plugins;
@@ -266,6 +267,63 @@ public class DockerPlugin
         output.AppendLine("\n```");
 
         return output.ToString();
+    }
+
+    [KernelFunction]
+    [Description("Lists all Docker networks with connected containers. Useful for understanding service relationships.")]
+    public async Task<string> ListNetworks()
+    {
+        _logger.LogDebug("Listing Docker networks...");
+
+        var networks = await _client.Networks.ListNetworksAsync();
+        var sb = new StringBuilder();
+        sb.AppendLine($"**Docker Networks** ({networks.Count}):\n");
+
+        foreach (var network in networks.OrderBy(n => n.Name))
+        {
+            var containerCount = network.Containers?.Count ?? 0;
+            sb.AppendLine($"- **{network.Name}** ({network.Driver}) — {containerCount} containers");
+            if (network.Containers != null)
+            {
+                foreach (var (_, endpoint) in network.Containers)
+                {
+                    sb.AppendLine($"  - {endpoint.Name}: {endpoint.IPv4Address}");
+                }
+            }
+        }
+
+        return sb.ToString();
+    }
+
+    internal async Task<List<ContainerNetworkInfo>> GetContainerNetworkMapAsync()
+    {
+        var containers = await _client.Containers.ListContainersAsync(
+            new ContainersListParameters { All = true });
+
+        var result = new List<ContainerNetworkInfo>();
+        foreach (var container in containers)
+        {
+            var name = container.Names.FirstOrDefault()?.TrimStart('/') ?? container.ID[..12];
+            var networks = container.NetworkSettings?.Networks?.Keys.ToList() ?? [];
+            var ports = container.Ports?
+                .Select(p => $"{p.PrivatePort}/{p.Type}")
+                .ToList() ?? [];
+            var labels = container.Labels != null
+                ? new Dictionary<string, string>(container.Labels)
+                : new Dictionary<string, string>();
+
+            result.Add(new ContainerNetworkInfo
+            {
+                Name = name,
+                State = container.State,
+                Networks = networks,
+                Ports = ports,
+                Labels = labels,
+                Image = container.Image
+            });
+        }
+
+        return result;
     }
 
     private async Task<ContainerListResponse?> FindContainerAsync(string nameOrId)
