@@ -39,12 +39,16 @@ public class AutoRemediationServiceTests : IClassFixture<DatabaseFixture>, IDisp
     private AutoRemediationService CreateService(AutoRemediationConfiguration? config = null)
     {
         config ??= new AutoRemediationConfiguration();
+        var runbookCompiler = new RunbookCompilerService(
+            _fixture.DbContextFactory,
+            NullLogger<RunbookCompilerService>.Instance);
         return new AutoRemediationService(
             _dockerPlugin,
             _fixture.DbContextFactory,
             Options.Create(config),
             NullLogger<AutoRemediationService>.Instance,
-            _stateStore);
+            _stateStore,
+            runbookCompiler);
     }
 
     private static AlertmanagerWebhookAlert CreateAlert(Dictionary<string, string>? labels = null)

@@ -9,11 +9,16 @@ public sealed class MemoryService
 {
     private readonly IDbContextFactory<HomelabDbContext> _dbFactory;
     private readonly ILogger<MemoryService> _logger;
+    private readonly RunbookCompilerService _runbookCompiler;
 
-    public MemoryService(IDbContextFactory<HomelabDbContext> dbFactory, ILogger<MemoryService> logger)
+    public MemoryService(
+        IDbContextFactory<HomelabDbContext> dbFactory,
+        ILogger<MemoryService> logger,
+        RunbookCompilerService runbookCompiler)
     {
         _dbFactory = dbFactory;
         _logger = logger;
+        _runbookCompiler = runbookCompiler;
     }
 
     public async Task<Investigation> StartInvestigationAsync(ulong threadId, string trigger)
@@ -120,6 +125,16 @@ public sealed class MemoryService
         }
 
         await db.SaveChangesAsync();
+
+        // Try to compile a runbook from the investigation steps
+        try
+        {
+            await _runbookCompiler.CompileFromInvestigationAsync(investigation);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to compile runbook from investigation {Id}", investigationId);
+        }
 
         _logger.LogInformation("Resolved investigation {Id}: {Resolution}", investigationId, resolution);
         return investigation;

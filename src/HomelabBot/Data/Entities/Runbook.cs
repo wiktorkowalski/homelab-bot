@@ -23,6 +23,19 @@ public sealed class Runbook
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     public DateTime? LastExecutedAt { get; set; }
+
+    public RunbookSourceType SourceType { get; set; } = RunbookSourceType.Manual;
+
+    public int? SourceInvestigationId { get; set; }
+
+    public int? ParentRunbookId { get; set; }
+}
+
+public enum RunbookSourceType
+{
+    Manual,
+    AutoCompiled,
+    HealingChain,
 }
 
 public enum TrustLevel

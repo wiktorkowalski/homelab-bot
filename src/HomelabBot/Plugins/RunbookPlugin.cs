@@ -269,7 +269,7 @@ public sealed class RunbookPlugin
         }
     }
 
-    private static TrustLevel DetermineTrustLevel(List<RunbookStep> steps)
+    internal static TrustLevel DetermineTrustLevel(List<RunbookStep> steps)
     {
         if (steps.Any(s => RiskyFunctions.Contains(s.FunctionName)))
         {

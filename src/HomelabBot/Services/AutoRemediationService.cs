@@ -18,6 +18,7 @@ public sealed class AutoRemediationService
     private readonly AutoRemediationConfiguration _config;
     private readonly ILogger<AutoRemediationService> _logger;
     private readonly ServiceStateStore _stateStore;
+    private readonly RunbookCompilerService _runbookCompiler;
     private readonly ConcurrentDictionary<string, List<DateTime>> _cooldowns = new();
     private readonly Task _initTask;
     private bool _enabled;
@@ -27,13 +28,15 @@ public sealed class AutoRemediationService
         IDbContextFactory<HomelabDbContext> dbFactory,
         IOptions<AutoRemediationConfiguration> config,
         ILogger<AutoRemediationService> logger,
-        ServiceStateStore stateStore)
+        ServiceStateStore stateStore,
+        RunbookCompilerService runbookCompiler)
     {
         _dockerPlugin = dockerPlugin;
         _dbFactory = dbFactory;
         _config = config.Value;
         _logger = logger;
         _stateStore = stateStore;
+        _runbookCompiler = runbookCompiler;
         _enabled = _config.Enabled;
         _initTask = LoadStateAsync();
     }
@@ -433,6 +436,11 @@ public sealed class AutoRemediationService
             db.RemediationActions.Add(action);
             await db.SaveChangesAsync(ct);
 
+            if (action.Success)
+            {
+                await CompileRunbookSafeAsync(action, pattern, ct);
+            }
+
             var statusEmoji = action.Success ? "OK" : "FAILED";
             return new RemediationResult
             {
@@ -461,6 +469,18 @@ public sealed class AutoRemediationService
                 Message = $"Auto-remediation FAILED for **{containerName}**: {ex.Message}",
                 ContainerName = containerName
             };
+        }
+    }
+
+    private async Task CompileRunbookSafeAsync(RemediationAction action, Pattern pattern, CancellationToken ct)
+    {
+        try
+        {
+            await _runbookCompiler.CompileFromRemediationAsync(action, pattern, ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to compile runbook from remediation for {Container}", action.ContainerName);
         }
     }
 
