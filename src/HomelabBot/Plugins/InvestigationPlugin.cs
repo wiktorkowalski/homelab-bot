@@ -10,6 +10,7 @@ public sealed class InvestigationPlugin
 {
     private readonly MemoryService _memoryService;
     private readonly ConversationService _conversationService;
+    private readonly IncidentSimilarityService _similarityService;
     private readonly ILogger<InvestigationPlugin> _logger;
 
     // Track current investigation per thread (in-memory for quick access)
@@ -18,10 +19,12 @@ public sealed class InvestigationPlugin
     public InvestigationPlugin(
         MemoryService memoryService,
         ConversationService conversationService,
+        IncidentSimilarityService similarityService,
         ILogger<InvestigationPlugin> logger)
     {
         _memoryService = memoryService;
         _conversationService = conversationService;
+        _similarityService = similarityService;
         _logger = logger;
     }
 
@@ -48,7 +51,29 @@ public sealed class InvestigationPlugin
         var sb = new StringBuilder();
         sb.AppendLine($"Started investigation #{investigation.Id}: {symptom}");
 
-        // Check for past similar incidents
+        // Check for similar past incidents with scoring
+        var similarIncidents = await _similarityService.FindSimilarAsync(symptom);
+        if (similarIncidents.Count > 0)
+        {
+            sb.AppendLine("\n### Similar Past Incidents");
+            foreach (var similar in similarIncidents)
+            {
+                var age = DateTime.UtcNow - similar.OccurredAt;
+                var timeAgo = age.TotalDays > 1 ? $"{(int)age.TotalDays}d ago" : $"{(int)age.TotalHours}h ago";
+                sb.AppendLine($"- **#{similar.InvestigationId}** ({similar.SimilarityScore:F0}% match, {timeAgo}): {similar.Trigger}");
+                if (!string.IsNullOrEmpty(similar.Resolution))
+                {
+                    sb.AppendLine($"  Fix: {similar.Resolution}");
+                }
+
+                if (similar.MatchReasons.Count > 0)
+                {
+                    sb.AppendLine($"  Match: {string.Join(", ", similar.MatchReasons)}");
+                }
+            }
+        }
+
+        // Also check known patterns
         var pastContext = await _memoryService.GenerateIncidentContextAsync(symptom);
         if (!string.IsNullOrEmpty(pastContext))
         {
@@ -70,7 +95,7 @@ public sealed class InvestigationPlugin
             }
         }
 
-        if (string.IsNullOrEmpty(pastContext) && conversationResults.Count == 0)
+        if (similarIncidents.Count == 0 && string.IsNullOrEmpty(pastContext) && conversationResults.Count == 0)
         {
             sb.AppendLine("No similar past incidents or conversations found.");
         }
