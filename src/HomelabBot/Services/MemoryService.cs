@@ -309,4 +309,33 @@ public sealed class MemoryService
             db.Patterns.Add(pattern);
         }
     }
+
+    public async Task<List<Pattern>> ListPatternsAsync(int limit = 50)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        return await db.Patterns
+            .OrderByDescending(p => p.OccurrenceCount)
+            .Take(limit)
+            .ToListAsync();
+    }
+
+    public async Task<Pattern?> GetPatternByIdAsync(int id)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        return await db.Patterns.FindAsync(id);
+    }
+
+    public async Task<bool> DeletePatternAsync(int id)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        var pattern = await db.Patterns.FindAsync(id);
+        if (pattern == null)
+        {
+            return false;
+        }
+
+        db.Patterns.Remove(pattern);
+        await db.SaveChangesAsync();
+        return true;
+    }
 }
