@@ -18,6 +18,7 @@ public sealed class AlertWebhookService
     private readonly IncidentSimilarityService _similarityService;
     private readonly HealingChainService _healingChainService;
     private readonly ContagionTrackerService _contagionTracker;
+    private readonly WarRoomService _warRoomService;
     private readonly AlertWebhookConfiguration _config;
     private readonly ILogger<AlertWebhookService> _logger;
 
@@ -34,6 +35,7 @@ public sealed class AlertWebhookService
         IncidentSimilarityService similarityService,
         HealingChainService healingChainService,
         ContagionTrackerService contagionTracker,
+        WarRoomService warRoomService,
         IOptions<AlertWebhookConfiguration> config,
         ILogger<AlertWebhookService> logger)
     {
@@ -45,6 +47,7 @@ public sealed class AlertWebhookService
         _similarityService = similarityService;
         _healingChainService = healingChainService;
         _contagionTracker = contagionTracker;
+        _warRoomService = warRoomService;
         _config = config.Value;
         _logger = logger;
     }
@@ -76,10 +79,24 @@ public sealed class AlertWebhookService
 
         if (alert.IsFiring)
         {
+            // Open War Room for critical alerts
+            Data.Entities.WarRoom? warRoom = null;
+            if (_warRoomService.ShouldOpenWarRoom(alert.Severity))
+            {
+                var trigger = $"{alert.AlertName}: {alert.Description ?? alert.Summary ?? "unknown"}";
+                warRoom = await _warRoomService.OpenWarRoomAsync(trigger, alert.Severity, ct);
+            }
+
             // Try runbook first — if matched, use its result instead of LLM investigation
             var runbookResult = await _runbookTriggerService.TryMatchAndExecuteAsync(alert, ct);
             if (runbookResult != null)
             {
+                if (warRoom != null)
+                {
+                    await _warRoomService.LogEventAsync(warRoom.Id, $"Runbook executed: {runbookResult}", ct);
+                    await _warRoomService.ResolveAsync(warRoom.Id, "Resolved by runbook", ct);
+                }
+
                 var runbookEmbed = BuildAlertEmbed(alert, runbookResult);
                 await _discordService.SendDmAsync(HomelabOwner.DiscordUserId, runbookEmbed);
                 return;
@@ -96,6 +113,11 @@ public sealed class AlertWebhookService
             {
                 if (remediationResult.WasAutoExecuted)
                 {
+                    if (warRoom != null)
+                    {
+                        await _warRoomService.LogEventAsync(warRoom.Id, $"Auto-remediation: {remediationResult.Message}", ct);
+                    }
+
                     var remEmbed = BuildAlertEmbed(alert, remediationResult.Message);
                     var remButtons = BuildRemediationFeedbackButtons(remediationResult.ActionId!.Value);
                     await _discordService.SendDmWithComponentsAsync(HomelabOwner.DiscordUserId, remEmbed, remButtons);
@@ -115,6 +137,12 @@ public sealed class AlertWebhookService
             var chainResult = await _healingChainService.PlanAndExecuteAsync(searchTerms, containerName, ct);
             if (chainResult is { Success: true })
             {
+                if (warRoom != null)
+                {
+                    await _warRoomService.LogEventAsync(warRoom.Id, $"Healing chain: {chainResult.Message}", ct);
+                    await _warRoomService.ResolveAsync(warRoom.Id, "Resolved by healing chain", ct);
+                }
+
                 var chainEmbed = BuildAlertEmbed(alert, chainResult.Message);
                 await _discordService.SendDmAsync(HomelabOwner.DiscordUserId, chainEmbed);
                 return;

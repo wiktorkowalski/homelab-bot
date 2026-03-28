@@ -87,6 +87,9 @@ try
     builder.Services.AddOptions<AutoRemediationConfiguration>()
         .Bind(builder.Configuration.GetSection(AutoRemediationConfiguration.SectionName));
 
+    builder.Services.AddOptions<WarRoomConfiguration>()
+        .Bind(builder.Configuration.GetSection(WarRoomConfiguration.SectionName));
+
     builder.Services.AddOptions<HealingChainConfiguration>()
         .Bind(builder.Configuration.GetSection(HealingChainConfiguration.SectionName));
 
@@ -176,6 +179,7 @@ try
     builder.Services.AddSingleton<AutoRemediationService>();
     builder.Services.AddSingleton<HealingChainService>();
     builder.Services.AddSingleton<ContagionTrackerService>();
+    builder.Services.AddSingleton<WarRoomService>();
     builder.Services.AddSingleton<RunbookTriggerService>();
     builder.Services.AddSingleton<AlertWebhookService>();
     builder.Services.AddHostedService<HealthScoreBackgroundService>();
