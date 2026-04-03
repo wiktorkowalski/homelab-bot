@@ -85,9 +85,11 @@ public sealed class AnomalyDetectionService : BackgroundService
                 var anomalies = await RunHeuristicChecksAsync(stoppingToken);
                 await PersistBaselineAsync();
 
-                // Only evaluate via LLM every N ticks to avoid excessive API calls
+                // Evaluate via LLM every N ticks, but critical anomalies bypass throttle
                 var llmInterval = Math.Max(1, _config.CurrentValue.LlmIntervalTicks);
-                if (anomalies.Count > 0 && _heuristicTick % llmInterval == 0)
+                if (anomalies.Count > 0
+                    && (_heuristicTick % llmInterval == 0
+                        || anomalies.Any(a => a.Severity == AnomalySeverity.Critical)))
                 {
                     await NotifyAnomaliesAsync(anomalies, stoppingToken);
                 }

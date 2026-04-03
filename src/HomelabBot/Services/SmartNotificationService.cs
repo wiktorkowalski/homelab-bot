@@ -51,8 +51,23 @@ public sealed class SmartNotificationService
         {
             lock (_cycleLock)
             {
+                EnsureCurrentDate();
                 return GenerateDailyThreadId(_currentCycleDate);
             }
+        }
+    }
+
+    /// <summary>
+    /// Advances cycle date if it's a new day. Does NOT run learning (that requires async).
+    /// Call StartNewCycleAsync for full cycle rotation with learning.
+    /// </summary>
+    private void EnsureCurrentDate()
+    {
+        var today = DateTime.UtcNow.ToString("yyyy-MM-dd");
+        if (today != _currentCycleDate)
+        {
+            _currentCycleDate = today;
+            _hasConversation = false;
         }
     }
 
@@ -134,7 +149,10 @@ public sealed class SmartNotificationService
             return false;
         }
 
-        var shouldNotify = analysis.Contains(NotificationPrompts.TagNotify, StringComparison.OrdinalIgnoreCase);
+        // Parse the last non-empty line for the decision tag to avoid false positives
+        var lastLine = analysis.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .LastOrDefault() ?? "";
+        var shouldNotify = lastLine.Equals(NotificationPrompts.TagNotify, StringComparison.OrdinalIgnoreCase);
 
         if (!shouldNotify)
         {
@@ -273,10 +291,9 @@ public sealed class SmartNotificationService
 
     private static bool IsIssueSuppressed(string issueType, List<Knowledge> preferences)
     {
-        var normalizedType = NormalizeIssueType(issueType);
+        var expectedTopic = $"{TopicPrefixSuppress}{NormalizeIssueType(issueType)}";
         return preferences.Any(p =>
-            p.Topic.StartsWith(TopicPrefixSuppress, StringComparison.OrdinalIgnoreCase) &&
-            p.Topic.Contains(normalizedType, StringComparison.OrdinalIgnoreCase) &&
+            p.Topic.Equals(expectedTopic, StringComparison.OrdinalIgnoreCase) &&
             p.Confidence >= 0.5);
     }
 

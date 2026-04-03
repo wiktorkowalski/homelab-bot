@@ -457,7 +457,7 @@ public sealed class DiscordBotService : BackgroundService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error handling DM message");
-            await e.Channel.SendMessageAsync($"Something went wrong: {ex.Message}");
+            await e.Channel.SendMessageAsync("Something went wrong while processing your message. Please try again later.");
         }
     }
 
