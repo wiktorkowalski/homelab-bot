@@ -209,15 +209,12 @@ public sealed class SmartNotificationService
 
         try
         {
-            var learningThreadId = (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             var analysis = await _kernelService.ProcessMessageAsync(
-                threadId: learningThreadId,
+                threadId: threadId,
                 userMessage: NotificationPrompts.EndOfCycleLearning,
                 traceType: TraceType.Scheduled,
                 maxTokens: 1024,
                 ct: ct);
-
-            _conversationService.ClearHistory(learningThreadId);
 
             if (analysis.Contains(NotificationPrompts.TagNoUpdates, StringComparison.OrdinalIgnoreCase))
             {
