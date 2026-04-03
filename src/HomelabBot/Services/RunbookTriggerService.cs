@@ -88,10 +88,10 @@ public sealed class RunbookTriggerService
         }
 
         // Keyword match against alert name and description
-        var keywords = trigger.ToLowerInvariant().Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        var alertText = $"{alert.AlertName} {alert.Description ?? ""} {alert.Summary ?? ""}".ToLowerInvariant();
+        var keywords = KeywordMatcher.Tokenize(trigger, minLength: 1);
+        var alertText = $"{alert.AlertName} {alert.Description ?? ""} {alert.Summary ?? ""}";
 
-        return keywords.Length > 0 && keywords.All(k => alertText.Contains(k));
+        return keywords.Count > 0 && keywords.All(k => alertText.Contains(k, StringComparison.OrdinalIgnoreCase));
     }
 
     public async Task SeedDefaultRunbooksAsync(CancellationToken ct = default)

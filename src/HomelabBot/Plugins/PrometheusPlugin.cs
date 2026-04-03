@@ -1,27 +1,22 @@
 using System.ComponentModel;
-using System.Net.Http.Json;
 using System.Text;
-using System.Text.Json;
-using HomelabBot.Configuration;
-using Microsoft.Extensions.Options;
+using HomelabBot.Models.Prometheus;
+using HomelabBot.Services;
 using Microsoft.SemanticKernel;
 
 namespace HomelabBot.Plugins;
 
 public sealed class PrometheusPlugin
 {
-    private readonly HttpClient _httpClient;
+    private readonly PrometheusQueryService _prometheus;
     private readonly ILogger<PrometheusPlugin> _logger;
-    private readonly string _baseUrl;
 
     public PrometheusPlugin(
-        IHttpClientFactory httpClientFactory,
-        IOptions<PrometheusConfiguration> config,
+        PrometheusQueryService prometheus,
         ILogger<PrometheusPlugin> logger)
     {
-        _httpClient = httpClientFactory.CreateClient("Default");
+        _prometheus = prometheus;
         _logger = logger;
-        _baseUrl = config.Value.Host.TrimEnd('/');
     }
 
     [KernelFunction]
@@ -32,10 +27,7 @@ public sealed class PrometheusPlugin
 
         try
         {
-            var response = await _httpClient.GetAsync($"{_baseUrl}/api/v1/label/__name__/values");
-            response.EnsureSuccessStatusCode();
-
-            var result = await response.Content.ReadFromJsonAsync<PrometheusLabelResponse>();
+            var result = await _prometheus.GetLabelValuesAsync("__name__");
 
             if (result?.Data == null || result.Data.Count == 0)
             {
@@ -97,11 +89,7 @@ public sealed class PrometheusPlugin
 
         try
         {
-            var encodedQuery = Uri.EscapeDataString(query);
-            var response = await _httpClient.GetAsync($"{_baseUrl}/api/v1/query?query={encodedQuery}");
-            response.EnsureSuccessStatusCode();
-
-            var result = await response.Content.ReadFromJsonAsync<PrometheusQueryResponse>();
+            var result = await _prometheus.QueryAsync(query);
 
             if (result?.Data?.Result == null || result.Data.Result.Count == 0)
             {
@@ -143,29 +131,27 @@ public sealed class PrometheusPlugin
         sb.AppendLine("**Node Statistics**\n");
 
         // CPU usage
-        var cpuQuery = "100 - (avg(rate(node_cpu_seconds_total{mode=\"idle\"}[5m])) * 100)";
-        var cpuResult = await QuerySingleValue(cpuQuery);
-        sb.AppendLine($"CPU Usage: **{cpuResult:F1}%**");
+        var cpuResult = await _prometheus.QueryScalarAsync(
+            "100 - (avg(rate(node_cpu_seconds_total{mode=\"idle\"}[5m])) * 100)");
+        sb.AppendLine($"CPU Usage: **{cpuResult ?? 0:F1}%**");
 
         // Memory usage
-        var memQuery = "(1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100";
-        var memResult = await QuerySingleValue(memQuery);
-        sb.AppendLine($"Memory Usage: **{memResult:F1}%**");
+        var memResult = await _prometheus.QueryScalarAsync(
+            "(1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100");
+        sb.AppendLine($"Memory Usage: **{memResult ?? 0:F1}%**");
 
         // Disk usage (root filesystem)
-        var diskQuery = "(1 - (node_filesystem_avail_bytes{mountpoint=\"/\"} / node_filesystem_size_bytes{mountpoint=\"/\"})) * 100";
-        var diskResult = await QuerySingleValue(diskQuery);
-        sb.AppendLine($"Disk Usage (/): **{diskResult:F1}%**");
+        var diskResult = await _prometheus.QueryScalarAsync(
+            "(1 - (node_filesystem_avail_bytes{mountpoint=\"/\"} / node_filesystem_size_bytes{mountpoint=\"/\"})) * 100");
+        sb.AppendLine($"Disk Usage (/): **{diskResult ?? 0:F1}%**");
 
         // Load average
-        var loadQuery = "node_load1";
-        var loadResult = await QuerySingleValue(loadQuery);
-        sb.AppendLine($"Load (1m): **{loadResult:F2}**");
+        var loadResult = await _prometheus.QueryScalarAsync("node_load1");
+        sb.AppendLine($"Load (1m): **{loadResult ?? 0:F2}**");
 
         // Uptime
-        var uptimeQuery = "node_time_seconds - node_boot_time_seconds";
-        var uptimeResult = await QuerySingleValue(uptimeQuery);
-        var uptime = TimeSpan.FromSeconds(uptimeResult);
+        var uptimeResult = await _prometheus.QueryScalarAsync("node_time_seconds - node_boot_time_seconds");
+        var uptime = TimeSpan.FromSeconds(uptimeResult ?? 0);
         sb.AppendLine($"Uptime: **{uptime.Days}d {uptime.Hours}h {uptime.Minutes}m**");
 
         return sb.ToString();
@@ -179,18 +165,14 @@ public sealed class PrometheusPlugin
 
         try
         {
-            var response = await _httpClient.GetAsync($"{_baseUrl}/api/v1/targets");
-            response.EnsureSuccessStatusCode();
+            var targets = await _prometheus.GetTargetStatusesAsync();
 
-            var result = await response.Content.ReadFromJsonAsync<PrometheusTargetsResponse>();
-
-            if (result?.Data?.ActiveTargets == null || result.Data.ActiveTargets.Count == 0)
+            if (targets.Count == 0)
             {
                 return "No active targets found.";
             }
 
             var sb = new StringBuilder();
-            var targets = result.Data.ActiveTargets;
             var upCount = targets.Count(t => t.Health == "up");
             var downCount = targets.Count(t => t.Health == "down");
 
@@ -198,7 +180,7 @@ public sealed class PrometheusPlugin
             sb.AppendLine($"✅ Up: {upCount} | ❌ Down: {downCount}\n");
 
             var grouped = targets
-                .GroupBy(t => t.Labels?.GetValueOrDefault("job") ?? "unknown")
+                .GroupBy(t => t.Job)
                 .OrderBy(g => g.Key);
 
             foreach (var group in grouped)
@@ -210,8 +192,7 @@ public sealed class PrometheusPlugin
                 foreach (var target in group)
                 {
                     var status = target.Health == "up" ? "✅" : "❌";
-                    var instance = target.Labels?.GetValueOrDefault("instance") ?? target.ScrapeUrl ?? "unknown";
-                    sb.AppendLine($"   {status} {instance}");
+                    sb.AppendLine($"   {status} {target.Instance}");
                 }
             }
 
@@ -234,61 +215,35 @@ public sealed class PrometheusPlugin
         sb.AppendLine($"**Container Metrics: {containerName}**\n");
 
         // CPU usage rate
-        var cpuQuery = $"rate(container_cpu_usage_seconds_total{{name=\"{containerName}\"}}[5m]) * 100";
-        var cpuResult = await QuerySingleValue(cpuQuery);
-        sb.AppendLine($"CPU Usage: **{cpuResult:F2}%**");
+        var cpuResult = await _prometheus.QueryScalarAsync(
+            $"rate(container_cpu_usage_seconds_total{{name=\"{containerName}\"}}[5m]) * 100");
+        sb.AppendLine($"CPU Usage: **{cpuResult ?? 0:F2}%**");
 
         // Memory usage
-        var memQuery = $"container_memory_usage_bytes{{name=\"{containerName}\"}}";
-        var memResult = await QuerySingleValue(memQuery);
-        var memMB = memResult / (1024 * 1024);
+        var memResult = await _prometheus.QueryScalarAsync(
+            $"container_memory_usage_bytes{{name=\"{containerName}\"}}");
+        var memMB = (memResult ?? 0) / (1024 * 1024);
         sb.AppendLine($"Memory: **{memMB:F0} MB**");
 
         // Memory limit
-        var memLimitQuery = $"container_spec_memory_limit_bytes{{name=\"{containerName}\"}}";
-        var memLimitResult = await QuerySingleValue(memLimitQuery);
-        if (memLimitResult > 0)
+        var memLimitResult = await _prometheus.QueryScalarAsync(
+            $"container_spec_memory_limit_bytes{{name=\"{containerName}\"}}");
+        if (memLimitResult is > 0)
         {
-            var memLimitMB = memLimitResult / (1024 * 1024);
-            var memPercent = (memResult / memLimitResult) * 100;
+            var memLimitMB = memLimitResult.Value / (1024 * 1024);
+            var memPercent = ((memResult ?? 0) / memLimitResult.Value) * 100;
             sb.AppendLine($"Memory Limit: **{memLimitMB:F0} MB** ({memPercent:F1}% used)");
         }
 
         // Network I/O
-        var netRxQuery = $"rate(container_network_receive_bytes_total{{name=\"{containerName}\"}}[5m])";
-        var netRxResult = await QuerySingleValue(netRxQuery);
-        var netTxQuery = $"rate(container_network_transmit_bytes_total{{name=\"{containerName}\"}}[5m])";
-        var netTxResult = await QuerySingleValue(netTxQuery);
+        var netRxResult = await _prometheus.QueryScalarAsync(
+            $"rate(container_network_receive_bytes_total{{name=\"{containerName}\"}}[5m])");
+        var netTxResult = await _prometheus.QueryScalarAsync(
+            $"rate(container_network_transmit_bytes_total{{name=\"{containerName}\"}}[5m])");
 
-        sb.AppendLine($"Network: **{FormatBytes(netRxResult)}/s** in, **{FormatBytes(netTxResult)}/s** out");
+        sb.AppendLine($"Network: **{FormatBytes(netRxResult ?? 0)}/s** in, **{FormatBytes(netTxResult ?? 0)}/s** out");
 
         return sb.ToString();
-    }
-
-    private async Task<double> QuerySingleValue(string query)
-    {
-        try
-        {
-            var encodedQuery = Uri.EscapeDataString(query);
-            var response = await _httpClient.GetAsync($"{_baseUrl}/api/v1/query?query={encodedQuery}");
-            response.EnsureSuccessStatusCode();
-
-            var result = await response.Content.ReadFromJsonAsync<PrometheusQueryResponse>();
-
-            if (result?.Data?.Result?.FirstOrDefault()?.Value?.Length > 1)
-            {
-                if (double.TryParse(result.Data.Result[0].Value![1].ToString(), out var value))
-                {
-                    return value;
-                }
-            }
-
-            return 0;
-        }
-        catch
-        {
-            return 0;
-        }
     }
 
     private static string FormatLabels(Dictionary<string, string>? labels)
@@ -324,54 +279,5 @@ public sealed class PrometheusPlugin
         }
 
         return $"{bytes / (1024 * 1024 * 1024):F2} GB";
-    }
-
-    private sealed class PrometheusLabelResponse
-    {
-        public string Status { get; set; } = "";
-
-        public List<string> Data { get; set; } = [];
-    }
-
-    private sealed class PrometheusQueryResponse
-    {
-        public string Status { get; set; } = "";
-
-        public PrometheusQueryData? Data { get; set; }
-    }
-
-    private sealed class PrometheusQueryData
-    {
-        public string ResultType { get; set; } = "";
-
-        public List<PrometheusResult> Result { get; set; } = [];
-    }
-
-    private sealed class PrometheusResult
-    {
-        public Dictionary<string, string>? Metric { get; set; }
-
-        public JsonElement[]? Value { get; set; }
-    }
-
-    private sealed class PrometheusTargetsResponse
-    {
-        public string Status { get; set; } = "";
-
-        public PrometheusTargetsData? Data { get; set; }
-    }
-
-    private sealed class PrometheusTargetsData
-    {
-        public List<PrometheusTarget> ActiveTargets { get; set; } = [];
-    }
-
-    private sealed class PrometheusTarget
-    {
-        public Dictionary<string, string>? Labels { get; set; }
-
-        public string? ScrapeUrl { get; set; }
-
-        public string Health { get; set; } = "";
     }
 }

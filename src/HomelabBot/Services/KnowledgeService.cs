@@ -333,8 +333,7 @@ public sealed class KnowledgeService
         matchedTopics ??= [];
 
         // Fallback: substring matching for obvious cases LLM might miss
-        var queryLower = naturalQuery.ToLowerInvariant();
-        var queryWords = queryLower.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var queryWords = KeywordMatcher.Tokenize(naturalQuery);
 
         foreach (var topic in allTopics)
         {
@@ -346,14 +345,8 @@ public sealed class KnowledgeService
             var topicLower = topic.ToLowerInvariant();
             var topicParts = topicLower.Split(':');
 
-            // Check if any query word matches topic or topic parts
             foreach (var word in queryWords)
             {
-                if (word.Length < 3)
-                {
-                    continue; // Skip short words like "on", "is", etc.
-                }
-
                 if (topicLower.Contains(word) || topicParts.Any(p => p.Contains(word) || word.Contains(p)))
                 {
                     matchedTopics.Add(topic);

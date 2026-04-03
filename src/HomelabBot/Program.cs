@@ -146,6 +146,9 @@ try
     builder.Services.AddHttpClient("Default")
         .AddStandardResilienceHandler();
 
+    // Shared services
+    builder.Services.AddSingleton<PrometheusQueryService>();
+
     // Plugins
     builder.Services.AddSingleton<DockerPlugin>();
     builder.Services.AddSingleton<PrometheusPlugin>();

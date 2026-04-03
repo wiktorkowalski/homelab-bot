@@ -8,10 +8,12 @@ namespace HomelabBot.Controllers;
 public class InvestigationsController : ControllerBase
 {
     private readonly MemoryService _memoryService;
+    private readonly IncidentSimilarityService _similarityService;
 
-    public InvestigationsController(MemoryService memoryService)
+    public InvestigationsController(MemoryService memoryService, IncidentSimilarityService similarityService)
     {
         _memoryService = memoryService;
+        _similarityService = similarityService;
     }
 
     [HttpGet]
@@ -158,17 +160,28 @@ public class InvestigationsController : ControllerBase
         [FromQuery] string symptom,
         [FromQuery] int limit = 5)
     {
-        var items = await _memoryService.SearchPastIncidentsAsync(symptom, limit);
+        var items = await _similarityService.FindSimilarAsync(symptom, limit: limit);
+        var ids = items.Select(i => i.InvestigationId).ToList();
 
-        return Ok(items.Select(i => new InvestigationDto
+        // Look up full investigations to populate all DTO fields
+        var (allInvestigations, _) = await _memoryService.GetInvestigationsAsync(pageSize: 100, resolved: true);
+        var lookup = allInvestigations
+            .Where(inv => ids.Contains(inv.Id))
+            .ToDictionary(inv => inv.Id);
+
+        return Ok(items.Select(i =>
         {
-            Id = i.Id,
-            ThreadId = i.ThreadId.ToString(),
-            Trigger = i.Trigger,
-            StartedAt = i.StartedAt,
-            Resolved = i.Resolved,
-            Resolution = i.Resolution,
-            StepCount = i.Steps.Count
+            lookup.TryGetValue(i.InvestigationId, out var inv);
+            return new InvestigationDto
+            {
+                Id = i.InvestigationId,
+                ThreadId = inv?.ThreadId.ToString() ?? "",
+                Trigger = i.Trigger ?? "",
+                StartedAt = i.OccurredAt,
+                Resolved = inv?.Resolved ?? true,
+                Resolution = i.Resolution,
+                StepCount = inv?.Steps.Count ?? 0
+            };
         }).ToList());
     }
 }

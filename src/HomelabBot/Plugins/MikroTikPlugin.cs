@@ -1,8 +1,8 @@
 using System.ComponentModel;
-using System.Net.Http.Json;
 using System.Text;
-using System.Text.Json;
 using HomelabBot.Configuration;
+using HomelabBot.Models.Prometheus;
+using HomelabBot.Services;
 using Microsoft.Extensions.Options;
 using Microsoft.SemanticKernel;
 
@@ -10,21 +10,18 @@ namespace HomelabBot.Plugins;
 
 public sealed class MikroTikPlugin
 {
-    private readonly HttpClient _httpClient;
+    private readonly PrometheusQueryService _prometheus;
     private readonly ILogger<MikroTikPlugin> _logger;
-    private readonly string _prometheusUrl;
     private readonly MikroTikConfiguration _config;
 
     public MikroTikPlugin(
-        IHttpClientFactory httpClientFactory,
+        PrometheusQueryService prometheus,
         IOptions<MikroTikConfiguration> config,
-        IOptions<PrometheusConfiguration> prometheusConfig,
         ILogger<MikroTikPlugin> logger)
     {
-        _httpClient = httpClientFactory.CreateClient("Default");
+        _prometheus = prometheus;
         _logger = logger;
         _config = config.Value;
-        _prometheusUrl = prometheusConfig.Value.Host.TrimEnd('/');
     }
 
     [KernelFunction]
@@ -36,37 +33,28 @@ public sealed class MikroTikPlugin
         var sb = new StringBuilder();
         sb.AppendLine("**MikroTik Router Status**\n");
 
-        // Uptime
-        var uptimeSeconds = await QueryPrometheusValue("mktxp_system_uptime");
-        if (uptimeSeconds > 0)
+        var metrics = await GetRouterMetricsAsync();
+
+        if (metrics.Uptime > TimeSpan.Zero)
         {
-            var uptime = TimeSpan.FromSeconds(uptimeSeconds);
-            sb.AppendLine($"Uptime: **{uptime.Days}d {uptime.Hours}h {uptime.Minutes}m**");
+            sb.AppendLine($"Uptime: **{metrics.Uptime.Days}d {metrics.Uptime.Hours}h {metrics.Uptime.Minutes}m**");
         }
 
-        // CPU
-        var cpuLoad = await QueryPrometheusValue("mktxp_system_cpu_load");
-        sb.AppendLine($"CPU Load: **{cpuLoad:F0}%**");
+        sb.AppendLine($"CPU Load: **{metrics.CpuLoad:F0}%**");
 
-        // Memory
-        var memTotal = await QueryPrometheusValue("mktxp_system_total_memory");
-        var memFree = await QueryPrometheusValue("mktxp_system_free_memory");
-        if (memTotal > 0)
+        if (metrics.MemoryTotal > 0)
         {
-            var memUsedPercent = ((memTotal - memFree) / memTotal) * 100;
-            sb.AppendLine($"Memory: **{memUsedPercent:F1}%** used ({FormatBytes(memTotal - memFree)} / {FormatBytes(memTotal)})");
+            var memUsed = metrics.MemoryTotal - metrics.MemoryFree;
+            sb.AppendLine($"Memory: **{metrics.MemoryPercent:F1}%** used ({FormatBytes(memUsed)} / {FormatBytes(metrics.MemoryTotal)})");
         }
 
-        // Temperature
-        var temp = await QueryPrometheusValue("mktxp_system_cpu_temperature");
-        if (temp > 0)
+        if (metrics.Temperature > 0)
         {
-            sb.AppendLine($"CPU Temperature: **{temp:F1}°C**");
+            sb.AppendLine($"CPU Temperature: **{metrics.Temperature:F1}°C**");
         }
 
-        // Free disk space
-        var diskFree = await QueryPrometheusValue("mktxp_system_free_hdd_space");
-        var diskTotal = await QueryPrometheusValue("mktxp_system_total_hdd_space");
+        var diskFree = await _prometheus.QueryScalarAsync("mktxp_system_free_hdd_space") ?? 0;
+        var diskTotal = await _prometheus.QueryScalarAsync("mktxp_system_total_hdd_space") ?? 0;
         if (diskTotal > 0)
         {
             var diskUsedPercent = ((diskTotal - diskFree) / diskTotal) * 100;
@@ -84,12 +72,8 @@ public sealed class MikroTikPlugin
 
         try
         {
-            // Query all interface metrics
-            var txQuery = "rate(mktxp_interface_tx_byte[5m])";
-            var rxQuery = "rate(mktxp_interface_rx_byte[5m])";
-
-            var txResults = await QueryPrometheusMultiple(txQuery);
-            var rxResults = await QueryPrometheusMultiple(rxQuery);
+            var txResults = await _prometheus.QueryMultipleAsync("rate(mktxp_interface_tx_byte[5m])");
+            var rxResults = await _prometheus.QueryMultipleAsync("rate(mktxp_interface_rx_byte[5m])");
 
             if (txResults.Count == 0)
             {
@@ -143,8 +127,7 @@ public sealed class MikroTikPlugin
 
         try
         {
-            var signalQuery = "mktxp_wifi_client_signal";
-            var results = await QueryPrometheusMultiple(signalQuery);
+            var results = await _prometheus.QueryMultipleAsync("mktxp_wifi_client_signal");
 
             if (results.Count == 0)
             {
@@ -180,9 +163,7 @@ public sealed class MikroTikPlugin
 
         try
         {
-            // MKTXP exports DHCP lease info
-            var leaseQuery = "mktxp_dhcp_lease_info";
-            var results = await QueryPrometheusMultiple(leaseQuery);
+            var results = await _prometheus.QueryMultipleAsync("mktxp_dhcp_lease_info");
 
             if (results.Count == 0)
             {
@@ -261,66 +242,25 @@ public sealed class MikroTikPlugin
         }
     }
 
-    private async Task<double> QueryPrometheusValue(string metric)
+    internal async Task<RouterMetrics> GetRouterMetricsAsync(CancellationToken ct = default)
     {
-        try
+        var cpuLoad = await _prometheus.QueryScalarAsync("mktxp_system_cpu_load", ct) ?? 0;
+        var memTotal = await _prometheus.QueryScalarAsync("mktxp_system_total_memory", ct) ?? 0;
+        var memFree = await _prometheus.QueryScalarAsync("mktxp_system_free_memory", ct) ?? 0;
+        var temp = await _prometheus.QueryScalarAsync("mktxp_system_cpu_temperature", ct) ?? 0;
+        var uptimeSeconds = await _prometheus.QueryScalarAsync("mktxp_system_uptime", ct) ?? 0;
+
+        var memPercent = memTotal > 0 ? ((memTotal - memFree) / memTotal) * 100 : 0;
+
+        return new RouterMetrics
         {
-            var encodedQuery = Uri.EscapeDataString(metric);
-            var response = await _httpClient.GetAsync($"{_prometheusUrl}/api/v1/query?query={encodedQuery}");
-            response.EnsureSuccessStatusCode();
-
-            var result = await response.Content.ReadFromJsonAsync<PrometheusResponse>();
-            if (result?.Data?.Result?.FirstOrDefault()?.Value?.Length > 1)
-            {
-                if (double.TryParse(result.Data.Result[0].Value![1].ToString(), out var value))
-                {
-                    return value;
-                }
-            }
-
-            return 0;
-        }
-        catch
-        {
-            return 0;
-        }
-    }
-
-    private async Task<List<MetricResult>> QueryPrometheusMultiple(string query)
-    {
-        var results = new List<MetricResult>();
-
-        try
-        {
-            var encodedQuery = Uri.EscapeDataString(query);
-            var response = await _httpClient.GetAsync($"{_prometheusUrl}/api/v1/query?query={encodedQuery}");
-            response.EnsureSuccessStatusCode();
-
-            var result = await response.Content.ReadFromJsonAsync<PrometheusResponse>();
-            if (result?.Data?.Result != null)
-            {
-                foreach (var item in result.Data.Result)
-                {
-                    var value = 0.0;
-                    if (item.Value?.Length > 1)
-                    {
-                        double.TryParse(item.Value[1].ToString(), out value);
-                    }
-
-                    results.Add(new MetricResult
-                    {
-                        Labels = item.Metric ?? [],
-                        Value = value
-                    });
-                }
-            }
-        }
-        catch
-        {
-            // Return empty list on error
-        }
-
-        return results;
+            CpuLoad = cpuLoad,
+            MemoryPercent = memPercent,
+            MemoryTotal = memTotal,
+            MemoryFree = memFree,
+            Temperature = temp,
+            Uptime = TimeSpan.FromSeconds(uptimeSeconds)
+        };
     }
 
     private static string FormatBytes(double bytes)
@@ -374,32 +314,19 @@ public sealed class MikroTikPlugin
             _ => "📶░░░░"
         };
     }
+}
 
-    private sealed class MetricResult
-    {
-        public Dictionary<string, string> Labels { get; set; } = [];
+public sealed class RouterMetrics
+{
+    public double CpuLoad { get; init; }
 
-        public double Value { get; set; }
-    }
+    public double MemoryPercent { get; init; }
 
-    private sealed class PrometheusResponse
-    {
-        public string Status { get; set; } = "";
+    public double MemoryTotal { get; init; }
 
-        public PrometheusData? Data { get; set; }
-    }
+    public double MemoryFree { get; init; }
 
-    private sealed class PrometheusData
-    {
-        public string ResultType { get; set; } = "";
+    public double Temperature { get; init; }
 
-        public List<PrometheusResult>? Result { get; set; }
-    }
-
-    private sealed class PrometheusResult
-    {
-        public Dictionary<string, string>? Metric { get; set; }
-
-        public JsonElement[]? Value { get; set; }
-    }
+    public TimeSpan Uptime { get; init; }
 }

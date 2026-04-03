@@ -13,15 +13,14 @@ namespace HomelabBot.Services;
 public sealed class AnomalyDetectionService : BackgroundService
 {
     private readonly IOptionsMonitor<AnomalyDetectionConfiguration> _config;
+    private readonly PrometheusQueryService _prometheus;
     private readonly HttpClient _httpClient;
-    private readonly string _prometheusUrl;
     private readonly SmartNotificationService _smartNotification;
     private readonly DiscordBotService _discordBot;
     private readonly IDbContextFactory<HomelabDbContext> _dbFactory;
     private readonly ILogger<AnomalyDetectionService> _logger;
     private readonly DockerPlugin _dockerPlugin;
-    private readonly string _trueNasUrl;
-    private readonly string _trueNasApiKey;
+    private readonly TrueNASPlugin _truenasPlugin;
     private readonly string _lokiUrl;
 
     private readonly ServiceStateStore _stateStore;
@@ -33,26 +32,25 @@ public sealed class AnomalyDetectionService : BackgroundService
     public AnomalyDetectionService(
         IOptionsMonitor<AnomalyDetectionConfiguration> config,
         IHttpClientFactory httpClientFactory,
-        IOptions<PrometheusConfiguration> prometheusConfig,
+        PrometheusQueryService prometheus,
         SmartNotificationService smartNotification,
         DiscordBotService discordBot,
         IDbContextFactory<HomelabDbContext> dbFactory,
         ILogger<AnomalyDetectionService> logger,
         DockerPlugin dockerPlugin,
-        IOptions<TrueNASConfiguration> trueNasConfig,
+        TrueNASPlugin truenasPlugin,
         IOptions<LokiConfiguration> lokiConfig,
         ServiceStateStore stateStore)
     {
         _config = config;
         _httpClient = httpClientFactory.CreateClient("Default");
-        _prometheusUrl = prometheusConfig.Value.Host.TrimEnd('/');
+        _prometheus = prometheus;
         _smartNotification = smartNotification;
         _discordBot = discordBot;
         _dbFactory = dbFactory;
         _logger = logger;
         _dockerPlugin = dockerPlugin;
-        _trueNasUrl = trueNasConfig.Value.Host.TrimEnd('/');
-        _trueNasApiKey = trueNasConfig.Value.ApiKey;
+        _truenasPlugin = truenasPlugin;
         _lokiUrl = lokiConfig.Value.Host.TrimEnd('/');
         _stateStore = stateStore;
     }
@@ -147,7 +145,7 @@ public sealed class AnomalyDetectionService : BackgroundService
     {
         var anomalies = new List<Anomaly>();
 
-        var cpuUsage = await QueryPrometheusValueAsync(
+        var cpuUsage = await _prometheus.QueryScalarAsync(
             "100 - (avg(rate(node_cpu_seconds_total{mode=\"idle\"}[5m])) * 100)", ct);
 
         if (cpuUsage == null)
@@ -186,7 +184,7 @@ public sealed class AnomalyDetectionService : BackgroundService
     {
         var anomalies = new List<Anomaly>();
 
-        var memUsage = await QueryPrometheusValueAsync(
+        var memUsage = await _prometheus.QueryScalarAsync(
             "(1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * 100", ct);
 
         if (memUsage == null)
@@ -212,7 +210,7 @@ public sealed class AnomalyDetectionService : BackgroundService
     {
         var anomalies = new List<Anomaly>();
 
-        var diskUsage = await QueryPrometheusValueAsync(
+        var diskUsage = await _prometheus.QueryScalarAsync(
             "(1 - node_filesystem_avail_bytes{mountpoint=\"/\"} / node_filesystem_size_bytes{mountpoint=\"/\"}) * 100", ct);
 
         if (diskUsage == null)
@@ -232,7 +230,7 @@ public sealed class AnomalyDetectionService : BackgroundService
         }
 
         // Check disk fill rate prediction (ratio < 0 means available space crosses zero within 30 days)
-        var predictedAvailableRatio = await QueryPrometheusValueAsync(
+        var predictedAvailableRatio = await _prometheus.QueryScalarAsync(
             "predict_linear(node_filesystem_avail_bytes{mountpoint=\"/\"}[7d], 30*24*3600) / node_filesystem_size_bytes{mountpoint=\"/\"}", ct);
 
         if (predictedAvailableRatio is < 0)
@@ -255,28 +253,8 @@ public sealed class AnomalyDetectionService : BackgroundService
 
         try
         {
-            var response = await _httpClient.GetAsync($"{_prometheusUrl}/api/v1/targets", ct);
-            if (!response.IsSuccessStatusCode)
-            {
-                return anomalies;
-            }
-
-            var json = await response.Content.ReadAsStringAsync(ct);
-            using var doc = JsonDocument.Parse(json);
-
-            var targets = doc.RootElement
-                .GetProperty("data")
-                .GetProperty("activeTargets");
-
-            var downTargets = new List<string>();
-            foreach (var target in targets.EnumerateArray())
-            {
-                if (target.GetProperty("health").GetString() == "down")
-                {
-                    var job = target.GetProperty("labels").GetProperty("job").GetString() ?? "unknown";
-                    downTargets.Add(job);
-                }
-            }
+            var targets = await _prometheus.GetTargetStatusesAsync(ct);
+            var downTargets = targets.Where(t => t.Health == "down").Select(t => t.Job).ToList();
 
             if (downTargets.Count > 0)
             {
@@ -328,7 +306,7 @@ public sealed class AnomalyDetectionService : BackgroundService
         var anomalies = new List<Anomaly>();
         try
         {
-            var restartRate = await QueryPrometheusValueAsync(
+            var restartRate = await _prometheus.QueryScalarAsync(
                 "sum(increase(container_restart_count{name!=\"\"}[5m]))", ct);
             if (restartRate is > 0)
             {
@@ -354,7 +332,7 @@ public sealed class AnomalyDetectionService : BackgroundService
         var anomalies = new List<Anomaly>();
         try
         {
-            var cpuLoad = await QueryPrometheusValueAsync("mktxp_system_cpu_load", ct);
+            var cpuLoad = await _prometheus.QueryScalarAsync("mktxp_system_cpu_load", ct);
             if (cpuLoad is > 80)
             {
                 anomalies.Add(new Anomaly
@@ -366,7 +344,7 @@ public sealed class AnomalyDetectionService : BackgroundService
                 });
             }
 
-            var temp = await QueryPrometheusValueAsync("mktxp_system_cpu_temperature", ct);
+            var temp = await _prometheus.QueryScalarAsync("mktxp_system_cpu_temperature", ct);
             if (temp is > 75)
             {
                 anomalies.Add(new Anomaly
@@ -378,8 +356,8 @@ public sealed class AnomalyDetectionService : BackgroundService
                 });
             }
 
-            var memTotal = await QueryPrometheusValueAsync("mktxp_system_total_memory", ct);
-            var memFree = await QueryPrometheusValueAsync("mktxp_system_free_memory", ct);
+            var memTotal = await _prometheus.QueryScalarAsync("mktxp_system_total_memory", ct);
+            var memFree = await _prometheus.QueryScalarAsync("mktxp_system_free_memory", ct);
             if (memTotal is > 0)
             {
                 var memUsedPct = ((memTotal.Value - (memFree ?? 0)) / memTotal.Value) * 100;
@@ -408,7 +386,7 @@ public sealed class AnomalyDetectionService : BackgroundService
         var anomalies = new List<Anomaly>();
         try
         {
-            var rxRate = await QueryPrometheusValueAsync(
+            var rxRate = await _prometheus.QueryScalarAsync(
                 "sum(rate(mktxp_interface_rx_byte[5m]))", ct);
             if (rxRate == null)
             {
@@ -443,34 +421,17 @@ public sealed class AnomalyDetectionService : BackgroundService
         var anomalies = new List<Anomaly>();
         try
         {
-            using var request = new HttpRequestMessage(HttpMethod.Get, $"{_trueNasUrl}/api/v2.0/pool");
-            if (!string.IsNullOrEmpty(_trueNasApiKey))
+            var pools = await _truenasPlugin.GetPoolInfoAsync(ct);
+
+            foreach (var pool in pools)
             {
-                request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _trueNasApiKey);
-            }
-
-            var response = await _httpClient.SendAsync(request, ct);
-            if (!response.IsSuccessStatusCode)
-            {
-                return anomalies;
-            }
-
-            var json = await response.Content.ReadAsStringAsync(ct);
-            using var doc = JsonDocument.Parse(json);
-
-            foreach (var pool in doc.RootElement.EnumerateArray())
-            {
-                var name = pool.GetProperty("name").GetString() ?? "unknown";
-                var status = pool.GetProperty("status").GetString() ?? "UNKNOWN";
-                var healthy = pool.TryGetProperty("healthy", out var h) && h.GetBoolean();
-
-                if (status != "ONLINE" || !healthy)
+                if (pool.Status != "ONLINE" || !pool.Healthy)
                 {
                     anomalies.Add(new Anomaly
                     {
                         Type = "Storage",
-                        Message = $"Pool '{name}' status: {status} (healthy: {healthy})",
-                        Severity = status == "DEGRADED" ? AnomalySeverity.Warning : AnomalySeverity.Critical,
+                        Message = $"Pool '{pool.Name}' status: {pool.Status} (healthy: {pool.Healthy})",
+                        Severity = pool.Status == "DEGRADED" ? AnomalySeverity.Warning : AnomalySeverity.Critical,
                         Value = 0,
                     });
                 }
@@ -489,7 +450,7 @@ public sealed class AnomalyDetectionService : BackgroundService
         var anomalies = new List<Anomaly>();
         try
         {
-            var errorRate = await QueryPrometheusValueAsync(
+            var errorRate = await _prometheus.QueryScalarAsync(
                 "sum(rate(traefik_service_requests_total{code=~\"5..\"}[5m])) / sum(rate(traefik_service_requests_total[5m])) * 100", ct);
 
             if (errorRate is > 5)
@@ -516,7 +477,7 @@ public sealed class AnomalyDetectionService : BackgroundService
         var anomalies = new List<Anomaly>();
         try
         {
-            var minExpiry = await QueryPrometheusValueAsync(
+            var minExpiry = await _prometheus.QueryScalarAsync(
                 "min(traefik_tls_certs_not_after - time())", ct);
 
             if (minExpiry == null)
@@ -549,7 +510,7 @@ public sealed class AnomalyDetectionService : BackgroundService
         var anomalies = new List<Anomaly>();
         try
         {
-            var headSeries = await QueryPrometheusValueAsync("prometheus_tsdb_head_series", ct);
+            var headSeries = await _prometheus.QueryScalarAsync("prometheus_tsdb_head_series", ct);
             if (headSeries is > 500_000)
             {
                 anomalies.Add(new Anomaly
@@ -647,47 +608,6 @@ public sealed class AnomalyDetectionService : BackgroundService
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to record anomaly event");
-        }
-    }
-
-    private async Task<double?> QueryPrometheusValueAsync(string query, CancellationToken ct)
-    {
-        try
-        {
-            var encodedQuery = Uri.EscapeDataString(query);
-            var response = await _httpClient.GetAsync(
-                $"{_prometheusUrl}/api/v1/query?query={encodedQuery}", ct);
-
-            if (!response.IsSuccessStatusCode)
-            {
-                return null;
-            }
-
-            var json = await response.Content.ReadAsStringAsync(ct);
-            using var doc = JsonDocument.Parse(json);
-
-            var results = doc.RootElement
-                .GetProperty("data")
-                .GetProperty("result");
-
-            if (results.GetArrayLength() == 0)
-            {
-                return null;
-            }
-
-            var valueStr = results[0].GetProperty("value")[1].GetString();
-            if (double.TryParse(valueStr, System.Globalization.NumberStyles.Float,
-                    System.Globalization.CultureInfo.InvariantCulture, out var value))
-            {
-                return value;
-            }
-
-            return null;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogDebug(ex, "Failed to query Prometheus: {Query}", query);
-            return null;
         }
     }
 

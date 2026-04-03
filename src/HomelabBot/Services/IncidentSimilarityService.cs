@@ -27,11 +27,7 @@ public sealed class IncidentSimilarityService
     {
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
 
-        var keywords = symptom.ToLowerInvariant()
-            .Split(' ', StringSplitOptions.RemoveEmptyEntries)
-            .Where(k => k.Length > 2)
-            .Distinct()
-            .ToArray();
+        var keywords = KeywordMatcher.Tokenize(symptom).ToArray();
 
         if (keywords.Length == 0)
         {

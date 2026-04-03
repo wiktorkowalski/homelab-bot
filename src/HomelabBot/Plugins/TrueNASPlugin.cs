@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text;
 using HomelabBot.Configuration;
+using HomelabBot.Models;
 using Microsoft.Extensions.Options;
 using Microsoft.SemanticKernel;
 
@@ -220,6 +221,30 @@ public sealed class TrueNASPlugin
         {
             _logger.LogError(ex, "Error getting system info");
             return $"Error getting system info: {ex.Message}";
+        }
+    }
+
+    internal async Task<List<PoolInfo>> GetPoolInfoAsync(CancellationToken ct = default)
+    {
+        try
+        {
+            var response = await _httpClient.GetAsync($"{_baseUrl}/api/v2.0/pool", ct);
+            response.EnsureSuccessStatusCode();
+
+            var pools = await response.Content.ReadFromJsonAsync<List<TrueNASPool>>(ct);
+            return pools?.Select(p => new PoolInfo
+            {
+                Name = p.Name ?? "unknown",
+                Status = p.Status ?? "UNKNOWN",
+                Healthy = p.Healthy == true,
+                AllocatedBytes = p.Allocated ?? 0,
+                SizeBytes = p.Size ?? 0,
+            }).ToList() ?? [];
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to get pool info");
+            return [];
         }
     }
 
