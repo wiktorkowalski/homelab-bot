@@ -175,6 +175,7 @@ try
     builder.Services.AddSingleton<HealthScoreService>();
     builder.Services.AddSingleton<ServiceStateStore>();
     builder.Services.AddSingleton<SummaryDataAggregator>();
+    builder.Services.AddSingleton<SmartNotificationService>();
     builder.Services.AddHostedService<DailySummaryService>();
     builder.Services.AddSingleton<AutoRemediationService>();
     builder.Services.AddSingleton<HealingChainService>();

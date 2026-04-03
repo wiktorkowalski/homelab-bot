@@ -4,6 +4,7 @@ using DSharpPlus.EventArgs;
 using DSharpPlus.SlashCommands;
 using HomelabBot.Commands;
 using HomelabBot.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 
 namespace HomelabBot.Services;
@@ -18,6 +19,7 @@ public sealed class DiscordBotService : BackgroundService
     private readonly MemoryService _memoryService;
     private readonly AutoRemediationService _autoRemediationService;
     private readonly IServiceProvider _serviceProvider;
+    private readonly Lazy<SmartNotificationService> _smartNotification;
     private DiscordClient? _client;
     private SlashCommandsExtension? _slashCommands;
     private int _reconnectAttempts;
@@ -42,7 +44,11 @@ public sealed class DiscordBotService : BackgroundService
         _memoryService = memoryService;
         _autoRemediationService = autoRemediationService;
         _serviceProvider = serviceProvider;
+        _smartNotification = new Lazy<SmartNotificationService>(
+            () => _serviceProvider.GetRequiredService<SmartNotificationService>());
     }
+
+    private SmartNotificationService SmartNotification => _smartNotification.Value;
 
     public Task WaitForReadyAsync(CancellationToken ct = default)
     {
@@ -86,7 +92,8 @@ public sealed class DiscordBotService : BackgroundService
             TokenType = TokenType.Bot,
             Intents = DiscordIntents.AllUnprivileged |
                       DiscordIntents.MessageContents |
-                      DiscordIntents.GuildMessages,
+                      DiscordIntents.GuildMessages |
+                      DiscordIntents.DirectMessages,
             AutoReconnect = true
         };
 
@@ -144,6 +151,13 @@ public sealed class DiscordBotService : BackgroundService
                 return;
             }
 
+            if (customId.StartsWith(SmartNotificationService.ButtonPrefixNormal)
+                || customId.StartsWith(SmartNotificationService.ButtonPrefixInvestigate))
+            {
+                await HandleNotificationFeedbackAsync(e);
+                return;
+            }
+
             if (customId.StartsWith("remediation_approve_") || customId.StartsWith("remediation_reject_")
                 || customId.StartsWith("remediation_ok_") || customId.StartsWith("remediation_fail_"))
             {
@@ -198,6 +212,53 @@ public sealed class DiscordBotService : BackgroundService
             new DiscordInteractionResponseBuilder()
                 .WithContent($"{emoji} {text}")
                 .AsEphemeral());
+    }
+
+    private async Task HandleNotificationFeedbackAsync(ComponentInteractionCreateEventArgs e)
+    {
+        var customId = e.Interaction.Data.CustomId;
+        var isSuppress = customId.StartsWith(SmartNotificationService.ButtonPrefixNormal);
+        var prefix = isSuppress ? SmartNotificationService.ButtonPrefixNormal : SmartNotificationService.ButtonPrefixInvestigate;
+        var hash = customId[prefix.Length..];
+
+        try
+        {
+            if (isSuppress)
+            {
+                await SmartNotification.HandleSuppressFeedbackAsync(
+                    hash, "Marked as normal via button feedback");
+
+                await e.Interaction.CreateResponseAsync(
+                    InteractionResponseType.ChannelMessageWithSource,
+                    new DiscordInteractionResponseBuilder()
+                        .WithContent("✅ Got it, I'll suppress similar notifications in the future.")
+                        .AsEphemeral());
+            }
+            else
+            {
+                await e.Interaction.CreateResponseAsync(
+                    InteractionResponseType.ChannelMessageWithSource,
+                    new DiscordInteractionResponseBuilder()
+                        .WithContent("🔍 Noted. Feel free to ask me follow-up questions about this issue.")
+                        .AsEphemeral());
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to handle notification feedback");
+            try
+            {
+                await e.Interaction.CreateResponseAsync(
+                    InteractionResponseType.ChannelMessageWithSource,
+                    new DiscordInteractionResponseBuilder()
+                        .WithContent("Something went wrong processing your feedback.")
+                        .AsEphemeral());
+            }
+            catch
+            {
+                // Already responded or timed out
+            }
+        }
     }
 
     private async Task HandleRemediationResponseAsync(ComponentInteractionCreateEventArgs e)
@@ -294,6 +355,13 @@ public sealed class DiscordBotService : BackgroundService
             return;
         }
 
+        // Handle DM conversations from the owner
+        if (e.Channel.IsPrivate && e.Author.Id == HomelabOwner.DiscordUserId)
+        {
+            await HandleDmMessageAsync(e);
+            return;
+        }
+
         // Check if we should respond
         var isMentioned = e.Message.MentionedUsers.Any(u => u.Id == client.CurrentUser.Id);
         var isDedicatedChannel = _config.DedicatedChannels.Contains(e.Channel.Id);
@@ -364,56 +432,51 @@ public sealed class DiscordBotService : BackgroundService
         }
     }
 
-    private static async Task SendResponseAsync(DiscordChannel channel, string response)
+    private async Task HandleDmMessageAsync(MessageCreateEventArgs e)
     {
-        const int maxLength = 2000;
-
-        if (response.Length <= maxLength)
+        var content = e.Message.Content.Trim();
+        if (string.IsNullOrWhiteSpace(content))
         {
-            await channel.SendMessageAsync(response);
             return;
         }
 
-        // Split into chunks
-        var chunks = SplitMessage(response, maxLength);
-        foreach (var chunk in chunks)
+        var threadId = SmartNotification.CurrentDailyThreadId;
+        SmartNotification.MarkConversationActive();
+
+        _logger.LogDebug("Processing DM from owner, using daily cycle threadId={ThreadId}", threadId);
+
+        try
         {
-            await channel.SendMessageAsync(chunk);
-            await Task.Delay(100); // Small delay between messages
+            await e.Channel.TriggerTypingAsync();
+
+            var response = await _kernelService.ProcessMessageAsync(
+                threadId, content, e.Author.Id);
+
+            await SendToChannelSplitAsync(e.Channel, response);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error handling DM message");
+            await e.Channel.SendMessageAsync($"Something went wrong: {ex.Message}");
         }
     }
 
-    private static List<string> SplitMessage(string message, int maxLength)
+    private static async Task SendResponseAsync(DiscordChannel channel, string response)
     {
-        var chunks = new List<string>();
-        var remaining = message;
+        await SendToChannelSplitAsync(channel, response);
+    }
 
-        while (remaining.Length > maxLength)
+    private static async Task SendToChannelSplitAsync(DiscordChannel channel, string content)
+    {
+        var chunks = MessageSplitService.SplitIntoSections(content);
+        foreach (var chunk in chunks)
         {
-            // Try to split at a newline
-            var splitIndex = remaining.LastIndexOf('\n', maxLength - 1);
-            if (splitIndex <= 0)
+            await channel.SendMessageAsync(chunk);
+            if (chunks.Count > 1)
             {
-                // No newline found, split at space
-                splitIndex = remaining.LastIndexOf(' ', maxLength - 1);
+                await Task.Delay(100);
             }
-
-            if (splitIndex <= 0)
-            {
-                // No space found, hard split
-                splitIndex = maxLength;
-            }
-
-            chunks.Add(remaining[..splitIndex]);
-            remaining = remaining[splitIndex..].TrimStart();
         }
-
-        if (!string.IsNullOrEmpty(remaining))
-        {
-            chunks.Add(remaining);
-        }
-
-        return chunks;
     }
 
     private static TimeSpan GetBackoffDelay(int attempt)
@@ -473,6 +536,29 @@ public sealed class DiscordBotService : BackgroundService
                 await Task.Delay(100); // Small delay between messages
             }
         }
+    }
+
+    public async Task SendDmNotificationFeedbackAsync(ulong userId, string issueHash)
+    {
+        var dm = await GetDmChannelAsync(userId);
+        if (dm == null)
+        {
+            return;
+        }
+
+        var builder = new DiscordMessageBuilder()
+            .WithContent("Was this notification useful?")
+            .AddComponents(
+                new DiscordButtonComponent(
+                    ButtonStyle.Secondary,
+                    $"{SmartNotificationService.ButtonPrefixNormal}{issueHash}",
+                    "Normal, ignore in future"),
+                new DiscordButtonComponent(
+                    ButtonStyle.Primary,
+                    $"{SmartNotificationService.ButtonPrefixInvestigate}{issueHash}",
+                    "Investigate further"));
+
+        await dm.SendMessageAsync(builder);
     }
 
     public async Task<(ulong ThreadId, ulong MessageId)?> CreateThreadInChannelAsync(

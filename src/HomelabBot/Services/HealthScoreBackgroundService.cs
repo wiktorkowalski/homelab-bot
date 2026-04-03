@@ -1,4 +1,5 @@
 using HomelabBot.Configuration;
+using HomelabBot.Models;
 using Microsoft.Extensions.Options;
 
 namespace HomelabBot.Services;
@@ -8,6 +9,7 @@ public sealed class HealthScoreBackgroundService : BackgroundService
     private readonly IOptionsMonitor<HealthScoreConfiguration> _config;
     private readonly SummaryDataAggregator _aggregator;
     private readonly HealthScoreService _healthScoreService;
+    private readonly SmartNotificationService _smartNotification;
     private readonly DiscordBotService _discordBot;
     private readonly ILogger<HealthScoreBackgroundService> _logger;
     private int? _lastNotifiedScore;
@@ -16,12 +18,14 @@ public sealed class HealthScoreBackgroundService : BackgroundService
         IOptionsMonitor<HealthScoreConfiguration> config,
         SummaryDataAggregator aggregator,
         HealthScoreService healthScoreService,
+        SmartNotificationService smartNotification,
         DiscordBotService discordBot,
         ILogger<HealthScoreBackgroundService> logger)
     {
         _config = config;
         _aggregator = aggregator;
         _healthScoreService = healthScoreService;
+        _smartNotification = smartNotification;
         _discordBot = discordBot;
         _logger = logger;
     }
@@ -80,24 +84,21 @@ public sealed class HealthScoreBackgroundService : BackgroundService
         if (previousScore.HasValue && previousScore.Value - result.Score >= threshold
             && (_lastNotifiedScore == null || result.Score < _lastNotifiedScore))
         {
-            var userId = HomelabOwner.DiscordUserId;
-            if (userId == 0)
-            {
-                return;
-            }
+            var rawData = $"Score: {previousScore.Value} → {result.Score} in the last hour\n{BuildBreakdown(result)}";
 
-            var message = $"⚠️ **Health Score Drop Detected**\n" +
-                          $"Score went from **{previousScore.Value}** → **{result.Score}** in the last hour\n" +
-                          BuildBreakdown(result);
+            var notified = await _smartNotification.EvaluateAndNotifyAsync(
+                new NotificationCandidate
+                {
+                    Source = "health_score",
+                    Summary = $"Health score dropped {previousScore.Value - result.Score} points ({previousScore.Value} → {result.Score})",
+                    RawData = rawData,
+                    IssueType = "health_score_drop",
+                },
+                ct);
 
-            try
+            if (notified)
             {
-                await _discordBot.SendDmAsync(userId, message);
                 _lastNotifiedScore = result.Score;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to send health score drop DM");
             }
 
             _logger.LogWarning("Health score dropped {Points} points: {Old} → {New}",
