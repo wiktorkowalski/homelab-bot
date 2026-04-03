@@ -51,23 +51,8 @@ public sealed class SmartNotificationService
         {
             lock (_cycleLock)
             {
-                EnsureCurrentDate();
                 return GenerateDailyThreadId(_currentCycleDate);
             }
-        }
-    }
-
-    /// <summary>
-    /// Advances cycle date if it's a new day. Does NOT run learning (that requires async).
-    /// Call StartNewCycleAsync for full cycle rotation with learning.
-    /// </summary>
-    private void EnsureCurrentDate()
-    {
-        var today = DateTime.UtcNow.ToString("yyyy-MM-dd");
-        if (today != _currentCycleDate)
-        {
-            _currentCycleDate = today;
-            _hasConversation = false;
         }
     }
 
