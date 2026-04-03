@@ -1,5 +1,6 @@
 using System.Text.Json;
 using HomelabBot.Configuration;
+using HomelabBot.Models;
 using HomelabBot.Plugins;
 using Microsoft.Extensions.Options;
 
@@ -9,8 +10,7 @@ public sealed class LogAnomalyService : BackgroundService
 {
     private readonly IOptionsMonitor<LogAnomalyConfiguration> _config;
     private readonly LokiPlugin _lokiPlugin;
-    private readonly KernelService _kernelService;
-    private readonly ConversationService _conversationService;
+    private readonly SmartNotificationService _smartNotification;
     private readonly DiscordBotService _discordBot;
     private readonly ILogger<LogAnomalyService> _logger;
     private readonly ServiceStateStore _stateStore;
@@ -20,16 +20,14 @@ public sealed class LogAnomalyService : BackgroundService
     public LogAnomalyService(
         IOptionsMonitor<LogAnomalyConfiguration> config,
         LokiPlugin lokiPlugin,
-        KernelService kernelService,
-        ConversationService conversationService,
+        SmartNotificationService smartNotification,
         DiscordBotService discordBot,
         ILogger<LogAnomalyService> logger,
         ServiceStateStore stateStore)
     {
         _config = config;
         _lokiPlugin = lokiPlugin;
-        _kernelService = kernelService;
-        _conversationService = conversationService;
+        _smartNotification = smartNotification;
         _discordBot = discordBot;
         _logger = logger;
         _stateStore = stateStore;
@@ -95,22 +93,36 @@ public sealed class LogAnomalyService : BackgroundService
             return;
         }
 
-        var userId = HomelabOwner.DiscordUserId;
-        if (userId == 0)
-        {
-            return;
-        }
+        var sb = new System.Text.StringBuilder();
+        var summaryParts = new List<string>();
 
         if (hasCritical)
         {
-            await NotifyAsync(userId, $"🔴 **Critical Log Patterns Detected**\n{TruncateForDiscord(criticalPatterns)}");
+            summaryParts.Add("critical log patterns (fatal/panic/OOM/segfault)");
+            sb.AppendLine("Critical patterns:");
+            sb.AppendLine(TruncateForDiscord(criticalPatterns));
         }
 
         if (newSpikes.Count > 0)
         {
-            var spikeText = string.Join("\n", newSpikes.Select(s => $"• **{s.Container}**: {s.PreviousCount} → {s.CurrentCount} errors/h"));
-            await NotifyAsync(userId, $"📈 **Error Rate Spikes Detected**\n{spikeText}");
+            summaryParts.Add($"{newSpikes.Count} error rate spike(s)");
+            sb.AppendLine("Error rate spikes:");
+            foreach (var s in newSpikes)
+            {
+                sb.AppendLine($"• {s.Container}: {s.PreviousCount} → {s.CurrentCount} errors/h");
+            }
         }
+
+        await _smartNotification.EvaluateAndNotifyAsync(
+            new NotificationCandidate
+            {
+                Source = "log_anomaly",
+                Summary = $"Log anomalies detected: {string.Join(", ", summaryParts)}",
+                RawData = sb.ToString(),
+                IssueType = hasCritical ? "critical_log_patterns" : "error_rate_spike",
+                NeverSuppress = hasCritical,
+            },
+            ct);
     }
 
     internal List<ErrorSpike> DetectErrorSpikes(Dictionary<string, long> errorCounts)
@@ -130,18 +142,6 @@ public sealed class LogAnomalyService : BackgroundService
         }
 
         return spikes;
-    }
-
-    private async Task NotifyAsync(ulong userId, string message)
-    {
-        try
-        {
-            await _discordBot.SendDmAsync(userId, message);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to send log anomaly notification");
-        }
     }
 
     private static string TruncateForDiscord(string text)

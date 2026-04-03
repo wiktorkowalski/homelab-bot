@@ -119,6 +119,7 @@ internal static class HealthcheckPrompts
         - NO markdown tables, NO headers with ###, NO horizontal rules
         - Keep it scannable in 10 seconds
         - STAY UNDER 1800 CHARACTERS — count carefully
+        - If everything looks healthy with no actionable findings, you can produce a minimal report
         """;
 
     internal const int MaxTokens = 2048;

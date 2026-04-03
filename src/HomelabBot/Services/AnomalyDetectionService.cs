@@ -3,6 +3,7 @@ using System.Text.Json;
 using HomelabBot.Configuration;
 using HomelabBot.Data;
 using HomelabBot.Data.Entities;
+using HomelabBot.Models;
 using HomelabBot.Plugins;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -14,8 +15,7 @@ public sealed class AnomalyDetectionService : BackgroundService
     private readonly IOptionsMonitor<AnomalyDetectionConfiguration> _config;
     private readonly HttpClient _httpClient;
     private readonly string _prometheusUrl;
-    private readonly KernelService _kernelService;
-    private readonly ConversationService _conversationService;
+    private readonly SmartNotificationService _smartNotification;
     private readonly DiscordBotService _discordBot;
     private readonly IDbContextFactory<HomelabDbContext> _dbFactory;
     private readonly ILogger<AnomalyDetectionService> _logger;
@@ -34,8 +34,7 @@ public sealed class AnomalyDetectionService : BackgroundService
         IOptionsMonitor<AnomalyDetectionConfiguration> config,
         IHttpClientFactory httpClientFactory,
         IOptions<PrometheusConfiguration> prometheusConfig,
-        KernelService kernelService,
-        ConversationService conversationService,
+        SmartNotificationService smartNotification,
         DiscordBotService discordBot,
         IDbContextFactory<HomelabDbContext> dbFactory,
         ILogger<AnomalyDetectionService> logger,
@@ -47,8 +46,7 @@ public sealed class AnomalyDetectionService : BackgroundService
         _config = config;
         _httpClient = httpClientFactory.CreateClient("Default");
         _prometheusUrl = prometheusConfig.Value.Host.TrimEnd('/');
-        _kernelService = kernelService;
-        _conversationService = conversationService;
+        _smartNotification = smartNotification;
         _discordBot = discordBot;
         _dbFactory = dbFactory;
         _logger = logger;
@@ -87,16 +85,13 @@ public sealed class AnomalyDetectionService : BackgroundService
                 var anomalies = await RunHeuristicChecksAsync(stoppingToken);
                 await PersistBaselineAsync();
 
-                // Every N heuristic ticks, run LLM analysis if anomalies detected
+                // Evaluate via LLM every N ticks, but critical anomalies bypass throttle
                 var llmInterval = Math.Max(1, _config.CurrentValue.LlmIntervalTicks);
-                if (_heuristicTick % llmInterval == 0 && anomalies.Count > 0)
+                if (anomalies.Count > 0
+                    && (_heuristicTick % llmInterval == 0
+                        || anomalies.Any(a => a.Severity == AnomalySeverity.Critical)))
                 {
-                    await RunLlmAnalysisAsync(anomalies, stoppingToken);
-                }
-                else if (anomalies.Any(a => a.Severity == AnomalySeverity.Critical))
-                {
-                    // Critical anomalies always trigger immediate notification
-                    await NotifyCriticalAnomaliesAsync(anomalies, stoppingToken);
+                    await NotifyAnomaliesAsync(anomalies, stoppingToken);
                 }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -605,81 +600,34 @@ public sealed class AnomalyDetectionService : BackgroundService
         return anomalies;
     }
 
-    private async Task RunLlmAnalysisAsync(List<Anomaly> anomalies, CancellationToken ct)
+    private async Task NotifyAnomaliesAsync(List<Anomaly> anomalies, CancellationToken ct)
     {
-        var userId = HomelabOwner.DiscordUserId;
-        if (userId == 0)
-        {
-            return;
-        }
-
         var anomalySummary = new StringBuilder();
-        anomalySummary.AppendLine("The following anomalies were detected by automated monitoring:");
         foreach (var a in anomalies)
         {
             var emoji = a.Severity == AnomalySeverity.Critical ? "🔴" : "🟡";
             anomalySummary.AppendLine($"{emoji} [{a.Type}] {a.Message}");
         }
 
-        var threadId = (ulong)DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        try
-        {
-            var prompt = $"""
-                PROACTIVE MONITORING ALERT - Analyze these anomalies:
+        var hasCritical = anomalies.Any(a => a.Severity == AnomalySeverity.Critical);
+        var issueType = hasCritical ? "critical_anomaly" : "anomaly_detection";
+        var summary = hasCritical
+            ? $"{anomalies.Count(a => a.Severity == AnomalySeverity.Critical)} critical anomalies detected"
+            : $"{anomalies.Count} anomalies detected by heuristic monitoring";
 
-                {anomalySummary}
-
-                Use your tools to investigate the root cause. Check related metrics, logs, and container states.
-                Provide a brief analysis with:
-                1. What's happening
-                2. Likely cause
-                3. Recommended action
-                Be concise (3-5 sentences).
-                """;
-
-            var analysis = await _kernelService.ProcessMessageAsync(
-                threadId, prompt, traceType: TraceType.Scheduled, ct: ct);
-
-            var message = $"🔍 **Proactive Anomaly Detection**\n\n{anomalySummary}\n**Analysis:**\n{analysis}";
-
-            try
+        await _smartNotification.EvaluateAndNotifyAsync(
+            new NotificationCandidate
             {
-                await _discordBot.SendDmSplitAsync(userId, message);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to send anomaly notification");
-            }
+                Source = "anomaly_detection",
+                Summary = summary,
+                RawData = anomalySummary.ToString(),
+                IssueType = issueType,
+                NeverSuppress = hasCritical,
+            },
+            ct);
 
-            // Record anomaly event
-            await RecordAnomalyEventAsync(anomalies, analysis, ct);
-        }
-        finally
-        {
-            _conversationService.ClearHistory(threadId);
-        }
-    }
-
-    private async Task NotifyCriticalAnomaliesAsync(List<Anomaly> anomalies, CancellationToken ct)
-    {
-        var userId = HomelabOwner.DiscordUserId;
-        if (userId == 0)
-        {
-            return;
-        }
-
-        var criticals = anomalies.Where(a => a.Severity == AnomalySeverity.Critical).ToList();
-        var message = $"🚨 **Critical Anomalies Detected**\n\n" +
-                      string.Join("\n", criticals.Select(a => $"🔴 [{a.Type}] {a.Message}"));
-
-        try
-        {
-            await _discordBot.SendDmAsync(userId, message);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to send critical anomaly notification");
-        }
+        // Record anomaly event (without LLM analysis — that's now done by SmartNotificationService)
+        await RecordAnomalyEventAsync(anomalies, "Routed to smart notification service", ct);
     }
 
     private async Task RecordAnomalyEventAsync(List<Anomaly> anomalies, string analysis, CancellationToken ct)

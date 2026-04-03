@@ -21,8 +21,7 @@ public class LogAnomalyServiceTests
         _service = new LogAnomalyService(
             configMonitor,
             null!,  // LokiPlugin
-            null!,  // KernelService
-            null!,  // ConversationService
+            null!,  // SmartNotificationService
             null!,  // DiscordBotService
             NullLogger<LogAnomalyService>.Instance,
             null!); // ServiceStateStore

@@ -1,4 +1,5 @@
 using HomelabBot.Configuration;
+using HomelabBot.Models;
 using Microsoft.Extensions.Options;
 
 namespace HomelabBot.Services;
@@ -7,20 +8,20 @@ public sealed class DailySummaryService : BackgroundService
 {
     private readonly IOptionsMonitor<DailySummaryConfiguration> _config;
     private readonly KernelService _kernelService;
-    private readonly ConversationService _conversationService;
+    private readonly SmartNotificationService _smartNotification;
     private readonly DiscordBotService _discordBot;
     private readonly ILogger<DailySummaryService> _logger;
 
     public DailySummaryService(
         IOptionsMonitor<DailySummaryConfiguration> config,
         KernelService kernelService,
-        ConversationService conversationService,
+        SmartNotificationService smartNotification,
         DiscordBotService discordBot,
         ILogger<DailySummaryService> logger)
     {
         _config = config;
         _kernelService = kernelService;
-        _conversationService = conversationService;
+        _smartNotification = smartNotification;
         _discordBot = discordBot;
         _logger = logger;
     }
@@ -47,7 +48,7 @@ public sealed class DailySummaryService : BackgroundService
 
                 await Task.Delay(delay, stoppingToken);
 
-                await GenerateAndDeliverHealthcheckAsync(stoppingToken);
+                await RunHealthcheckCycleAsync(stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -97,22 +98,18 @@ public sealed class DailySummaryService : BackgroundService
         return nextRunUtc - nowUtc;
     }
 
-    private async Task GenerateAndDeliverHealthcheckAsync(CancellationToken ct)
+    private async Task RunHealthcheckCycleAsync(CancellationToken ct)
     {
-        _logger.LogInformation("Starting daily healthcheck investigation");
+        _logger.LogInformation("Starting daily healthcheck cycle");
 
-        var userId = HomelabOwner.DiscordUserId;
-        if (userId == 0)
-        {
-            _logger.LogWarning("DiscordUserId not configured, cannot send DM");
-            return;
-        }
+        // Start a new notification cycle (learns from previous day, clears old context)
+        await _smartNotification.StartNewCycleAsync(ct);
 
-        // Use a unique thread ID to avoid conversation history buildup
-        var threadId = (ulong)DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-
+        // Run the full healthcheck investigation and route through smart notification
         try
         {
+            var threadId = _smartNotification.CurrentDailyThreadId;
+
             var report = await _kernelService.ProcessMessageAsync(
                 threadId: threadId,
                 userMessage: HealthcheckPrompts.Investigation,
@@ -121,18 +118,23 @@ public sealed class DailySummaryService : BackgroundService
                 systemPromptOverride: HealthcheckPrompts.System,
                 ct: ct);
 
-            await _discordBot.SendDmSplitAsync(userId, report);
+            // Route through smart notification — it will decide whether to notify
+            await _smartNotification.EvaluateAndNotifyAsync(
+                new NotificationCandidate
+                {
+                    Source = "daily_healthcheck",
+                    Summary = "Daily healthcheck completed. Review the findings below.",
+                    RawData = report,
+                    IssueType = "daily_healthcheck",
+                    AlreadyInvestigated = true,
+                },
+                ct);
 
-            _logger.LogInformation("Daily healthcheck delivered to user {UserId}", userId);
+            _logger.LogInformation("Daily healthcheck cycle completed");
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to generate daily healthcheck");
-        }
-        finally
-        {
-            // Clean up ephemeral conversation history to prevent memory leak
-            _conversationService.ClearHistory(threadId);
+            _logger.LogError(ex, "Failed to run daily healthcheck");
         }
     }
 }
