@@ -622,6 +622,7 @@ public sealed class AnomalyDetectionService : BackgroundService
                 Summary = summary,
                 RawData = anomalySummary.ToString(),
                 IssueType = issueType,
+                NeverSuppress = hasCritical,
             },
             ct);
 

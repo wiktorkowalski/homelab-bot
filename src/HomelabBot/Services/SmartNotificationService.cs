@@ -106,7 +106,9 @@ public sealed class SmartNotificationService
 
         var preferences = await LoadNotificationPreferencesAsync();
 
-        if (candidate.IssueType != null && IsIssueSuppressed(candidate.IssueType, preferences))
+        if (!candidate.NeverSuppress
+            && candidate.IssueType != null
+            && IsIssueSuppressed(candidate.IssueType, preferences))
         {
             _logger.LogInformation("Issue type '{IssueType}' is suppressed, skipping", candidate.IssueType);
             return false;

@@ -120,6 +120,7 @@ public sealed class LogAnomalyService : BackgroundService
                 Summary = $"Log anomalies detected: {string.Join(", ", summaryParts)}",
                 RawData = sb.ToString(),
                 IssueType = hasCritical ? "critical_log_patterns" : "error_rate_spike",
+                NeverSuppress = hasCritical,
             },
             ct);
     }
