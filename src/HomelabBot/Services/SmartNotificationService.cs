@@ -196,16 +196,24 @@ public sealed class SmartNotificationService
         try
         {
             await _discordBot.SendDmSplitAsync(userId, report);
-            await _discordBot.SendDmNotificationFeedbackAsync(userId, issueType);
-
-            _logger.LogInformation("Sent smart notification for {Source}", candidate.Source);
-            return true;
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to send notification for {Source}", candidate.Source);
             return false;
         }
+
+        try
+        {
+            await _discordBot.SendDmNotificationFeedbackAsync(userId, issueType);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to send feedback buttons for {Source}", candidate.Source);
+        }
+
+        _logger.LogInformation("Sent smart notification for {Source}", candidate.Source);
+        return true;
     }
 
     private async Task RunEndOfCycleLearningAsync(ulong threadId, string cycleDate, CancellationToken ct)
