@@ -42,7 +42,7 @@ public sealed class SecurityAuditService : BackgroundService
                     continue;
                 }
 
-                var delay = CalculateDelayUntilNextRun();
+                var delay = ScheduleHelper.CalculateDelayUntilNextRun(_config.CurrentValue.ScheduleTime, _config.CurrentValue.TimeZone, _config.CurrentValue.ScheduleDay);
                 _logger.LogInformation("Next security audit in {Delay}", delay);
 
                 await Task.Delay(delay, stoppingToken);
@@ -106,48 +106,5 @@ public sealed class SecurityAuditService : BackgroundService
         {
             _logger.LogError(ex, "Failed to generate security audit");
         }
-    }
-
-    private TimeSpan CalculateDelayUntilNextRun()
-    {
-        var config = _config.CurrentValue;
-
-        if (!TimeOnly.TryParse(config.ScheduleTime, out var scheduleTime))
-        {
-            _logger.LogWarning("Invalid ScheduleTime '{Time}', defaulting to 04:00", config.ScheduleTime);
-            scheduleTime = new TimeOnly(4, 0);
-        }
-
-        TimeZoneInfo tz;
-        try
-        {
-            tz = TimeZoneInfo.FindSystemTimeZoneById(config.TimeZone);
-        }
-        catch
-        {
-            _logger.LogWarning("Invalid TimeZone '{TZ}', defaulting to UTC", config.TimeZone);
-            tz = TimeZoneInfo.Utc;
-        }
-
-        var nowUtc = DateTime.UtcNow;
-        var nowLocal = TimeZoneInfo.ConvertTimeFromUtc(nowUtc, tz);
-
-        // Find next occurrence of the scheduled day + time
-        var daysUntilTarget = ((int)config.ScheduleDay - (int)nowLocal.DayOfWeek + 7) % 7;
-        var nextRun = nowLocal.Date.AddDays(daysUntilTarget) + scheduleTime.ToTimeSpan();
-
-        // If we're past the time today (and today is the target day), schedule for next week
-        if (nextRun <= nowLocal)
-        {
-            nextRun = nextRun.AddDays(7);
-        }
-
-        if (tz.IsInvalidTime(nextRun))
-        {
-            nextRun = nextRun.AddHours(1);
-        }
-
-        var nextRunUtc = TimeZoneInfo.ConvertTimeToUtc(nextRun, tz);
-        return nextRunUtc - nowUtc;
     }
 }

@@ -46,34 +46,6 @@ public class HomeLabCommands : ApplicationCommandModule
         _logger = logger;
     }
 
-    [SlashCommand("status", "Get a quick overview of system status")]
-    public async Task StatusCommand(InteractionContext ctx)
-    {
-        await ctx.DeferAsync();
-
-        try
-        {
-            _logger.LogDebug("Status command invoked by {User}", ctx.User.Username);
-
-            var containers = await _dockerPlugin.ListContainers();
-
-            var embed = new DiscordEmbedBuilder()
-                .WithTitle("System Status")
-                .WithDescription(containers)
-                .WithColor(DiscordColor.Green)
-                .WithTimestamp(DateTimeOffset.UtcNow)
-                .Build();
-
-            await ctx.EditResponseAsync(new DiscordWebhookBuilder().AddEmbed(embed));
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error in status command");
-            await ctx.EditResponseAsync(new DiscordWebhookBuilder()
-                .WithContent($"Error getting status: {ex.Message}"));
-        }
-    }
-
     [SlashCommand("containers", "List all Docker containers")]
     public async Task ContainersCommand(InteractionContext ctx)
     {

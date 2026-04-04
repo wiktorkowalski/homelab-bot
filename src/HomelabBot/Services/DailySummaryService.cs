@@ -43,7 +43,7 @@ public sealed class DailySummaryService : BackgroundService
                     continue;
                 }
 
-                var delay = CalculateDelayUntilNextRun();
+                var delay = ScheduleHelper.CalculateDelayUntilNextRun(_config.CurrentValue.ScheduleTime, _config.CurrentValue.TimeZone);
                 _logger.LogInformation("Next daily healthcheck in {Delay}", delay);
 
                 await Task.Delay(delay, stoppingToken);
@@ -60,42 +60,6 @@ public sealed class DailySummaryService : BackgroundService
                 await Task.Delay(TimeSpan.FromMinutes(5), stoppingToken);
             }
         }
-    }
-
-    private TimeSpan CalculateDelayUntilNextRun()
-    {
-        var config = _config.CurrentValue;
-
-        if (!TimeOnly.TryParse(config.ScheduleTime, out var scheduleTime))
-        {
-            _logger.LogWarning("Invalid ScheduleTime '{Time}', defaulting to 08:00", config.ScheduleTime);
-            scheduleTime = new TimeOnly(8, 0);
-        }
-
-        TimeZoneInfo tz;
-        try
-        {
-            tz = TimeZoneInfo.FindSystemTimeZoneById(config.TimeZone);
-        }
-        catch
-        {
-            _logger.LogWarning("Invalid TimeZone '{TZ}', defaulting to UTC", config.TimeZone);
-            tz = TimeZoneInfo.Utc;
-        }
-
-        var nowUtc = DateTime.UtcNow;
-        var nowLocal = TimeZoneInfo.ConvertTimeFromUtc(nowUtc, tz);
-        var todaySchedule = nowLocal.Date + scheduleTime.ToTimeSpan();
-
-        var nextRun = nowLocal < todaySchedule ? todaySchedule : todaySchedule.AddDays(1);
-        if (tz.IsInvalidTime(nextRun))
-        {
-            nextRun = nextRun.AddHours(1);
-        }
-
-        var nextRunUtc = TimeZoneInfo.ConvertTimeToUtc(nextRun, tz);
-
-        return nextRunUtc - nowUtc;
     }
 
     private async Task RunHealthcheckCycleAsync(CancellationToken ct)
