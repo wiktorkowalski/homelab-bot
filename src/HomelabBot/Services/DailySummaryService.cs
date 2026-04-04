@@ -4,12 +4,11 @@ using Microsoft.Extensions.Options;
 
 namespace HomelabBot.Services;
 
-public sealed class DailySummaryService : BackgroundService
+public sealed class DailySummaryService : ScheduledBackgroundService
 {
     private readonly IOptionsMonitor<DailySummaryConfiguration> _config;
     private readonly KernelService _kernelService;
     private readonly SmartNotificationService _smartNotification;
-    private readonly DiscordBotService _discordBot;
     private readonly ILogger<DailySummaryService> _logger;
 
     public DailySummaryService(
@@ -18,51 +17,22 @@ public sealed class DailySummaryService : BackgroundService
         SmartNotificationService smartNotification,
         DiscordBotService discordBot,
         ILogger<DailySummaryService> logger)
+        : base(discordBot)
     {
         _config = config;
         _kernelService = kernelService;
         _smartNotification = smartNotification;
-        _discordBot = discordBot;
         _logger = logger;
     }
 
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        _logger.LogInformation("Daily healthcheck service started, waiting for Discord...");
-        await _discordBot.WaitForReadyAsync(stoppingToken);
-        _logger.LogInformation("Discord ready, daily healthcheck service running");
+    protected override bool IsEnabled => _config.CurrentValue.Enabled;
 
-        while (!stoppingToken.IsCancellationRequested)
-        {
-            try
-            {
-                if (!_config.CurrentValue.Enabled)
-                {
-                    _logger.LogInformation("Daily healthcheck disabled, rechecking in 1 minute");
-                    await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);
-                    continue;
-                }
+    protected override ILogger Logger => _logger;
 
-                var delay = ScheduleHelper.CalculateDelayUntilNextRun(_config.CurrentValue.ScheduleTime, _config.CurrentValue.TimeZone);
-                _logger.LogInformation("Next daily healthcheck in {Delay}", delay);
+    protected override TimeSpan GetDelay() =>
+        ScheduleHelper.CalculateDelayUntilNextRun(_config.CurrentValue.ScheduleTime, _config.CurrentValue.TimeZone);
 
-                await Task.Delay(delay, stoppingToken);
-
-                await RunHealthcheckCycleAsync(stoppingToken);
-            }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-            {
-                break;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error in daily healthcheck service");
-                await Task.Delay(TimeSpan.FromMinutes(5), stoppingToken);
-            }
-        }
-    }
-
-    private async Task RunHealthcheckCycleAsync(CancellationToken ct)
+    protected override async Task RunIterationAsync(CancellationToken ct)
     {
         _logger.LogInformation("Starting daily healthcheck cycle");
 

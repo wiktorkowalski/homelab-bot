@@ -6,12 +6,11 @@ using Microsoft.Extensions.Options;
 
 namespace HomelabBot.Services;
 
-public sealed class LogAnomalyService : BackgroundService
+public sealed class LogAnomalyService : ScheduledBackgroundService
 {
     private readonly IOptionsMonitor<LogAnomalyConfiguration> _config;
     private readonly LokiPlugin _lokiPlugin;
     private readonly SmartNotificationService _smartNotification;
-    private readonly DiscordBotService _discordBot;
     private readonly ILogger<LogAnomalyService> _logger;
     private readonly ServiceStateStore _stateStore;
     private readonly Dictionary<string, long> _lastKnownErrorCounts = new();
@@ -24,49 +23,25 @@ public sealed class LogAnomalyService : BackgroundService
         DiscordBotService discordBot,
         ILogger<LogAnomalyService> logger,
         ServiceStateStore stateStore)
+        : base(discordBot)
     {
         _config = config;
         _lokiPlugin = lokiPlugin;
         _smartNotification = smartNotification;
-        _discordBot = discordBot;
         _logger = logger;
         _stateStore = stateStore;
     }
 
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        _logger.LogInformation("Log anomaly service started, waiting for Discord...");
-        await _discordBot.WaitForReadyAsync(stoppingToken);
-        _logger.LogInformation("Discord ready, log anomaly detection running");
-        await LoadBaselineAsync();
+    protected override bool IsEnabled => _config.CurrentValue.Enabled;
 
-        while (!stoppingToken.IsCancellationRequested)
-        {
-            try
-            {
-                if (!_config.CurrentValue.Enabled)
-                {
-                    _logger.LogDebug("Log anomaly detection disabled, rechecking in 1 minute");
-                    await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);
-                    continue;
-                }
+    protected override ILogger Logger => _logger;
 
-                var intervalMinutes = Math.Max(1, _config.CurrentValue.IntervalMinutes);
-                await Task.Delay(TimeSpan.FromMinutes(intervalMinutes), stoppingToken);
+    protected override TimeSpan GetDelay() =>
+        TimeSpan.FromMinutes(Math.Max(1, _config.CurrentValue.IntervalMinutes));
 
-                await ScanForAnomaliesAsync(stoppingToken);
-            }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-            {
-                break;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error in log anomaly service");
-                await Task.Delay(TimeSpan.FromMinutes(5), stoppingToken);
-            }
-        }
-    }
+    protected override Task OnStartedAsync(CancellationToken ct) => LoadBaselineAsync();
+
+    protected override Task RunIterationAsync(CancellationToken ct) => ScanForAnomaliesAsync(ct);
 
     private async Task ScanForAnomaliesAsync(CancellationToken ct)
     {

@@ -4,13 +4,12 @@ using Microsoft.Extensions.Options;
 
 namespace HomelabBot.Services;
 
-public sealed class HealthScoreBackgroundService : BackgroundService
+public sealed class HealthScoreBackgroundService : ScheduledBackgroundService
 {
     private readonly IOptionsMonitor<HealthScoreConfiguration> _config;
     private readonly SummaryDataAggregator _aggregator;
     private readonly HealthScoreService _healthScoreService;
     private readonly SmartNotificationService _smartNotification;
-    private readonly DiscordBotService _discordBot;
     private readonly ILogger<HealthScoreBackgroundService> _logger;
     private int? _lastNotifiedScore;
 
@@ -21,50 +20,25 @@ public sealed class HealthScoreBackgroundService : BackgroundService
         SmartNotificationService smartNotification,
         DiscordBotService discordBot,
         ILogger<HealthScoreBackgroundService> logger)
+        : base(discordBot)
     {
         _config = config;
         _aggregator = aggregator;
         _healthScoreService = healthScoreService;
         _smartNotification = smartNotification;
-        _discordBot = discordBot;
         _logger = logger;
     }
 
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        _logger.LogInformation("Health score background service started, waiting for Discord...");
-        await _discordBot.WaitForReadyAsync(stoppingToken);
-        _logger.LogInformation("Discord ready, health score tracking running");
+    protected override bool IsEnabled => _config.CurrentValue.Enabled;
 
-        await InitializeNotificationStateAsync(stoppingToken);
+    protected override ILogger Logger => _logger;
 
-        while (!stoppingToken.IsCancellationRequested)
-        {
-            try
-            {
-                if (!_config.CurrentValue.Enabled)
-                {
-                    _logger.LogDebug("Health score tracking disabled, rechecking in 1 minute");
-                    await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);
-                    continue;
-                }
+    protected override TimeSpan GetDelay() =>
+        TimeSpan.FromMinutes(Math.Max(1, _config.CurrentValue.IntervalMinutes));
 
-                var intervalMinutes = Math.Max(1, _config.CurrentValue.IntervalMinutes);
-                await Task.Delay(TimeSpan.FromMinutes(intervalMinutes), stoppingToken);
+    protected override Task OnStartedAsync(CancellationToken ct) => InitializeNotificationStateAsync(ct);
 
-                await RecordAndCheckScoreAsync(stoppingToken);
-            }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-            {
-                break;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error in health score background service");
-                await Task.Delay(TimeSpan.FromMinutes(5), stoppingToken);
-            }
-        }
-    }
+    protected override Task RunIterationAsync(CancellationToken ct) => RecordAndCheckScoreAsync(ct);
 
     private async Task RecordAndCheckScoreAsync(CancellationToken ct)
     {
