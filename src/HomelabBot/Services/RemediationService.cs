@@ -10,22 +10,19 @@ public sealed class RemediationService
     private readonly AutoRemediationService _autoRemediation;
     private readonly IncidentSimilarityService _similarityService;
     private readonly HealingChainService _healingChain;
-    private readonly ILogger<RemediationService> _logger;
 
     public RemediationService(
         RunbookTriggerService runbookTrigger,
         MemoryService memoryService,
         AutoRemediationService autoRemediation,
         IncidentSimilarityService similarityService,
-        HealingChainService healingChain,
-        ILogger<RemediationService> logger)
+        HealingChainService healingChain)
     {
         _runbookTrigger = runbookTrigger;
         _memoryService = memoryService;
         _autoRemediation = autoRemediation;
         _similarityService = similarityService;
         _healingChain = healingChain;
-        _logger = logger;
     }
 
     public async Task<RemediationOutcome> TryRemediateAsync(

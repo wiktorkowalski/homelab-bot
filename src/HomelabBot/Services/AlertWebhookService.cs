@@ -118,7 +118,7 @@ public sealed class AlertWebhookService
                 _ => outcome.Method.ToString(),
             };
             await _warRoomService.LogEventAsync(warRoom.Id, $"{methodLabel}: {outcome.Message}", ct);
-            if (outcome.Success)
+            if (outcome.Success && outcome.Method != RemediationMethod.AutoRemediation)
             {
                 await _warRoomService.ResolveAsync(warRoom.Id, $"Resolved by {methodLabel.ToLowerInvariant()}", ct);
             }
