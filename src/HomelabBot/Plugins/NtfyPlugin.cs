@@ -4,9 +4,11 @@ using System.Text;
 using HomelabBot.Configuration;
 using Microsoft.Extensions.Options;
 using Microsoft.SemanticKernel;
+using ModelContextProtocol.Server;
 
 namespace HomelabBot.Plugins;
 
+[McpServerToolType]
 public sealed class NtfyPlugin
 {
     private readonly HttpClient _httpClient;
@@ -26,6 +28,7 @@ public sealed class NtfyPlugin
     }
 
     [KernelFunction]
+    [McpServerTool]
     [Description("Sends a push notification via ntfy. Can specify topic, title, and priority.")]
     public async Task<string> SendNotification(
         [Description("The notification message content")] string message,

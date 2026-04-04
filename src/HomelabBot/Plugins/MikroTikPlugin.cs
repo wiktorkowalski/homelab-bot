@@ -5,9 +5,11 @@ using HomelabBot.Models.Prometheus;
 using HomelabBot.Services;
 using Microsoft.Extensions.Options;
 using Microsoft.SemanticKernel;
+using ModelContextProtocol.Server;
 
 namespace HomelabBot.Plugins;
 
+[McpServerToolType]
 public sealed class MikroTikPlugin
 {
     private readonly PrometheusQueryService _prometheus;
@@ -25,6 +27,7 @@ public sealed class MikroTikPlugin
     }
 
     [KernelFunction]
+    [McpServerTool]
     [Description("Gets the current status of the MikroTik router including uptime, CPU, memory usage, and temperature.")]
     public async Task<string> GetRouterStatus()
     {

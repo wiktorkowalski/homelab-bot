@@ -4,9 +4,11 @@ using Docker.DotNet;
 using Docker.DotNet.Models;
 using HomelabBot.Models;
 using Microsoft.SemanticKernel;
+using ModelContextProtocol.Server;
 
 namespace HomelabBot.Plugins;
 
+[McpServerToolType]
 public class DockerPlugin
 {
     private readonly DockerClient _client;
@@ -20,6 +22,7 @@ public class DockerPlugin
     }
 
     [KernelFunction]
+    [McpServerTool]
     [Description("Lists all Docker containers with their status. Returns container name, status, and image.")]
     public async Task<string> ListContainers()
     {
@@ -62,6 +65,7 @@ public class DockerPlugin
     }
 
     [KernelFunction]
+    [McpServerTool]
     [Description("Gets detailed status information for a specific container by name or ID.")]
     public virtual async Task<string> GetContainerStatus([Description("Container name or ID")] string containerName)
     {

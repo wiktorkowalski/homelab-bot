@@ -3,9 +3,11 @@ using System.Text;
 using HomelabBot.Models.Prometheus;
 using HomelabBot.Services;
 using Microsoft.SemanticKernel;
+using ModelContextProtocol.Server;
 
 namespace HomelabBot.Plugins;
 
+[McpServerToolType]
 public sealed class PrometheusPlugin
 {
     private readonly PrometheusQueryService _prometheus;
@@ -82,6 +84,7 @@ public sealed class PrometheusPlugin
     }
 
     [KernelFunction]
+    [McpServerTool]
     [Description("Executes a PromQL query against Prometheus. Returns the current value of the expression.")]
     public async Task<string> QueryPrometheus([Description("PromQL query expression")] string query)
     {
@@ -122,6 +125,7 @@ public sealed class PrometheusPlugin
     }
 
     [KernelFunction]
+    [McpServerTool]
     [Description("Gets current CPU, memory, and disk usage for the node (Ubuntu VM).")]
     public async Task<string> GetNodeStats()
     {

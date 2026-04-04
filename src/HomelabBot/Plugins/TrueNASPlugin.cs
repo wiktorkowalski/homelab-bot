@@ -6,9 +6,11 @@ using HomelabBot.Configuration;
 using HomelabBot.Models;
 using Microsoft.Extensions.Options;
 using Microsoft.SemanticKernel;
+using ModelContextProtocol.Server;
 
 namespace HomelabBot.Plugins;
 
+[McpServerToolType]
 public sealed class TrueNASPlugin
 {
     private readonly HttpClient _httpClient;
@@ -32,6 +34,7 @@ public sealed class TrueNASPlugin
     }
 
     [KernelFunction]
+    [McpServerTool]
     [Description("Gets the health status of all ZFS pools on TrueNAS.")]
     public async Task<string> GetPoolStatus()
     {

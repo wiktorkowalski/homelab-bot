@@ -6,9 +6,11 @@ using HomelabBot.Configuration;
 using HomelabBot.Services;
 using Microsoft.Extensions.Options;
 using Microsoft.SemanticKernel;
+using ModelContextProtocol.Server;
 
 namespace HomelabBot.Plugins;
 
+[McpServerToolType]
 public sealed class GrafanaPlugin
 {
     private readonly HttpClient _httpClient;
@@ -35,6 +37,7 @@ public sealed class GrafanaPlugin
     }
 
     [KernelFunction]
+    [McpServerTool(Name = "ListGrafanaDashboards")]
     [Description("Lists all available Grafana dashboards with their UIDs and titles.")]
     public async Task<string> ListDashboards()
     {
