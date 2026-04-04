@@ -34,7 +34,6 @@ public class AutoRemediationServiceTests : IClassFixture<DatabaseFixture>, IDisp
         using var db = _fixture.DbContextFactory.CreateDbContext();
         db.RemediationActions.RemoveRange(db.RemediationActions);
         db.ContainerCriticalities.RemoveRange(db.ContainerCriticalities);
-        db.Patterns.RemoveRange(db.Patterns);
         db.SaveChanges();
     }
 
@@ -61,11 +60,14 @@ public class AutoRemediationServiceTests : IClassFixture<DatabaseFixture>, IDisp
         };
     }
 
-    private static Pattern CreateQualifiedPattern(int successCount = 8, int failureCount = 2)
+    private static Runbook CreateQualifiedRunbook(int successCount = 8, int failureCount = 2)
     {
-        return new Pattern
+        return new Runbook
         {
-            Symptom = "container down",
+            Name = "Pattern: container down",
+            TriggerCondition = "container down",
+            StepsJson = "[]",
+            SourceType = RunbookSourceType.AutoCompiled,
             SuccessCount = successCount,
             FailureCount = failureCount,
         };
@@ -79,27 +81,27 @@ public class AutoRemediationServiceTests : IClassFixture<DatabaseFixture>, IDisp
         var config = new AutoRemediationConfiguration { Enabled = false };
         var svc = CreateService(config);
         var alert = CreateAlert();
-        var patterns = new List<Pattern> { CreateQualifiedPattern() };
+        var runbooks = new List<Runbook> { CreateQualifiedRunbook() };
 
-        var result = await svc.TryAutoRemediateAsync(alert, patterns, CancellationToken.None);
+        var result = await svc.TryAutoRemediateAsync(alert, runbooks, CancellationToken.None);
 
         Assert.Null(result);
     }
 
     [Fact]
-    public async Task TryAutoRemediate_NoQualifiedPatterns_ReturnsNull()
+    public async Task TryAutoRemediate_NoQualifiedRunbooks_ReturnsNull()
     {
         var svc = CreateService();
         var alert = CreateAlert();
 
-        // Pattern below MinSuccessRate (80%) and MinFeedbackCount (3)
-        var patterns = new List<Pattern>
+        // Runbook below MinSuccessRate (80%) and MinFeedbackCount (3)
+        var runbooks = new List<Runbook>
         {
-            new() { Symptom = "low rate", SuccessCount = 1, FailureCount = 9 },  // 10% rate, 10 feedback
-            new() { Symptom = "low count", SuccessCount = 1, FailureCount = 0 }, // 100% rate, 1 feedback
+            new() { Name = "low rate", TriggerCondition = "low rate", StepsJson = "[]", SuccessCount = 1, FailureCount = 9 },  // 10% rate, 10 feedback
+            new() { Name = "low count", TriggerCondition = "low count", StepsJson = "[]", SuccessCount = 1, FailureCount = 0 }, // 100% rate, 1 feedback
         };
 
-        var result = await svc.TryAutoRemediateAsync(alert, patterns, CancellationToken.None);
+        var result = await svc.TryAutoRemediateAsync(alert, runbooks, CancellationToken.None);
 
         Assert.Null(result);
     }
@@ -116,20 +118,20 @@ public class AutoRemediationServiceTests : IClassFixture<DatabaseFixture>, IDisp
             .Returns("Restarted container 'nginx'.");
 
         var alert = CreateAlert();
-        var patterns = new List<Pattern> { CreateQualifiedPattern() };
+        var runbooks = new List<Runbook> { CreateQualifiedRunbook() };
 
-        // Persist the pattern so EF can find it by ID
+        // Persist the runbook so EF can find it by ID
         using (var db = _fixture.DbContextFactory.CreateDbContext())
         {
-            db.Patterns.Add(patterns[0]);
+            db.Runbooks.Add(runbooks[0]);
             db.SaveChanges();
         }
 
         // First call succeeds and records a cooldown
-        await svc.TryAutoRemediateAsync(alert, patterns, CancellationToken.None);
+        await svc.TryAutoRemediateAsync(alert, runbooks, CancellationToken.None);
 
         // Second call should hit cooldown
-        var result = await svc.TryAutoRemediateAsync(alert, patterns, CancellationToken.None);
+        var result = await svc.TryAutoRemediateAsync(alert, runbooks, CancellationToken.None);
 
         Assert.NotNull(result);
         Assert.False(result.WasAutoExecuted);
@@ -145,12 +147,12 @@ public class AutoRemediationServiceTests : IClassFixture<DatabaseFixture>, IDisp
             .Returns("Status: running");
 
         var alert = CreateAlert();
-        var pattern = CreateQualifiedPattern();
+        var runbook = CreateQualifiedRunbook();
 
-        // Persist pattern and mark container as critical
+        // Persist runbook and mark container as critical
         using (var db = _fixture.DbContextFactory.CreateDbContext())
         {
-            db.Patterns.Add(pattern);
+            db.Runbooks.Add(runbook);
             db.ContainerCriticalities.Add(new ContainerCriticality
             {
                 ContainerName = "nginx",
@@ -159,7 +161,7 @@ public class AutoRemediationServiceTests : IClassFixture<DatabaseFixture>, IDisp
             db.SaveChanges();
         }
 
-        var result = await svc.TryAutoRemediateAsync(alert, [pattern], CancellationToken.None);
+        var result = await svc.TryAutoRemediateAsync(alert, [runbook], CancellationToken.None);
 
         Assert.NotNull(result);
         Assert.False(result.WasAutoExecuted);
@@ -178,15 +180,15 @@ public class AutoRemediationServiceTests : IClassFixture<DatabaseFixture>, IDisp
             .Returns("Restarted container 'nginx'.");
 
         var alert = CreateAlert();
-        var pattern = CreateQualifiedPattern();
+        var runbook = CreateQualifiedRunbook();
 
         using (var db = _fixture.DbContextFactory.CreateDbContext())
         {
-            db.Patterns.Add(pattern);
+            db.Runbooks.Add(runbook);
             db.SaveChanges();
         }
 
-        var result = await svc.TryAutoRemediateAsync(alert, [pattern], CancellationToken.None);
+        var result = await svc.TryAutoRemediateAsync(alert, [runbook], CancellationToken.None);
 
         // Verify result fields
         Assert.NotNull(result);
@@ -210,7 +212,7 @@ public class AutoRemediationServiceTests : IClassFixture<DatabaseFixture>, IDisp
             Assert.Equal("Status: running", action.BeforeState);
             Assert.Equal("Status: running", action.AfterState);
             Assert.True(action.Success);
-            Assert.Equal(pattern.Id, action.PatternId);
+            Assert.Equal(runbook.Id, action.RunbookId);
         }
     }
 
@@ -261,12 +263,19 @@ public class AutoRemediationServiceTests : IClassFixture<DatabaseFixture>, IDisp
     {
         var svc = CreateService();
 
-        Pattern pattern;
+        Runbook runbook;
         RemediationAction action;
         using (var db = _fixture.DbContextFactory.CreateDbContext())
         {
-            pattern = new Pattern { Symptom = "test", SuccessCount = 5, FailureCount = 2 };
-            db.Patterns.Add(pattern);
+            runbook = new Runbook
+            {
+                Name = "Pattern: test",
+                TriggerCondition = "test",
+                StepsJson = "[]",
+                SuccessCount = 5,
+                FailureCount = 2
+            };
+            db.Runbooks.Add(runbook);
             db.SaveChanges();
 
             action = new RemediationAction
@@ -274,7 +283,7 @@ public class AutoRemediationServiceTests : IClassFixture<DatabaseFixture>, IDisp
                 ContainerName = "nginx",
                 ActionType = "restart",
                 Trigger = "pattern",
-                PatternId = pattern.Id,
+                RunbookId = runbook.Id,
                 BeforeState = "running",
             };
             db.RemediationActions.Add(action);
@@ -285,7 +294,7 @@ public class AutoRemediationServiceTests : IClassFixture<DatabaseFixture>, IDisp
 
         using (var db = _fixture.DbContextFactory.CreateDbContext())
         {
-            var updated = db.Patterns.Find(pattern.Id)!;
+            var updated = db.Runbooks.Find(runbook.Id)!;
             Assert.Equal(6, updated.SuccessCount);
             Assert.Equal(2, updated.FailureCount);
         }

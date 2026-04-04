@@ -29,6 +29,21 @@ public sealed class Runbook
     public int? SourceInvestigationId { get; set; }
 
     public int? ParentRunbookId { get; set; }
+
+    // Pattern fields (merged from Pattern entity)
+    public string? CommonCause { get; set; }
+
+    public int OccurrenceCount { get; set; }
+
+    public int SuccessCount { get; set; }
+
+    public int FailureCount { get; set; }
+
+    public DateTime? LastSeen { get; set; }
+
+    public double SuccessRate => (SuccessCount + FailureCount) > 0
+        ? (double)SuccessCount / (SuccessCount + FailureCount) * 100
+        : 0;
 }
 
 public enum RunbookSourceType

@@ -41,7 +41,7 @@ public sealed class RunbookCompilerService
     }
 
     public async Task<Runbook?> CompileFromRemediationAsync(
-        RemediationAction action, Pattern? pattern, CancellationToken ct = default)
+        RemediationAction action, Runbook? sourceRunbook, CancellationToken ct = default)
     {
         if (!action.Success)
         {
@@ -74,9 +74,9 @@ public sealed class RunbookCompilerService
             }
         };
 
-        var symptom = pattern?.Symptom ?? $"Container {action.ContainerName} {action.ActionType}";
+        var symptom = sourceRunbook?.TriggerCondition ?? $"Container {action.ContainerName} {action.ActionType}";
         var name = $"Auto: {ConversationSearchResult.Truncate(symptom, 80)}";
-        var trigger = pattern?.Symptom ?? $"container {action.ContainerName} down";
+        var trigger = sourceRunbook?.TriggerCondition ?? $"container {action.ContainerName} down";
 
         return await FindOrCreateRunbookAsync(name, trigger, steps, RunbookSourceType.AutoCompiled, null, ct);
     }

@@ -63,7 +63,7 @@ public sealed class AutoRemediationService
 
     public async Task<RemediationResult?> TryAutoRemediateAsync(
         AlertmanagerWebhookAlert alert,
-        List<Pattern> matchedPatterns,
+        List<Runbook> matchedRunbooks,
         CancellationToken ct)
     {
         await _initTask;
@@ -73,14 +73,14 @@ public sealed class AutoRemediationService
             return null;
         }
 
-        // Filter patterns by success rate and feedback count
-        var qualifiedPatterns = matchedPatterns
-            .Where(p =>
-                p.SuccessRate >= _config.MinSuccessRate &&
-                (p.SuccessCount + p.FailureCount) >= _config.MinFeedbackCount)
+        // Filter runbooks by success rate and feedback count
+        var qualifiedRunbooks = matchedRunbooks
+            .Where(r =>
+                r.SuccessRate >= _config.MinSuccessRate &&
+                (r.SuccessCount + r.FailureCount) >= _config.MinFeedbackCount)
             .ToList();
 
-        if (qualifiedPatterns.Count == 0)
+        if (qualifiedRunbooks.Count == 0)
         {
             return null;
         }
@@ -107,14 +107,14 @@ public sealed class AutoRemediationService
 
         // Check criticality
         var isCritical = await IsContainerCriticalAsync(containerName, ct);
-        var bestPattern = qualifiedPatterns.First();
+        var bestRunbook = qualifiedRunbooks.First();
 
         if (isCritical)
         {
-            return await SuggestRemediationAsync(containerName, bestPattern, ct);
+            return await SuggestRemediationAsync(containerName, bestRunbook, ct);
         }
 
-        return await ExecuteRemediationAsync(containerName, bestPattern, ct);
+        return await ExecuteRemediationAsync(containerName, bestRunbook, ct);
     }
 
     public async Task RecordUserConfirmationAsync(int actionId, bool approved, CancellationToken ct)
@@ -174,19 +174,19 @@ public sealed class AutoRemediationService
 
         action.Success = success;
 
-        // Update the associated pattern's feedback if present
-        if (action.PatternId.HasValue)
+        // Update the associated runbook's feedback if present
+        if (action.RunbookId.HasValue)
         {
-            var pattern = await db.Patterns.FindAsync([action.PatternId.Value], ct);
-            if (pattern != null)
+            var runbook = await db.Runbooks.FindAsync([action.RunbookId.Value], ct);
+            if (runbook != null)
             {
                 if (success)
                 {
-                    pattern.SuccessCount++;
+                    runbook.SuccessCount++;
                 }
                 else
                 {
-                    pattern.FailureCount++;
+                    runbook.FailureCount++;
                 }
             }
         }
@@ -377,7 +377,7 @@ public sealed class AutoRemediationService
     }
 
     private async Task<RemediationResult> ExecuteRemediationAsync(
-        string containerName, Pattern pattern, CancellationToken ct)
+        string containerName, Runbook runbook, CancellationToken ct)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
 
@@ -399,7 +399,7 @@ public sealed class AutoRemediationService
             ContainerName = containerName,
             ActionType = actionType,
             Trigger = "pattern",
-            PatternId = pattern.Id,
+            RunbookId = runbook.Id,
             BeforeState = beforeState,
             ConfirmedByUser = false
         };
@@ -438,7 +438,7 @@ public sealed class AutoRemediationService
 
             if (action.Success)
             {
-                await CompileRunbookSafeAsync(action, pattern, ct);
+                await CompileRunbookSafeAsync(action, runbook, ct);
             }
 
             var statusEmoji = action.Success ? "OK" : "FAILED";
@@ -448,7 +448,7 @@ public sealed class AutoRemediationService
                 NeedsConfirmation = false,
                 ActionId = action.Id,
                 Message = $"Auto-remediation [{statusEmoji}]: **{actionType}** on **{containerName}** "
-                    + $"(pattern: {pattern.Symptom}, success rate: {pattern.SuccessRate:F0}%)",
+                    + $"(pattern: {runbook.TriggerCondition}, success rate: {runbook.SuccessRate:F0}%)",
                 ContainerName = containerName
             };
         }
@@ -472,11 +472,11 @@ public sealed class AutoRemediationService
         }
     }
 
-    private async Task CompileRunbookSafeAsync(RemediationAction action, Pattern pattern, CancellationToken ct)
+    private async Task CompileRunbookSafeAsync(RemediationAction action, Runbook? sourceRunbook, CancellationToken ct)
     {
         try
         {
-            await _runbookCompiler.CompileFromRemediationAsync(action, pattern, ct);
+            await _runbookCompiler.CompileFromRemediationAsync(action, sourceRunbook, ct);
         }
         catch (Exception ex)
         {
@@ -485,7 +485,7 @@ public sealed class AutoRemediationService
     }
 
     private async Task<RemediationResult> SuggestRemediationAsync(
-        string containerName, Pattern pattern, CancellationToken ct)
+        string containerName, Runbook runbook, CancellationToken ct)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
 
@@ -507,7 +507,7 @@ public sealed class AutoRemediationService
             ContainerName = containerName,
             ActionType = actionType,
             Trigger = "pattern",
-            PatternId = pattern.Id,
+            RunbookId = runbook.Id,
             BeforeState = beforeState,
             ConfirmedByUser = false
         };
@@ -521,7 +521,7 @@ public sealed class AutoRemediationService
             NeedsConfirmation = true,
             ActionId = action.Id,
             Message = $"Container **{containerName}** is marked critical. "
-                + $"Suggested action: **{actionType}** (pattern: {pattern.Symptom}, success rate: {pattern.SuccessRate:F0}%). "
+                + $"Suggested action: **{actionType}** (pattern: {runbook.TriggerCondition}, success rate: {runbook.SuccessRate:F0}%). "
                 + "Approve or reject below.",
             ContainerName = containerName
         };

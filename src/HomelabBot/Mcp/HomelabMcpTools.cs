@@ -51,21 +51,21 @@ public sealed class HomelabMcpTools
     [Description("List all remediation patterns with their success rates")]
     public async Task<string> ListPatterns()
     {
-        var patterns = await _memoryService.ListPatternsAsync();
+        var patterns = await _memoryService.ListRunbookPatternsAsync();
         if (patterns.Count == 0)
         {
             return "No remediation patterns found.";
         }
 
         return string.Join("\n", patterns.Select(p =>
-            $"#{p.Id} | {p.Symptom} | {p.SuccessRate:F0}% success | {p.OccurrenceCount}x seen"));
+            $"#{p.Id} | {p.TriggerCondition} | {p.SuccessRate:F0}% success | {p.OccurrenceCount}x seen"));
     }
 
     [McpServerTool]
     [Description("Delete a remediation pattern by ID")]
     public async Task<string> DeletePattern(int patternId)
     {
-        var deleted = await _memoryService.DeletePatternAsync(patternId);
+        var deleted = await _memoryService.DeleteRunbookAsync(patternId);
         return deleted ? $"Pattern #{patternId} deleted." : $"Pattern #{patternId} not found.";
     }
 }

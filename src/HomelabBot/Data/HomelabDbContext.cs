@@ -16,8 +16,6 @@ public sealed class HomelabDbContext : DbContext
 
     public DbSet<InvestigationStep> InvestigationSteps => Set<InvestigationStep>();
 
-    public DbSet<Pattern> Patterns => Set<Pattern>();
-
     public DbSet<Conversation> Conversations => Set<Conversation>();
 
     public DbSet<ConversationMessage> ConversationMessages => Set<ConversationMessage>();
@@ -64,11 +62,6 @@ public sealed class HomelabDbContext : DbContext
                 .OnDelete(DeleteBehavior.Cascade);
         });
 
-        modelBuilder.Entity<Pattern>(entity =>
-        {
-            entity.HasIndex(p => p.Symptom);
-        });
-
         modelBuilder.Entity<Conversation>(entity =>
         {
             entity.HasIndex(c => c.ThreadId).IsUnique();
@@ -108,6 +101,7 @@ public sealed class HomelabDbContext : DbContext
         modelBuilder.Entity<Runbook>(entity =>
         {
             entity.HasIndex(r => r.Enabled);
+            entity.HasIndex(r => r.TriggerCondition);
         });
 
         modelBuilder.Entity<AnomalyEvent>(entity =>
