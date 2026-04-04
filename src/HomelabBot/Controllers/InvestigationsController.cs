@@ -8,10 +8,12 @@ namespace HomelabBot.Controllers;
 public class InvestigationsController : ControllerBase
 {
     private readonly MemoryService _memoryService;
+    private readonly IncidentSimilarityService _similarityService;
 
-    public InvestigationsController(MemoryService memoryService)
+    public InvestigationsController(MemoryService memoryService, IncidentSimilarityService similarityService)
     {
         _memoryService = memoryService;
+        _similarityService = similarityService;
     }
 
     [HttpGet]
@@ -158,17 +160,28 @@ public class InvestigationsController : ControllerBase
         [FromQuery] string symptom,
         [FromQuery] int limit = 5)
     {
-        var items = await _memoryService.SearchPastIncidentsAsync(symptom, limit);
-
-        return Ok(items.Select(i => new InvestigationDto
+        var items = await _similarityService.FindSimilarAsync(symptom, limit: limit);
+        if (items.Count == 0)
         {
-            Id = i.Id,
-            ThreadId = i.ThreadId.ToString(),
-            Trigger = i.Trigger,
-            StartedAt = i.StartedAt,
-            Resolved = i.Resolved,
-            Resolution = i.Resolution,
-            StepCount = i.Steps.Count
+            return Ok(new List<InvestigationDto>());
+        }
+
+        var ids = items.Select(i => i.InvestigationId).ToList();
+        var lookup = await _memoryService.GetInvestigationsByIdsAsync(ids);
+
+        return Ok(items.Select(i =>
+        {
+            lookup.TryGetValue(i.InvestigationId, out var inv);
+            return new InvestigationDto
+            {
+                Id = i.InvestigationId,
+                ThreadId = inv?.ThreadId.ToString() ?? "",
+                Trigger = i.Trigger ?? "",
+                StartedAt = i.OccurredAt,
+                Resolved = inv?.Resolved ?? true,
+                Resolution = i.Resolution,
+                StepCount = inv?.Steps.Count ?? 0
+            };
         }).ToList());
     }
 }

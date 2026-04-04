@@ -141,10 +141,7 @@ public sealed class RunbookCompilerService
     private static async Task<Runbook?> FindSimilarRunbookAsync(
         HomelabDbContext db, string trigger, CancellationToken ct)
     {
-        var keywords = trigger.ToLowerInvariant()
-            .Split(' ', StringSplitOptions.RemoveEmptyEntries)
-            .Where(k => k.Length > 2)
-            .ToArray();
+        var keywords = KeywordMatcher.Tokenize(trigger).ToArray();
 
         if (keywords.Length == 0)
         {
@@ -157,8 +154,7 @@ public sealed class RunbookCompilerService
 
         return runbooks.FirstOrDefault(r =>
         {
-            var triggerLower = r.TriggerCondition.ToLowerInvariant();
-            var matchCount = keywords.Count(k => triggerLower.Contains(k));
+            var matchCount = KeywordMatcher.CountMatches(keywords, r.TriggerCondition);
             return matchCount >= Math.Max(2, (keywords.Length + 1) / 2);
         });
     }

@@ -14,10 +14,14 @@ public class MemoryServiceTests : IClassFixture<DatabaseFixture>
         var runbookCompiler = new RunbookCompilerService(
             _fixture.DbContextFactory,
             NullLogger<RunbookCompilerService>.Instance);
+        var similarityService = new IncidentSimilarityService(
+            _fixture.DbContextFactory,
+            NullLogger<IncidentSimilarityService>.Instance);
         _service = new MemoryService(
             _fixture.DbContextFactory,
             NullLogger<MemoryService>.Instance,
-            runbookCompiler);
+            runbookCompiler,
+            similarityService);
     }
 
     [Fact]
@@ -121,37 +125,6 @@ public class MemoryServiceTests : IClassFixture<DatabaseFixture>
         var pattern = db.Patterns.FirstOrDefault(p => p.Symptom == uniqueTrigger);
         Assert.NotNull(pattern);
         Assert.Equal("applied fix", pattern.Resolution);
-    }
-
-    [Fact]
-    public async Task SearchPastIncidents_FindsSimilarIssues()
-    {
-        // Arrange
-        var threadId1 = (ulong)Random.Shared.NextInt64();
-        var threadId2 = (ulong)Random.Shared.NextInt64();
-
-        var inv1 = await _service.StartInvestigationAsync(threadId1, "container crashed nginx");
-        await _service.ResolveInvestigationAsync(inv1.Id, "restarted container");
-
-        var inv2 = await _service.StartInvestigationAsync(threadId2, "container stopped nginx");
-        await _service.ResolveInvestigationAsync(inv2.Id, "out of memory");
-
-        // Act
-        var results = await _service.SearchPastIncidentsAsync("nginx container");
-
-        // Assert
-        Assert.NotEmpty(results);
-        Assert.Contains(results, r => r.Trigger.Contains("nginx"));
-    }
-
-    [Fact]
-    public async Task SearchPastIncidents_ReturnsEmptyForNoMatch()
-    {
-        // Act
-        var results = await _service.SearchPastIncidentsAsync("xyznonexistent123");
-
-        // Assert
-        Assert.Empty(results);
     }
 
     [Fact]

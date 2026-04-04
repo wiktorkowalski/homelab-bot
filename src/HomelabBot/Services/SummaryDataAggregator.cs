@@ -1,35 +1,29 @@
-using System.Net.Http.Headers;
-using System.Net.Http.Json;
-using System.Text.Json;
 using Docker.DotNet;
 using Docker.DotNet.Models;
-using HomelabBot.Configuration;
 using HomelabBot.Models;
-using Microsoft.Extensions.Options;
+using HomelabBot.Plugins;
 
 namespace HomelabBot.Services;
 
 public sealed class SummaryDataAggregator
 {
-    private readonly HttpClient _httpClient;
+    private readonly PrometheusQueryService _prometheus;
+    private readonly MikroTikPlugin _mikrotikPlugin;
+    private readonly TrueNASPlugin _truenasPlugin;
     private readonly ILogger<SummaryDataAggregator> _logger;
-    private readonly string _prometheusUrl;
-    private readonly string _truenasUrl;
-    private readonly string? _truenasApiKey;
     private readonly HealthScoreService _healthScoreService;
 
     public SummaryDataAggregator(
-        IHttpClientFactory httpClientFactory,
-        IOptions<PrometheusConfiguration> prometheusConfig,
-        IOptions<TrueNASConfiguration> truenasConfig,
+        PrometheusQueryService prometheus,
+        MikroTikPlugin mikrotikPlugin,
+        TrueNASPlugin truenasPlugin,
         HealthScoreService healthScoreService,
         ILogger<SummaryDataAggregator> logger)
     {
-        _httpClient = httpClientFactory.CreateClient("Default");
+        _prometheus = prometheus;
+        _mikrotikPlugin = mikrotikPlugin;
+        _truenasPlugin = truenasPlugin;
         _logger = logger;
-        _prometheusUrl = prometheusConfig.Value.Host.TrimEnd('/');
-        _truenasUrl = truenasConfig.Value.Host.TrimEnd('/');
-        _truenasApiKey = truenasConfig.Value.ApiKey;
         _healthScoreService = healthScoreService;
     }
 
@@ -70,19 +64,14 @@ public sealed class SummaryDataAggregator
     {
         try
         {
-            // Query Prometheus for alerts that fired in the last 24h
-            var query = Uri.EscapeDataString("ALERTS{alertstate=\"firing\"}");
             var endTime = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
             var startTime = endTime - 86400; // 24 hours ago
 
-            var response = await _httpClient.GetAsync(
-                $"{_prometheusUrl}/api/v1/query_range?query={query}&start={startTime}&end={endTime}&step=300", ct);
-            response.EnsureSuccessStatusCode();
+            var result = await _prometheus.QueryRangeAsync(
+                "ALERTS{alertstate=\"firing\"}", startTime, endTime, 300, ct);
 
-            var result = await response.Content.ReadFromJsonAsync<PrometheusQueryRangeResponse>(ct);
             var alertResults = result?.Data?.Result ?? [];
 
-            // Deduplicate by alertname - each unique alert that fired in the period
             var alerts = alertResults
                 .Select(r => new AlertSummary
                 {
@@ -131,29 +120,21 @@ public sealed class SummaryDataAggregator
     {
         try
         {
-            using var request = new HttpRequestMessage(HttpMethod.Get, $"{_truenasUrl}/api/v2.0/pool");
-            if (!string.IsNullOrEmpty(_truenasApiKey))
-            {
-                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _truenasApiKey);
-            }
+            var poolInfos = await _truenasPlugin.GetPoolInfoAsync(ct);
 
-            var response = await _httpClient.SendAsync(request, ct);
-            response.EnsureSuccessStatusCode();
-
-            var pools = await response.Content.ReadFromJsonAsync<List<TrueNASPool>>(ct);
-            return pools?.Select(p =>
+            return poolInfos.Select(p =>
             {
-                var allocatedTB = (p.Allocated ?? 0) / (1024.0 * 1024 * 1024 * 1024);
-                var sizeTB = (p.Size ?? 0) / (1024.0 * 1024 * 1024 * 1024);
+                var allocatedTB = p.AllocatedBytes / (1024.0 * 1024 * 1024 * 1024);
+                var sizeTB = p.SizeBytes / (1024.0 * 1024 * 1024 * 1024);
                 var usedPercent = sizeTB > 0 ? (allocatedTB / sizeTB) * 100 : 0;
 
                 return new PoolStatus
                 {
-                    Name = p.Name ?? "unknown",
-                    Health = p.Status ?? "unknown",
+                    Name = p.Name,
+                    Health = p.Status,
                     UsedPercent = usedPercent
                 };
-            }).ToList() ?? [];
+            }).ToList();
         }
         catch (Exception ex)
         {
@@ -166,18 +147,13 @@ public sealed class SummaryDataAggregator
     {
         try
         {
-            var cpuLoad = await QueryPrometheusValue("mktxp_system_cpu_load", ct);
-            var memTotal = await QueryPrometheusValue("mktxp_system_total_memory", ct);
-            var memFree = await QueryPrometheusValue("mktxp_system_free_memory", ct);
-            var uptimeSeconds = await QueryPrometheusValue("mktxp_system_uptime", ct);
-
-            var memUsedPercent = memTotal > 0 ? ((memTotal - memFree) / memTotal) * 100 : 0;
+            var metrics = await _mikrotikPlugin.GetRouterMetricsAsync(ct);
 
             return new RouterStatus
             {
-                CpuPercent = cpuLoad,
-                MemoryPercent = memUsedPercent,
-                Uptime = TimeSpan.FromSeconds(uptimeSeconds)
+                CpuPercent = metrics.CpuLoad,
+                MemoryPercent = metrics.MemoryPercent,
+                Uptime = metrics.Uptime
             };
         }
         catch (Exception ex)
@@ -191,11 +167,7 @@ public sealed class SummaryDataAggregator
     {
         try
         {
-            var response = await _httpClient.GetAsync($"{_prometheusUrl}/api/v1/targets", ct);
-            response.EnsureSuccessStatusCode();
-
-            var result = await response.Content.ReadFromJsonAsync<PrometheusTargetsResponse>(ct);
-            var targets = result?.Data?.ActiveTargets ?? [];
+            var targets = await _prometheus.GetTargetStatusesAsync(ct);
 
             return new MonitoringStatus
             {
@@ -209,87 +181,5 @@ public sealed class SummaryDataAggregator
             _logger.LogWarning(ex, "Failed to fetch monitoring status");
             return null;
         }
-    }
-
-    private async Task<double> QueryPrometheusValue(string metric, CancellationToken ct)
-    {
-        try
-        {
-            var encodedQuery = Uri.EscapeDataString(metric);
-            var response = await _httpClient.GetAsync($"{_prometheusUrl}/api/v1/query?query={encodedQuery}", ct);
-            response.EnsureSuccessStatusCode();
-
-            var result = await response.Content.ReadFromJsonAsync<PrometheusQueryResponse>(ct);
-            if (result?.Data?.Result?.FirstOrDefault()?.Value?.Length > 1)
-            {
-                if (double.TryParse(result.Data.Result[0].Value![1].ToString(), out var value))
-                {
-                    return value;
-                }
-            }
-
-            return 0;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogDebug(ex, "Failed to query Prometheus metric {Metric}", metric);
-            return 0;
-        }
-    }
-
-    private sealed class TrueNASPool
-    {
-        public string? Name { get; set; }
-
-        public string? Status { get; set; }
-
-        public long? Size { get; set; }
-
-        public long? Allocated { get; set; }
-    }
-
-    private sealed class PrometheusTargetsResponse
-    {
-        public PrometheusTargetsData? Data { get; set; }
-    }
-
-    private sealed class PrometheusTargetsData
-    {
-        public List<PrometheusTarget> ActiveTargets { get; set; } = [];
-    }
-
-    private sealed class PrometheusTarget
-    {
-        public string Health { get; set; } = "";
-    }
-
-    private sealed class PrometheusQueryResponse
-    {
-        public PrometheusQueryData? Data { get; set; }
-    }
-
-    private sealed class PrometheusQueryData
-    {
-        public List<PrometheusResult>? Result { get; set; }
-    }
-
-    private sealed class PrometheusResult
-    {
-        public JsonElement[]? Value { get; set; }
-    }
-
-    private sealed class PrometheusQueryRangeResponse
-    {
-        public PrometheusQueryRangeData? Data { get; set; }
-    }
-
-    private sealed class PrometheusQueryRangeData
-    {
-        public List<PrometheusRangeResult>? Result { get; set; }
-    }
-
-    private sealed class PrometheusRangeResult
-    {
-        public Dictionary<string, string>? Metric { get; set; }
     }
 }

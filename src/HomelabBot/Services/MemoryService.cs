@@ -10,15 +10,18 @@ public sealed class MemoryService
     private readonly IDbContextFactory<HomelabDbContext> _dbFactory;
     private readonly ILogger<MemoryService> _logger;
     private readonly RunbookCompilerService _runbookCompiler;
+    private readonly IncidentSimilarityService _similarityService;
 
     public MemoryService(
         IDbContextFactory<HomelabDbContext> dbFactory,
         ILogger<MemoryService> logger,
-        RunbookCompilerService runbookCompiler)
+        RunbookCompilerService runbookCompiler,
+        IncidentSimilarityService similarityService)
     {
         _dbFactory = dbFactory;
         _logger = logger;
         _runbookCompiler = runbookCompiler;
+        _similarityService = similarityService;
     }
 
     public async Task<Investigation> StartInvestigationAsync(ulong threadId, string trigger)
@@ -47,6 +50,21 @@ public sealed class MemoryService
             .Where(i => i.ThreadId == threadId && !i.Resolved)
             .OrderByDescending(i => i.StartedAt)
             .FirstOrDefaultAsync();
+    }
+
+    public async Task<Dictionary<int, Investigation>> GetInvestigationsByIdsAsync(List<int> ids)
+    {
+        if (ids.Count == 0)
+        {
+            return new Dictionary<int, Investigation>();
+        }
+
+        await using var db = await _dbFactory.CreateDbContextAsync();
+
+        return await db.Investigations
+            .Include(i => i.Steps)
+            .Where(i => ids.Contains(i.Id))
+            .ToDictionaryAsync(i => i.Id);
     }
 
     public async Task<Investigation?> GetInvestigationByIdAsync(int id)
@@ -140,48 +158,13 @@ public sealed class MemoryService
         return investigation;
     }
 
-    public async Task<List<Investigation>> SearchPastIncidentsAsync(string symptom, int limit = 5)
-    {
-        await using var db = await _dbFactory.CreateDbContextAsync();
-
-        var keywords = symptom.ToLowerInvariant().Split(' ', StringSplitOptions.RemoveEmptyEntries);
-
-        var investigations = await db.Investigations
-            .Include(i => i.Steps)
-            .Where(i => i.Resolved)
-            .OrderByDescending(i => i.StartedAt)
-            .Take(50)
-            .ToListAsync();
-
-        // Simple keyword matching for relevance
-        var scored = investigations
-            .Select(i => new
-            {
-                Investigation = i,
-                Score = keywords.Count(k =>
-                    i.Trigger.Contains(k, StringComparison.OrdinalIgnoreCase) ||
-                    (i.Resolution?.Contains(k, StringComparison.OrdinalIgnoreCase) ?? false))
-            })
-            .Where(x => x.Score > 0)
-            .OrderByDescending(x => x.Score)
-            .ThenByDescending(x => x.Investigation.StartedAt)
-            .Take(limit)
-            .Select(x => x.Investigation)
-            .ToList();
-
-        return scored;
-    }
-
     public async Task<List<Pattern>> GetRelevantPatternsAsync(string symptom, int limit = 3)
     {
         await using var db = await _dbFactory.CreateDbContextAsync();
 
-        var keywords = symptom.ToLowerInvariant()
-            .Split(' ', StringSplitOptions.RemoveEmptyEntries)
-            .Where(k => k.Length > 2)
-            .ToArray();
+        var keywords = KeywordMatcher.Tokenize(symptom);
 
-        if (keywords.Length == 0)
+        if (keywords.Count == 0)
         {
             return [];
         }
@@ -194,25 +177,11 @@ public sealed class MemoryService
         var scored = patterns
             .Select(p =>
             {
-                var symptomLower = p.Symptom.ToLowerInvariant();
-                var symptomWords = symptomLower.Split(' ');
-                var keywordScore = 0;
-
-                foreach (var keyword in keywords)
-                {
-                    if (symptomWords.Contains(keyword))
-                    {
-                        keywordScore += 2;
-                    }
-                    else if (symptomLower.Contains(keyword))
-                    {
-                        keywordScore += 1;
-                    }
-                }
+                var keywordScore = KeywordMatcher.Score(symptom, p.Symptom);
 
                 if (keywordScore == 0)
                 {
-                    return new { Pattern = p, Score = 0 };
+                    return new { Pattern = p, Score = 0.0 };
                 }
 
                 // Frequency bonus only when there's a keyword match
@@ -255,10 +224,10 @@ public sealed class MemoryService
 
     public async Task<string> GenerateIncidentContextAsync(string symptom)
     {
-        var pastIncidents = await SearchPastIncidentsAsync(symptom);
+        var similarIncidents = await _similarityService.FindSimilarAsync(symptom);
         var patterns = await GetRelevantPatternsAsync(symptom);
 
-        if (pastIncidents.Count == 0 && patterns.Count == 0)
+        if (similarIncidents.Count == 0 && patterns.Count == 0)
         {
             return string.Empty;
         }
@@ -282,14 +251,14 @@ public sealed class MemoryService
             }
         }
 
-        if (pastIncidents.Count > 0)
+        if (similarIncidents.Count > 0)
         {
             sb.AppendLine("\n### Similar Past Issues");
-            foreach (var i in pastIncidents)
+            foreach (var i in similarIncidents)
             {
-                var age = DateTime.UtcNow - i.StartedAt;
+                var age = DateTime.UtcNow - i.OccurredAt;
                 var timeAgo = age.TotalDays > 1 ? $"{(int)age.TotalDays}d ago" : $"{(int)age.TotalHours}h ago";
-                sb.AppendLine($"- [{timeAgo}] {i.Trigger}");
+                sb.AppendLine($"- [{timeAgo}] {i.Trigger} ({i.SimilarityScore:F0}% match)");
                 if (!string.IsNullOrEmpty(i.Resolution))
                 {
                     sb.AppendLine($"  Resolved: {i.Resolution}");

@@ -181,7 +181,7 @@ public sealed class InvestigationPlugin
     {
         _logger.LogDebug("Searching past incidents for '{Symptom}'", symptom);
 
-        var incidents = await _memoryService.SearchPastIncidentsAsync(symptom);
+        var incidents = await _similarityService.FindSimilarAsync(symptom);
 
         if (incidents.Count == 0)
         {
@@ -193,19 +193,19 @@ public sealed class InvestigationPlugin
 
         foreach (var incident in incidents)
         {
-            var age = DateTime.UtcNow - incident.StartedAt;
+            var age = DateTime.UtcNow - incident.OccurredAt;
             var timeAgo = age.TotalDays > 1 ? $"{(int)age.TotalDays} days ago" : $"{(int)age.TotalHours} hours ago";
 
-            sb.AppendLine($"**#{incident.Id}** ({timeAgo})");
+            sb.AppendLine($"**#{incident.InvestigationId}** ({timeAgo}, {incident.SimilarityScore:F0}% match)");
             sb.AppendLine($"  Problem: {incident.Trigger}");
             if (!string.IsNullOrEmpty(incident.Resolution))
             {
                 sb.AppendLine($"  Resolution: {incident.Resolution}");
             }
 
-            if (incident.Steps.Count > 0)
+            if (incident.MatchReasons.Count > 0)
             {
-                sb.AppendLine($"  Steps: {incident.Steps.Count}");
+                sb.AppendLine($"  Match: {string.Join(", ", incident.MatchReasons)}");
             }
 
             sb.AppendLine();
