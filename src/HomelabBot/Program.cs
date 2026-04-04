@@ -199,6 +199,7 @@ try
     builder.Services.AddSingleton<ContagionTrackerService>();
     builder.Services.AddSingleton<WarRoomService>();
     builder.Services.AddSingleton<RunbookTriggerService>();
+    builder.Services.AddSingleton<RemediationService>();
     builder.Services.AddSingleton<AlertWebhookService>();
     builder.Services.AddHostedService<HealthScoreBackgroundService>();
     builder.Services.AddSingleton<SecurityAuditService>();

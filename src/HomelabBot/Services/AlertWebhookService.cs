@@ -13,11 +13,7 @@ public sealed class AlertWebhookService
 {
     private readonly DiscordBotService _discordService;
     private readonly KernelService _kernelService;
-    private readonly MemoryService _memoryService;
-    private readonly RunbookTriggerService _runbookTriggerService;
-    private readonly AutoRemediationService _autoRemediationService;
-    private readonly IncidentSimilarityService _similarityService;
-    private readonly HealingChainService _healingChainService;
+    private readonly RemediationService _remediationService;
     private readonly ContagionTrackerService _contagionTracker;
     private readonly WarRoomService _warRoomService;
     private readonly AlertWebhookConfiguration _config;
@@ -30,11 +26,7 @@ public sealed class AlertWebhookService
     public AlertWebhookService(
         DiscordBotService discordService,
         KernelService kernelService,
-        MemoryService memoryService,
-        RunbookTriggerService runbookTriggerService,
-        AutoRemediationService autoRemediationService,
-        IncidentSimilarityService similarityService,
-        HealingChainService healingChainService,
+        RemediationService remediationService,
         ContagionTrackerService contagionTracker,
         WarRoomService warRoomService,
         IOptions<AlertWebhookConfiguration> config,
@@ -42,11 +34,7 @@ public sealed class AlertWebhookService
     {
         _discordService = discordService;
         _kernelService = kernelService;
-        _memoryService = memoryService;
-        _runbookTriggerService = runbookTriggerService;
-        _autoRemediationService = autoRemediationService;
-        _similarityService = similarityService;
-        _healingChainService = healingChainService;
+        _remediationService = remediationService;
         _contagionTracker = contagionTracker;
         _warRoomService = warRoomService;
         _config = config.Value;
@@ -72,150 +60,41 @@ public sealed class AlertWebhookService
 
     private async Task ProcessAlertAsync(AlertmanagerWebhookAlert alert, CancellationToken ct)
     {
-        var hashBytes = SHA256.HashData(Encoding.UTF8.GetBytes($"alert-{alert.Fingerprint ?? Guid.NewGuid().ToString()}"));
-        var conversationId = BitConverter.ToUInt64(hashBytes, 0);
-
-        string analysis;
-        List<Data.Entities.Runbook> matchedRunbooks = [];
-
-        if (alert.IsFiring)
+        if (!alert.IsFiring)
         {
-            // Open War Room for critical alerts
-            Data.Entities.WarRoom? warRoom = null;
-            if (_warRoomService.ShouldOpenWarRoom(alert.Severity))
-            {
-                var trigger = $"{alert.AlertName}: {alert.Description ?? alert.Summary ?? "unknown"}";
-                warRoom = await _warRoomService.OpenWarRoomAsync(trigger, alert.Severity, ct);
-            }
-
-            // Try runbook first — if matched, use its result instead of LLM investigation
-            var runbookResult = await _runbookTriggerService.TryMatchAndExecuteAsync(alert, ct);
-            if (runbookResult != null)
-            {
-                if (warRoom != null)
-                {
-                    await _warRoomService.LogEventAsync(warRoom.Id, $"Runbook executed: {runbookResult}", ct);
-                    await _warRoomService.ResolveAsync(warRoom.Id, "Resolved by runbook", ct);
-                }
-
-                var runbookEmbed = BuildAlertEmbed(alert, runbookResult);
-                await _discordService.SendDmAsync(HomelabOwner.DiscordUserId, runbookEmbed);
-                return;
-            }
-
-            // Check for known patterns before LLM investigation
-            var searchTerms = $"{alert.AlertName} {alert.Description ?? alert.Summary ?? ""}";
-            matchedRunbooks = await _memoryService.GetRelevantRunbooksAsync(searchTerms);
-
-            // Try auto-remediation before LLM investigation
-            var containerName = AutoRemediationService.ExtractContainerName(alert);
-            var remediationResult = await _autoRemediationService.TryAutoRemediateAsync(alert, matchedRunbooks, ct);
-            if (remediationResult != null)
-            {
-                if (remediationResult.WasAutoExecuted)
-                {
-                    if (warRoom != null)
-                    {
-                        await _warRoomService.LogEventAsync(warRoom.Id, $"Auto-remediation: {remediationResult.Message}", ct);
-                    }
-
-                    var remEmbed = BuildAlertEmbed(alert, remediationResult.Message);
-                    var remButtons = BuildRemediationFeedbackButtons(remediationResult.ActionId!.Value);
-                    await _discordService.SendDmWithComponentsAsync(HomelabOwner.DiscordUserId, remEmbed, remButtons);
-                    return;
-                }
-
-                if (remediationResult.NeedsConfirmation)
-                {
-                    var remEmbed = BuildAlertEmbed(alert, remediationResult.Message);
-                    var remButtons = BuildRemediationConfirmButtons(remediationResult.ActionId!.Value);
-                    await _discordService.SendDmWithComponentsAsync(HomelabOwner.DiscordUserId, remEmbed, remButtons);
-                    return;
-                }
-            }
-
-            // Check for similar past incidents (Deja Vu) — hoisted to share with healing chain
-            var similarIncidents = await _similarityService.FindSimilarAsync(
-                searchTerms, containerName, alert.Labels, limit: 3, ct: ct);
-            var dejaVuContext = IncidentSimilarityService.FormatDejaVuContext(similarIncidents);
-
-            // Escalate to healing chain if simple remediation didn't handle it
-            var chainResult = await _healingChainService.PlanAndExecuteAsync(
-                searchTerms, containerName, ct, similarIncidents);
-            if (chainResult is { Success: true })
-            {
-                if (warRoom != null)
-                {
-                    await _warRoomService.LogEventAsync(warRoom.Id, $"Healing chain: {chainResult.Message}", ct);
-                    await _warRoomService.ResolveAsync(warRoom.Id, "Resolved by healing chain", ct);
-                }
-
-                var chainEmbed = BuildAlertEmbed(alert, chainResult.Message);
-                await _discordService.SendDmAsync(HomelabOwner.DiscordUserId, chainEmbed);
-                return;
-            }
-
-            var patternContext = "";
-            if (matchedRunbooks.Count > 0)
-            {
-                var patternLines = matchedRunbooks.Select(p =>
-                {
-                    var successInfo = (p.SuccessCount + p.FailureCount) > 0
-                        ? $" (resolved {p.SuccessRate:F0}% of cases)"
-                        : "";
-                    return $"- {p.TriggerCondition}: {p.CommonCause} → Fix: {p.Description}{successInfo}";
-                });
-                patternContext = $"\n\nKNOWN PATTERNS for this type of issue (consider these first):\n{string.Join("\n", patternLines)}\n";
-            }
-
-            var dejaVuPrompt = !string.IsNullOrEmpty(dejaVuContext)
-                ? $"\n\nPAST INCIDENT MATCH:\n{dejaVuContext}\n"
-                : "";
-
-            var blastRadiusPrompt = "";
-            if (containerName != null)
-            {
-                var blastRadius = await _contagionTracker.AnalyzeBlastRadiusAsync(
-                    containerName, alert.AlertName, ct);
-                var blastRadiusText = ContagionTrackerService.FormatBlastRadius(blastRadius);
-                if (!string.IsNullOrEmpty(blastRadiusText))
-                {
-                    blastRadiusPrompt = $"\n\nBLAST RADIUS:\n{blastRadiusText}\n";
-                }
-            }
-
-            var prompt = $"""
-                ALERT FIRING - Investigate this:
-                Alert: {alert.AlertName}
-                Severity: {alert.Severity}
-                Instance: {alert.Instance ?? "unknown"}
-                Description: {alert.Description ?? alert.Summary ?? "none"}
-                Started: {alert.StartsAt:u}
-                {patternContext}{dejaVuPrompt}{blastRadiusPrompt}
-                Use your tools to investigate what's happening. Check relevant logs, metrics, container status, etc.
-                Provide a brief summary of what you found and any recommended actions.
-                """;
-
-            analysis = await _kernelService.ProcessMessageAsync(
-                conversationId,
-                prompt,
-                HomelabOwner.DiscordUserId,
-                TraceType.Scheduled,
-                ct: ct);
-        }
-        else
-        {
-            analysis = $"Alert resolved after {FormattingHelpers.FormatDuration(alert.Duration ?? TimeSpan.Zero)}.";
+            var resolvedAnalysis = $"Alert resolved after {FormattingHelpers.FormatDuration(alert.Duration ?? TimeSpan.Zero)}.";
+            var resolvedEmbed = BuildAlertEmbed(alert, resolvedAnalysis);
+            await _discordService.SendDmAsync(HomelabOwner.DiscordUserId, resolvedEmbed);
+            return;
         }
 
+        // Open War Room for critical alerts
+        Data.Entities.WarRoom? warRoom = null;
+        if (_warRoomService.ShouldOpenWarRoom(alert.Severity))
+        {
+            var trigger = $"{alert.AlertName}: {alert.Description ?? alert.Summary ?? "unknown"}";
+            warRoom = await _warRoomService.OpenWarRoomAsync(trigger, alert.Severity, ct);
+        }
+
+        // Try automated remediation strategies (runbook → auto-remediation → healing chain)
+        var outcome = await _remediationService.TryRemediateAsync(alert, ct);
+
+        if (outcome.Handled)
+        {
+            await HandleRemediationOutcomeAsync(alert, outcome, warRoom, ct);
+            return;
+        }
+
+        // Fall through to LLM investigation
+        var analysis = await RunLlmInvestigationAsync(alert, outcome, ct);
         var embed = BuildAlertEmbed(alert, analysis);
 
-        if (matchedRunbooks.Count > 0)
+        if (outcome.MatchedRunbooks.Count > 0)
         {
             await _discordService.SendDmWithComponentsAsync(
                 HomelabOwner.DiscordUserId,
                 embed,
-                BuildPatternFeedbackButtons(matchedRunbooks));
+                BuildPatternFeedbackButtons(outcome.MatchedRunbooks));
         }
         else
         {
@@ -223,28 +102,120 @@ public sealed class AlertWebhookService
         }
     }
 
+    private async Task HandleRemediationOutcomeAsync(
+        AlertmanagerWebhookAlert alert,
+        RemediationOutcome outcome,
+        Data.Entities.WarRoom? warRoom,
+        CancellationToken ct)
+    {
+        if (warRoom != null && !outcome.NeedsConfirmation)
+        {
+            var methodLabel = outcome.Method switch
+            {
+                RemediationMethod.Runbook => "Runbook executed",
+                RemediationMethod.AutoRemediation => "Auto-remediation",
+                RemediationMethod.HealingChain => "Healing chain",
+                _ => outcome.Method.ToString(),
+            };
+            await _warRoomService.LogEventAsync(warRoom.Id, $"{methodLabel}: {outcome.Message}", ct);
+            if (outcome.Success && outcome.Method != RemediationMethod.AutoRemediation)
+            {
+                await _warRoomService.ResolveAsync(warRoom.Id, $"Resolved by {methodLabel.ToLowerInvariant()}", ct);
+            }
+        }
+
+        var embed = BuildAlertEmbed(alert, outcome.Message);
+
+        if (outcome.Method == RemediationMethod.AutoRemediation && outcome.ActionId.HasValue)
+        {
+            var buttons = outcome.NeedsConfirmation
+                ? BuildRemediationConfirmButtons(outcome.ActionId.Value)
+                : BuildRemediationFeedbackButtons(outcome.ActionId.Value);
+            await _discordService.SendDmWithComponentsAsync(HomelabOwner.DiscordUserId, embed, buttons);
+        }
+        else
+        {
+            await _discordService.SendDmAsync(HomelabOwner.DiscordUserId, embed);
+        }
+    }
+
+    private async Task<string> RunLlmInvestigationAsync(
+        AlertmanagerWebhookAlert alert,
+        RemediationOutcome outcome,
+        CancellationToken ct)
+    {
+        var hashBytes = SHA256.HashData(Encoding.UTF8.GetBytes($"alert-{alert.Fingerprint ?? Guid.NewGuid().ToString()}"));
+        var conversationId = BitConverter.ToUInt64(hashBytes, 0);
+
+        var patternContext = "";
+        if (outcome.MatchedRunbooks.Count > 0)
+        {
+            var patternLines = outcome.MatchedRunbooks.Select(p =>
+            {
+                var successInfo = (p.SuccessCount + p.FailureCount) > 0
+                    ? $" (resolved {p.SuccessRate:F0}% of cases)"
+                    : "";
+                return $"- {p.TriggerCondition}: {p.CommonCause} → Fix: {p.Description}{successInfo}";
+            });
+            patternContext = $"\n\nKNOWN PATTERNS for this type of issue (consider these first):\n{string.Join("\n", patternLines)}\n";
+        }
+
+        var dejaVuContext = IncidentSimilarityService.FormatDejaVuContext(outcome.SimilarIncidents);
+        var dejaVuPrompt = !string.IsNullOrEmpty(dejaVuContext)
+            ? $"\n\nPAST INCIDENT MATCH:\n{dejaVuContext}\n"
+            : "";
+
+        var blastRadiusPrompt = "";
+        if (outcome.ContainerName != null)
+        {
+            var blastRadius = await _contagionTracker.AnalyzeBlastRadiusAsync(
+                outcome.ContainerName, alert.AlertName, ct);
+            var blastRadiusText = ContagionTrackerService.FormatBlastRadius(blastRadius);
+            if (!string.IsNullOrEmpty(blastRadiusText))
+            {
+                blastRadiusPrompt = $"\n\nBLAST RADIUS:\n{blastRadiusText}\n";
+            }
+        }
+
+        var prompt = $"""
+            ALERT FIRING - Investigate this:
+            Alert: {alert.AlertName}
+            Severity: {alert.Severity}
+            Instance: {alert.Instance ?? "unknown"}
+            Description: {alert.Description ?? alert.Summary ?? "none"}
+            Started: {alert.StartsAt:u}
+            {patternContext}{dejaVuPrompt}{blastRadiusPrompt}
+            Use your tools to investigate what's happening. Check relevant logs, metrics, container status, etc.
+            Provide a brief summary of what you found and any recommended actions.
+            """;
+
+        return await _kernelService.ProcessMessageAsync(
+            conversationId,
+            prompt,
+            HomelabOwner.DiscordUserId,
+            TraceType.Scheduled,
+            ct: ct);
+    }
+
     private static List<DiscordComponent> BuildPatternFeedbackButtons(List<Data.Entities.Runbook> patterns)
     {
-        var components = new List<DiscordComponent>();
-
-        // Encode all pattern IDs so one button press feeds back on all matched patterns
         var ids = string.Join(",", patterns.Select(p => p.Id));
 
-        components.Add(new DiscordButtonComponent(
-            ButtonStyle.Success,
-            $"pattern_helpful_{ids}",
-            "Analysis was helpful",
-            false,
-            new DiscordComponentEmoji("👍")));
-
-        components.Add(new DiscordButtonComponent(
-            ButtonStyle.Secondary,
-            $"pattern_notrelevant_{ids}",
-            "Not relevant",
-            false,
-            new DiscordComponentEmoji("👎")));
-
-        return components;
+        return
+        [
+            new DiscordButtonComponent(
+                ButtonStyle.Success,
+                $"pattern_helpful_{ids}",
+                "Analysis was helpful",
+                false,
+                new DiscordComponentEmoji("👍")),
+            new DiscordButtonComponent(
+                ButtonStyle.Secondary,
+                $"pattern_notrelevant_{ids}",
+                "Not relevant",
+                false,
+                new DiscordComponentEmoji("👎"))
+        ];
     }
 
     private static List<DiscordComponent> BuildRemediationFeedbackButtons(int actionId)
@@ -285,11 +256,6 @@ public sealed class AlertWebhookService
         ];
     }
 
-    private static string Truncate(string text, int maxLength)
-    {
-        return text.Length > maxLength ? text[..(maxLength - 3)] + "..." : text;
-    }
-
     private DiscordEmbed BuildAlertEmbed(AlertmanagerWebhookAlert alert, string analysis)
     {
         var color = GetAlertColor(alert);
@@ -301,7 +267,6 @@ public sealed class AlertWebhookService
             .WithColor(color)
             .WithTimestamp(alert.StartsAt);
 
-        // Basic info
         var severityEmoji = alert.Severity.ToLowerInvariant() switch
         {
             "critical" => "🔴",
@@ -323,7 +288,6 @@ public sealed class AlertWebhookService
             builder.AddField("Duration", FormattingHelpers.FormatDuration(alert.Duration.Value), true);
         }
 
-        // LLM analysis as description
         if (analysis.Length > 4096)
         {
             analysis = analysis[..4093] + "...";
