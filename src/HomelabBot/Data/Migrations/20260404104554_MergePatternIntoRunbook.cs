@@ -54,6 +54,17 @@ namespace HomelabBot.Data.Migrations
                 table: "Runbooks",
                 column: "TriggerCondition");
 
+            // Merge stats into Runbooks that already exist with matching TriggerCondition
+            migrationBuilder.Sql("""
+                UPDATE Runbooks
+                SET OccurrenceCount = (SELECT MAX(OccurrenceCount) FROM Patterns WHERE Symptom = Runbooks.TriggerCondition),
+                    SuccessCount = (SELECT SUM(SuccessCount) FROM Patterns WHERE Symptom = Runbooks.TriggerCondition),
+                    FailureCount = (SELECT SUM(FailureCount) FROM Patterns WHERE Symptom = Runbooks.TriggerCondition),
+                    CommonCause = COALESCE(Runbooks.CommonCause, (SELECT CommonCause FROM Patterns WHERE Symptom = Runbooks.TriggerCondition LIMIT 1)),
+                    LastSeen = (SELECT MAX(LastSeen) FROM Patterns WHERE Symptom = Runbooks.TriggerCondition)
+                WHERE TriggerCondition IN (SELECT Symptom FROM Patterns)
+                """);
+
             // Migrate Pattern data into Runbooks (deduplicate by Symptom)
             migrationBuilder.Sql("""
                 INSERT INTO Runbooks (Name, TriggerCondition, StepsJson, Enabled, Version, TrustLevel,
