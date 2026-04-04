@@ -274,7 +274,7 @@ public sealed class MemoryService
     {
         // Look for existing runbook with same trigger condition
         var existing = await db.Runbooks
-            .FirstOrDefaultAsync(r => r.TriggerCondition == investigation.Trigger);
+            .FirstOrDefaultAsync(r => r.TriggerCondition == investigation.Trigger && r.OccurrenceCount > 0);
 
         if (existing != null)
         {
