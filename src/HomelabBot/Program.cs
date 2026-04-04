@@ -162,6 +162,8 @@ try
     builder.Services.AddSingleton<PrometheusQueryService>();
 
     // Plugins
+    builder.Services.AddSingleton<Docker.DotNet.DockerClient>(_ =>
+        new Docker.DotNet.DockerClientConfiguration(new Uri("unix:///var/run/docker.sock")).CreateClient());
     builder.Services.AddSingleton<DockerPlugin>();
     builder.Services.AddSingleton<PrometheusPlugin>();
     builder.Services.AddSingleton<AlertmanagerPlugin>();

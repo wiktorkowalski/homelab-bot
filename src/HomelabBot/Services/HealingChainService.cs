@@ -40,7 +40,8 @@ public sealed class HealingChainService
     public async Task<HealingChainResult?> PlanAndExecuteAsync(
         string symptom,
         string? containerName,
-        CancellationToken ct)
+        CancellationToken ct,
+        List<SimilarIncident>? similarIncidents = null)
     {
         if (!_config.Enabled)
         {
@@ -53,7 +54,7 @@ public sealed class HealingChainService
             return null;
         }
 
-        var similarIncidents = await _similarityService.FindSimilarAsync(symptom, containerName, limit: 3, ct: ct);
+        similarIncidents ??= await _similarityService.FindSimilarAsync(symptom, containerName, limit: 3, ct: ct);
         var pastContext = similarIncidents.Count > 0
             ? IncidentSimilarityService.FormatDejaVuContext(similarIncidents)
             : "";

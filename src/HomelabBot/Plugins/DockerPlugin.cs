@@ -14,11 +14,10 @@ public class DockerPlugin
     private readonly DockerClient _client;
     private readonly ILogger<DockerPlugin> _logger;
 
-    public DockerPlugin(ILogger<DockerPlugin> logger)
+    public DockerPlugin(DockerClient client, ILogger<DockerPlugin> logger)
     {
+        _client = client;
         _logger = logger;
-        _client = new DockerClientConfiguration(new Uri("unix:///var/run/docker.sock"))
-            .CreateClient();
     }
 
     [KernelFunction]

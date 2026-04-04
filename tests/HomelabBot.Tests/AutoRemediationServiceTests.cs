@@ -1,3 +1,4 @@
+using Docker.DotNet;
 using HomelabBot.Configuration;
 using HomelabBot.Data.Entities;
 using HomelabBot.Models;
@@ -18,7 +19,8 @@ public class AutoRemediationServiceTests : IClassFixture<DatabaseFixture>, IDisp
     public AutoRemediationServiceTests(DatabaseFixture fixture)
     {
         _fixture = fixture;
-        _dockerPlugin = Substitute.For<DockerPlugin>(NullLogger<DockerPlugin>.Instance);
+        var dockerClient = new DockerClientConfiguration().CreateClient();
+        _dockerPlugin = Substitute.For<DockerPlugin>(dockerClient, NullLogger<DockerPlugin>.Instance);
         _stateStore = Substitute.For<ServiceStateStore>(_fixture.DbContextFactory);
 
         // LoadStateAsync calls GetAsync twice during construction

@@ -134,8 +134,14 @@ public sealed class AlertWebhookService
                 }
             }
 
+            // Check for similar past incidents (Deja Vu) — hoisted to share with healing chain
+            var similarIncidents = await _similarityService.FindSimilarAsync(
+                searchTerms, containerName, alert.Labels, limit: 3, ct: ct);
+            var dejaVuContext = IncidentSimilarityService.FormatDejaVuContext(similarIncidents);
+
             // Escalate to healing chain if simple remediation didn't handle it
-            var chainResult = await _healingChainService.PlanAndExecuteAsync(searchTerms, containerName, ct);
+            var chainResult = await _healingChainService.PlanAndExecuteAsync(
+                searchTerms, containerName, ct, similarIncidents);
             if (chainResult is { Success: true })
             {
                 if (warRoom != null)
@@ -148,11 +154,6 @@ public sealed class AlertWebhookService
                 await _discordService.SendDmAsync(HomelabOwner.DiscordUserId, chainEmbed);
                 return;
             }
-
-            // Check for similar past incidents (Deja Vu)
-            var similarIncidents = await _similarityService.FindSimilarAsync(
-                searchTerms, containerName, alert.Labels, limit: 3, ct: ct);
-            var dejaVuContext = IncidentSimilarityService.FormatDejaVuContext(similarIncidents);
 
             var patternContext = "";
             if (matchedPatterns.Count > 0)
