@@ -62,6 +62,7 @@ public sealed class AlertWebhookService
     {
         if (!alert.IsFiring)
         {
+            _logger.LogInformation("Alert {AlertName} resolved", alert.AlertName);
             var resolvedAnalysis = $"Alert resolved after {FormattingHelpers.FormatDuration(alert.Duration ?? TimeSpan.Zero)}.";
             var resolvedEmbed = BuildAlertEmbed(alert, resolvedAnalysis);
             await _discordService.SendDmAsync(HomelabOwner.DiscordUserId, resolvedEmbed);
@@ -72,6 +73,7 @@ public sealed class AlertWebhookService
         Data.Entities.WarRoom? warRoom = null;
         if (_warRoomService.ShouldOpenWarRoom(alert.Severity))
         {
+            _logger.LogInformation("Opening war room for {Severity} alert {AlertName}", alert.Severity, alert.AlertName);
             var trigger = $"{alert.AlertName}: {alert.Description ?? alert.Summary ?? "unknown"}";
             warRoom = await _warRoomService.OpenWarRoomAsync(trigger, alert.Severity, ct);
         }
@@ -84,6 +86,8 @@ public sealed class AlertWebhookService
             await HandleRemediationOutcomeAsync(alert, outcome, warRoom, ct);
             return;
         }
+
+        _logger.LogInformation("No automated remediation for {AlertName}, running LLM investigation", alert.AlertName);
 
         // Fall through to LLM investigation
         var analysis = await RunLlmInvestigationAsync(alert, outcome, ct);

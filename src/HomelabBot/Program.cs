@@ -135,7 +135,7 @@ try
                     .SetSampler(new AlwaysOnSampler())
                     .AddSource("HomelabBot.Chat")
                     .AddSource("Microsoft.SemanticKernel*")
-                    .AddProcessor(new LangfuseEnrichmentProcessor())
+                    .AddProcessor(sp => new LangfuseEnrichmentProcessor(sp.GetRequiredService<ILoggerFactory>()))
                     .AddOtlpExporter(options =>
                     {
                         options.Endpoint = new Uri(langfuseConfig.Endpoint);

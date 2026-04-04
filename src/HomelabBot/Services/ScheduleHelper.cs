@@ -1,26 +1,26 @@
+using Microsoft.Extensions.Logging;
+
 namespace HomelabBot.Services;
 
 public static class ScheduleHelper
 {
     public static TimeSpan CalculateDelayUntilNextRun(
-        string scheduleTime, string timeZone, DayOfWeek? scheduleDay = null)
+        string scheduleTime, string timeZone, DayOfWeek? scheduleDay = null, ILogger? logger = null)
     {
         TimeZoneInfo tz;
         try
         {
             tz = TimeZoneInfo.FindSystemTimeZoneById(timeZone);
         }
-        catch (TimeZoneNotFoundException)
+        catch (Exception ex) when (ex is TimeZoneNotFoundException or InvalidTimeZoneException)
         {
-            tz = TimeZoneInfo.Utc;
-        }
-        catch (InvalidTimeZoneException)
-        {
+            logger?.LogWarning("Unknown/invalid timezone {TimeZone}, falling back to UTC", timeZone);
             tz = TimeZoneInfo.Utc;
         }
 
         if (!TimeOnly.TryParse(scheduleTime, out var parsedTime))
         {
+            logger?.LogWarning("Failed to parse schedule time {ScheduleTime}, defaulting to 08:00", scheduleTime);
             parsedTime = new TimeOnly(8, 0);
         }
 

@@ -70,7 +70,7 @@ public sealed class AnomalyDetectionService : BackgroundService
             {
                 if (!_config.CurrentValue.Enabled)
                 {
-                    _logger.LogDebug("Anomaly detection disabled, rechecking in 1 minute");
+                    _logger.LogInformation("Anomaly detection disabled, rechecking in 1 minute");
                     await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);
                     continue;
                 }
@@ -136,7 +136,7 @@ public sealed class AnomalyDetectionService : BackgroundService
 
         if (anomalies.Count > 0)
         {
-            _logger.LogDebug("Heuristic check found {Count} anomalies", anomalies.Count);
+            _logger.LogInformation("Heuristic check found {Count} anomalies", anomalies.Count);
         }
 
         return anomalies;
@@ -270,7 +270,7 @@ public sealed class AnomalyDetectionService : BackgroundService
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "Failed to check Prometheus targets");
+            _logger.LogWarning(ex, "Failed to check Prometheus targets");
         }
 
         return anomalies;
@@ -296,7 +296,7 @@ public sealed class AnomalyDetectionService : BackgroundService
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "Failed to check container health");
+            _logger.LogWarning(ex, "Failed to check container health");
         }
 
         return anomalies;
@@ -322,7 +322,7 @@ public sealed class AnomalyDetectionService : BackgroundService
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "Failed to check container restarts");
+            _logger.LogWarning(ex, "Failed to check container restarts");
         }
 
         return anomalies;
@@ -376,7 +376,7 @@ public sealed class AnomalyDetectionService : BackgroundService
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "Failed to check router health");
+            _logger.LogWarning(ex, "Failed to check router health");
         }
 
         return anomalies;
@@ -411,7 +411,7 @@ public sealed class AnomalyDetectionService : BackgroundService
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "Failed to check network traffic");
+            _logger.LogWarning(ex, "Failed to check network traffic");
         }
 
         return anomalies;
@@ -440,7 +440,7 @@ public sealed class AnomalyDetectionService : BackgroundService
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "Failed to check storage pools");
+            _logger.LogWarning(ex, "Failed to check storage pools");
         }
 
         return anomalies;
@@ -467,7 +467,7 @@ public sealed class AnomalyDetectionService : BackgroundService
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "Failed to check Traefik 5xx rate");
+            _logger.LogWarning(ex, "Failed to check Traefik 5xx rate");
         }
 
         return anomalies;
@@ -500,7 +500,7 @@ public sealed class AnomalyDetectionService : BackgroundService
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "Failed to check cert expiry");
+            _logger.LogWarning(ex, "Failed to check cert expiry");
         }
 
         return anomalies;
@@ -525,7 +525,7 @@ public sealed class AnomalyDetectionService : BackgroundService
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "Failed to check Prometheus cardinality");
+            _logger.LogWarning(ex, "Failed to check Prometheus cardinality");
         }
 
         return anomalies;

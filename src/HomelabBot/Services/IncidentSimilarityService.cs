@@ -106,7 +106,7 @@ public sealed class IncidentSimilarityService
 
         if (results.Count > 0)
         {
-            _logger.LogDebug("Found {Count} similar incidents for '{Symptom}' (top score: {Score})",
+            _logger.LogInformation("Found {Count} similar incidents for '{Symptom}' (top score: {Score})",
                 results.Count, symptom, results[0].SimilarityScore);
         }
 

@@ -38,7 +38,7 @@ public sealed class TrueNASPlugin
     [Description("Gets the health status of all ZFS pools on TrueNAS.")]
     public async Task<string> GetPoolStatus()
     {
-        _logger.LogDebug("Getting TrueNAS pool status...");
+        _logger.LogInformation("Getting TrueNAS pool status...");
 
         try
         {
@@ -103,7 +103,7 @@ public sealed class TrueNASPlugin
     [Description("Gets storage usage for all datasets on TrueNAS.")]
     public async Task<string> GetDatasetUsage()
     {
-        _logger.LogDebug("Getting dataset usage...");
+        _logger.LogInformation("Getting dataset usage...");
 
         try
         {
@@ -158,7 +158,7 @@ public sealed class TrueNASPlugin
     [Description("Gets general system information from TrueNAS including version and health.")]
     public async Task<string> GetSystemInfo()
     {
-        _logger.LogDebug("Getting TrueNAS system info...");
+        _logger.LogInformation("Getting TrueNAS system info...");
 
         var sb = new StringBuilder();
         sb.AppendLine("**TrueNAS System Info**\n");

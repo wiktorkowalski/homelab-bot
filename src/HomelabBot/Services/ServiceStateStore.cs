@@ -1,16 +1,19 @@
 using HomelabBot.Data;
 using HomelabBot.Data.Entities;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace HomelabBot.Services;
 
 public class ServiceStateStore
 {
     private readonly IDbContextFactory<HomelabDbContext> _dbFactory;
+    private readonly ILogger<ServiceStateStore> _logger;
 
-    public ServiceStateStore(IDbContextFactory<HomelabDbContext> dbFactory)
+    public ServiceStateStore(IDbContextFactory<HomelabDbContext> dbFactory, ILogger<ServiceStateStore> logger)
     {
         _dbFactory = dbFactory;
+        _logger = logger;
     }
 
     public virtual async Task<string?> GetAsync(string serviceName, string key)
@@ -18,6 +21,8 @@ public class ServiceStateStore
         await using var db = await _dbFactory.CreateDbContextAsync();
         var entry = await db.ServiceStates
             .FirstOrDefaultAsync(s => s.ServiceName == serviceName && s.Key == key);
+
+        _logger.LogInformation("State {ServiceName}/{Key}: {Result}", serviceName, key, entry is null ? "not found" : "found");
         return entry?.Value;
     }
 
@@ -42,6 +47,15 @@ public class ServiceStateStore
             });
         }
 
-        await db.SaveChangesAsync();
+        try
+        {
+            await db.SaveChangesAsync();
+            _logger.LogInformation("{Operation} state for {ServiceName}/{Key}", entry != null ? "Updated" : "Created", serviceName, key);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to save state for {ServiceName}/{Key}", serviceName, key);
+            throw;
+        }
     }
 }

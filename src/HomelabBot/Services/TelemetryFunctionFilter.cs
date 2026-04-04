@@ -37,9 +37,9 @@ public sealed class TelemetryFunctionFilter : IFunctionInvocationFilter
                 argumentsJson = JsonSerializer.Serialize(
                     context.Arguments.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.ToString()));
             }
-            catch
+            catch (Exception ex)
             {
-                // Ignore serialization errors
+                _logger.LogWarning(ex, "Failed to serialize arguments for {Function}", context.Function.Name);
             }
         }
 
@@ -58,8 +58,9 @@ public sealed class TelemetryFunctionFilter : IFunctionInvocationFilter
                         ? str
                         : JsonSerializer.Serialize(resultValue);
                 }
-                catch
+                catch (Exception ex)
                 {
+                    _logger.LogWarning(ex, "Failed to serialize result for {Function}", context.Function.Name);
                     resultJson = resultValue.ToString();
                 }
             }

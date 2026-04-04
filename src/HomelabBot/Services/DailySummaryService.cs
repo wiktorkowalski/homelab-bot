@@ -30,7 +30,7 @@ public sealed class DailySummaryService : ScheduledBackgroundService
     protected override ILogger Logger => _logger;
 
     protected override TimeSpan GetDelay() =>
-        ScheduleHelper.CalculateDelayUntilNextRun(_config.CurrentValue.ScheduleTime, _config.CurrentValue.TimeZone);
+        ScheduleHelper.CalculateDelayUntilNextRun(_config.CurrentValue.ScheduleTime, _config.CurrentValue.TimeZone, logger: _logger);
 
     protected override async Task RunIterationAsync(CancellationToken ct)
     {

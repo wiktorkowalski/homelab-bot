@@ -41,12 +41,12 @@ public sealed class KnowledgeRefreshService : BackgroundService
             {
                 if (!_config.CurrentValue.Enabled)
                 {
-                    _logger.LogDebug("Knowledge refresh disabled, rechecking in 1 minute");
+                    _logger.LogInformation("Knowledge refresh disabled, rechecking in 1 minute");
                     await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);
                     continue;
                 }
 
-                var delay = ScheduleHelper.CalculateDelayUntilNextRun(_config.CurrentValue.ScheduleTime, _config.CurrentValue.TimeZone);
+                var delay = ScheduleHelper.CalculateDelayUntilNextRun(_config.CurrentValue.ScheduleTime, _config.CurrentValue.TimeZone, logger: _logger);
                 _logger.LogInformation("Next knowledge refresh in {Delay}", delay);
 
                 await Task.Delay(delay, stoppingToken);

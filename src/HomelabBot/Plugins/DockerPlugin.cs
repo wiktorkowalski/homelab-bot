@@ -25,7 +25,7 @@ public class DockerPlugin
     [Description("Lists all Docker containers with their status. Returns container name, status, and image.")]
     public async Task<string> ListContainers()
     {
-        _logger.LogDebug("Listing Docker containers...");
+        _logger.LogInformation("Listing Docker containers...");
 
         var containers = await _client.Containers.ListContainersAsync(new ContainersListParameters
         {
@@ -68,7 +68,7 @@ public class DockerPlugin
     [Description("Gets detailed status information for a specific container by name or ID.")]
     public virtual async Task<string> GetContainerStatus([Description("Container name or ID")] string containerName)
     {
-        _logger.LogDebug("Getting status for container {Container}...", containerName);
+        _logger.LogInformation("Getting status for container {Container}...", containerName);
 
         var container = await FindContainerAsync(containerName);
         if (container == null)
@@ -221,7 +221,7 @@ public class DockerPlugin
         [Description("Container name or ID")] string containerName,
         [Description("Number of lines to retrieve (default 50)")] int lines = 50)
     {
-        _logger.LogDebug("Getting logs for container {Container}...", containerName);
+        _logger.LogInformation("Getting logs for container {Container}...", containerName);
 
         var container = await FindContainerAsync(containerName);
         if (container == null)
@@ -276,7 +276,7 @@ public class DockerPlugin
     [Description("Lists all Docker networks with their connected containers. Useful for understanding service relationships.")]
     public async Task<string> ListNetworks()
     {
-        _logger.LogDebug("Listing Docker networks...");
+        _logger.LogInformation("Listing Docker networks...");
 
         // Build network → containers mapping from container data (more reliable than network inspect)
         var containers = await _client.Containers.ListContainersAsync(

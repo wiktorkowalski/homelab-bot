@@ -53,7 +53,7 @@ public class HomeLabCommands : ApplicationCommandModule
 
         try
         {
-            _logger.LogDebug("Containers command invoked by {User}", ctx.User.Username);
+            _logger.LogInformation("Containers command invoked by {User}", ctx.User.Username);
 
             var containers = await _dockerPlugin.ListContainers();
 
@@ -83,7 +83,7 @@ public class HomeLabCommands : ApplicationCommandModule
 
         try
         {
-            _logger.LogDebug("Container command invoked for {Container} by {User}",
+            _logger.LogInformation("Container command invoked for {Container} by {User}",
                 containerName, ctx.User.Username);
 
             var status = await _dockerPlugin.GetContainerStatus(containerName);
@@ -115,7 +115,7 @@ public class HomeLabCommands : ApplicationCommandModule
 
         try
         {
-            _logger.LogDebug("Logs command invoked for {Container} by {User}",
+            _logger.LogInformation("Logs command invoked for {Container} by {User}",
                 containerName, ctx.User.Username);
 
             var logs = await _dockerPlugin.GetContainerLogsFromDocker(containerName, (int)lines);
@@ -258,7 +258,7 @@ public class HomeLabCommands : ApplicationCommandModule
 
         try
         {
-            _logger.LogDebug("Knowledge command invoked by {User}", ctx.User.Username);
+            _logger.LogInformation("Knowledge command invoked by {User}", ctx.User.Username);
 
             var knowledge = await _knowledgePlugin.RecallKnowledge(topic);
 
@@ -286,7 +286,7 @@ public class HomeLabCommands : ApplicationCommandModule
 
         try
         {
-            _logger.LogDebug("Health command invoked by {User}", ctx.User.Username);
+            _logger.LogInformation("Health command invoked by {User}", ctx.User.Username);
 
             var data = await _summaryAggregator.AggregateAsync();
             var result = _healthScoreService.CalculateScore(data);
@@ -356,7 +356,7 @@ public class HomeLabCommands : ApplicationCommandModule
 
         try
         {
-            _logger.LogDebug("LogsAnalyze command invoked by {User} for {Container}",
+            _logger.LogInformation("LogsAnalyze command invoked by {User} for {Container}",
                 ctx.User.Username, container ?? "all");
 
             var threadId = (ulong)DateTimeOffset.UtcNow.ToUnixTimeSeconds();
@@ -428,7 +428,7 @@ public class HomeLabCommands : ApplicationCommandModule
 
         try
         {
-            _logger.LogDebug("Summary command invoked by {User}", ctx.User.Username);
+            _logger.LogInformation("Summary command invoked by {User}", ctx.User.Username);
 
             var data = await _summaryAggregator.AggregateAsync();
             var analysis = await GenerateSummaryAnalysisAsync(data);
@@ -512,7 +512,7 @@ public class HomeLabCommands : ApplicationCommandModule
 
         try
         {
-            _logger.LogDebug("Recall command invoked by {User} for '{Query}'", ctx.User.Username, query);
+            _logger.LogInformation("Recall command invoked by {User} for '{Query}'", ctx.User.Username, query);
 
             var results = await _conversationService.SearchConversationsAsync(query);
 
@@ -560,7 +560,7 @@ public class HomeLabCommands : ApplicationCommandModule
 
         try
         {
-            _logger.LogDebug("Roast command invoked by {User}", ctx.User.Username);
+            _logger.LogInformation("Roast command invoked by {User}", ctx.User.Username);
 
             var prompt = """
                 Look around the homelab using your tools. Check multiple sources:
@@ -600,7 +600,7 @@ public class HomeLabCommands : ApplicationCommandModule
 
         try
         {
-            _logger.LogDebug("RandomFact command invoked by {User}", ctx.User.Username);
+            _logger.LogInformation("RandomFact command invoked by {User}", ctx.User.Username);
 
             var prompt = """
                 Explore the homelab using your tools and discover something interesting.
@@ -640,7 +640,7 @@ public class HomeLabCommands : ApplicationCommandModule
 
         try
         {
-            _logger.LogDebug("Auto command invoked by {User} with action {Action}", ctx.User.Username, action);
+            _logger.LogInformation("Auto command invoked by {User} with action {Action}", ctx.User.Username, action);
 
             string response;
             switch (action)

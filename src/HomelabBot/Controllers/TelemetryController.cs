@@ -10,10 +10,12 @@ namespace HomelabBot.Controllers;
 public class TelemetryController : ControllerBase
 {
     private readonly IDbContextFactory<HomelabDbContext> _dbFactory;
+    private readonly ILogger<TelemetryController> _logger;
 
-    public TelemetryController(IDbContextFactory<HomelabDbContext> dbFactory)
+    public TelemetryController(IDbContextFactory<HomelabDbContext> dbFactory, ILogger<TelemetryController> logger)
     {
         _dbFactory = dbFactory;
+        _logger = logger;
     }
 
     [HttpGet]
@@ -24,6 +26,8 @@ public class TelemetryController : ControllerBase
         [FromQuery] bool? success = null,
         CancellationToken ct = default)
     {
+        _logger.LogInformation("Listing telemetry Page={Page} PageSize={PageSize} ThreadId={ThreadId} Success={Success}", page, pageSize, threadId, success);
+
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
 
         var query = db.LlmInteractions.AsQueryable();
@@ -71,6 +75,8 @@ public class TelemetryController : ControllerBase
     [HttpGet("{id:int}")]
     public async Task<ActionResult<LlmInteractionDetailDto>> GetById(int id, CancellationToken ct = default)
     {
+        _logger.LogInformation("Getting telemetry interaction Id={Id}", id);
+
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
 
         var item = await db.LlmInteractions
@@ -79,6 +85,7 @@ public class TelemetryController : ControllerBase
 
         if (item is null)
         {
+            _logger.LogWarning("Telemetry interaction not found Id={Id}", id);
             return NotFound();
         }
 
@@ -117,6 +124,8 @@ public class TelemetryController : ControllerBase
         [FromQuery] int days = 7,
         CancellationToken ct = default)
     {
+        _logger.LogInformation("Getting telemetry stats Days={Days}", days);
+
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
 
         var since = DateTime.UtcNow.AddDays(-days);

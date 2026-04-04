@@ -21,7 +21,7 @@ public class AutoRemediationServiceTests : IClassFixture<DatabaseFixture>, IDisp
         _fixture = fixture;
         var dockerClient = new DockerClientConfiguration().CreateClient();
         _dockerPlugin = Substitute.For<DockerPlugin>(dockerClient, NullLogger<DockerPlugin>.Instance);
-        _stateStore = Substitute.For<ServiceStateStore>(_fixture.DbContextFactory);
+        _stateStore = Substitute.For<ServiceStateStore>(_fixture.DbContextFactory, NullLogger<ServiceStateStore>.Instance);
 
         // LoadStateAsync calls GetAsync twice during construction
         _stateStore.GetAsync(Arg.Any<string>(), Arg.Any<string>())

@@ -39,7 +39,7 @@ public sealed class HomeAssistantPlugin
     [Description("Gets the current state of a Home Assistant entity by its entity_id.")]
     public async Task<string> GetEntityState([Description("Entity ID (e.g., sensor.temperature, light.living_room)")] string entityId)
     {
-        _logger.LogDebug("Getting state for entity {EntityId}...", entityId);
+        _logger.LogInformation("Getting state for entity {EntityId}...", entityId);
 
         try
         {
@@ -95,7 +95,7 @@ public sealed class HomeAssistantPlugin
     [Description("Lists all entities in a specific Home Assistant domain (e.g., light, switch, sensor).")]
     public async Task<string> ListEntities([Description("Domain to list (e.g., light, switch, sensor, automation)")] string domain)
     {
-        _logger.LogDebug("Listing entities for domain {Domain}...", domain);
+        _logger.LogInformation("Listing entities for domain {Domain}...", domain);
 
         try
         {
@@ -239,7 +239,7 @@ public sealed class HomeAssistantPlugin
     [Description("Lists all available Home Assistant automations.")]
     public async Task<string> ListAutomations()
     {
-        _logger.LogDebug("Listing automations...");
+        _logger.LogInformation("Listing automations...");
 
         try
         {

@@ -48,6 +48,8 @@ public sealed class HealingChainService
             return null;
         }
 
+        _logger.LogInformation("Planning healing chain for symptom: {Symptom}", symptom);
+
         if (_activeChains.Count >= _config.MaxConcurrentChains)
         {
             _logger.LogWarning("Max concurrent healing chains ({Max}) reached, skipping", _config.MaxConcurrentChains);
@@ -62,6 +64,7 @@ public sealed class HealingChainService
         var steps = await PlanRecoveryAsync(symptom, containerName, pastContext, ct);
         if (steps == null || steps.Count == 0)
         {
+            _logger.LogWarning("Healing chain returned no steps for {Symptom}", symptom);
             return new HealingChainResult
             {
                 ChainId = 0,
@@ -250,6 +253,9 @@ public sealed class HealingChainService
 
         await UpdateChainStatusAsync(chain.Id, finalStatus, executionLog, runbookId, ct,
             chain.RequiredConfirmation);
+
+        _logger.LogInformation("Healing chain completed: {Status}, {StepsExecuted}/{TotalSteps} steps",
+            finalStatus, stepsExecuted, steps.Count);
 
         var message = success
             ? $"Healing chain completed: {stepsExecuted}/{steps.Count} steps executed."
