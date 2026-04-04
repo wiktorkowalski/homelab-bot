@@ -52,6 +52,21 @@ public sealed class MemoryService
             .FirstOrDefaultAsync();
     }
 
+    public async Task<Dictionary<int, Investigation>> GetInvestigationsByIdsAsync(List<int> ids)
+    {
+        if (ids.Count == 0)
+        {
+            return new Dictionary<int, Investigation>();
+        }
+
+        await using var db = await _dbFactory.CreateDbContextAsync();
+
+        return await db.Investigations
+            .Include(i => i.Steps)
+            .Where(i => ids.Contains(i.Id))
+            .ToDictionaryAsync(i => i.Id);
+    }
+
     public async Task<Investigation?> GetInvestigationByIdAsync(int id)
     {
         await using var db = await _dbFactory.CreateDbContextAsync();

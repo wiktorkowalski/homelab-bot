@@ -161,13 +161,13 @@ public class InvestigationsController : ControllerBase
         [FromQuery] int limit = 5)
     {
         var items = await _similarityService.FindSimilarAsync(symptom, limit: limit);
-        var ids = items.Select(i => i.InvestigationId).ToList();
+        if (items.Count == 0)
+        {
+            return Ok(new List<InvestigationDto>());
+        }
 
-        // Look up full investigations to populate all DTO fields
-        var (allInvestigations, _) = await _memoryService.GetInvestigationsAsync(pageSize: 100, resolved: true);
-        var lookup = allInvestigations
-            .Where(inv => ids.Contains(inv.Id))
-            .ToDictionary(inv => inv.Id);
+        var ids = items.Select(i => i.InvestigationId).ToList();
+        var lookup = await _memoryService.GetInvestigationsByIdsAsync(ids);
 
         return Ok(items.Select(i =>
         {
