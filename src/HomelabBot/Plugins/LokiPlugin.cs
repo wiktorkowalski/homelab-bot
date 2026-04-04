@@ -5,9 +5,11 @@ using System.Text.Json;
 using HomelabBot.Configuration;
 using Microsoft.Extensions.Options;
 using Microsoft.SemanticKernel;
+using ModelContextProtocol.Server;
 
 namespace HomelabBot.Plugins;
 
+[McpServerToolType]
 public sealed class LokiPlugin
 {
     private readonly HttpClient _httpClient;
@@ -102,6 +104,7 @@ public sealed class LokiPlugin
     }
 
     [KernelFunction]
+    [McpServerTool(Name = "QueryLoki")]
     [Description("Executes a LogQL query against Loki. Returns matching log entries. Use ListLabels first to discover available labels.")]
     public async Task<string> QueryLogs(
         [Description("LogQL query expression (e.g., '{compose_service=\"traefik\"}' or '{container_name=~\".*traefik.*\"}')")] string query,
@@ -179,6 +182,7 @@ public sealed class LokiPlugin
     }
 
     [KernelFunction]
+    [McpServerTool]
     [Description("Gets recent logs for a specific Docker container. Tries multiple label patterns to find logs.")]
     public async Task<string> GetContainerLogs(
         [Description("Container name (will try multiple label patterns like compose_service, container_name)")] string containerName,
@@ -321,6 +325,7 @@ public sealed class LokiPlugin
     }
 
     [KernelFunction]
+    [McpServerTool(Name = "CountErrors")]
     [Description("Counts error/exception log lines per container over a time window. Returns container name and error count.")]
     public async Task<string> CountErrorsByContainer(
         [Description("Time range like '1h', '6h', '24h' (default 1h)")] string since = "1h",
@@ -438,6 +443,7 @@ public sealed class LokiPlugin
     }
 
     [KernelFunction]
+    [McpServerTool]
     [Description("Searches all logs for specific text (grep-style search).")]
     public async Task<string> SearchLogs(
         [Description("Text to search for in logs")] string searchText,

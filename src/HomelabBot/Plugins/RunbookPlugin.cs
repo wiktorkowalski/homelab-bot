@@ -6,9 +6,11 @@ using HomelabBot.Data.Entities;
 using HomelabBot.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.SemanticKernel;
+using ModelContextProtocol.Server;
 
 namespace HomelabBot.Plugins;
 
+[McpServerToolType]
 public sealed class RunbookPlugin
 {
     private readonly IDbContextFactory<HomelabDbContext> _dbFactory;
@@ -62,6 +64,7 @@ public sealed class RunbookPlugin
     }
 
     [KernelFunction]
+    [McpServerTool]
     [Description("List all runbooks with their status, trigger conditions, and execution stats.")]
     public async Task<string> ListRunbooks()
     {

@@ -3,9 +3,11 @@ using System.Text;
 using HomelabBot.Models;
 using HomelabBot.Services;
 using Microsoft.SemanticKernel;
+using ModelContextProtocol.Server;
 
 namespace HomelabBot.Plugins;
 
+[McpServerToolType]
 public sealed class InvestigationPlugin
 {
     private readonly MemoryService _memoryService;
@@ -175,6 +177,7 @@ public sealed class InvestigationPlugin
     }
 
     [KernelFunction]
+    [McpServerTool]
     [Description("Search past incidents for similar issues. Use this to check history before starting a new investigation.")]
     public async Task<string> SearchPastIncidents(
         [Description("Symptom or keywords to search for")] string symptom)

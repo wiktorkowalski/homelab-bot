@@ -3,9 +3,11 @@ using System.Text;
 using HomelabBot.Services;
 using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.ChatCompletion;
+using ModelContextProtocol.Server;
 
 namespace HomelabBot.Plugins;
 
+[McpServerToolType]
 public sealed class KnowledgePlugin
 {
     private readonly KnowledgeService _knowledgeService;
@@ -31,6 +33,7 @@ public sealed class KnowledgePlugin
     }
 
     [KernelFunction]
+    [McpServerTool(Name = "SearchKnowledge")]
     [Description("Recall what you know about a topic. Call this BEFORE taking actions to check existing knowledge.")]
     public async Task<string> RecallKnowledge(
         [Description("Topic to recall (e.g., 'docker', 'loki', 'network', 'alias'). Leave empty for all.")] string? topic = null)

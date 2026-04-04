@@ -7,9 +7,11 @@ using System.Text.Json.Serialization;
 using HomelabBot.Configuration;
 using Microsoft.Extensions.Options;
 using Microsoft.SemanticKernel;
+using ModelContextProtocol.Server;
 
 namespace HomelabBot.Plugins;
 
+[McpServerToolType]
 public sealed class HomeAssistantPlugin
 {
     private readonly HttpClient _httpClient;
@@ -33,6 +35,7 @@ public sealed class HomeAssistantPlugin
     }
 
     [KernelFunction]
+    [McpServerTool]
     [Description("Gets the current state of a Home Assistant entity by its entity_id.")]
     public async Task<string> GetEntityState([Description("Entity ID (e.g., sensor.temperature, light.living_room)")] string entityId)
     {
@@ -157,6 +160,7 @@ public sealed class HomeAssistantPlugin
     }
 
     [KernelFunction]
+    [McpServerTool]
     [Description("Turns on a Home Assistant entity (light, switch, etc.).")]
     public async Task<string> TurnOn([Description("Entity ID to turn on")] string entityId)
     {
@@ -182,6 +186,7 @@ public sealed class HomeAssistantPlugin
     }
 
     [KernelFunction]
+    [McpServerTool]
     [Description("Turns off a Home Assistant entity (light, switch, etc.).")]
     public async Task<string> TurnOff([Description("Entity ID to turn off")] string entityId)
     {

@@ -5,9 +5,11 @@ using System.Text.Json.Serialization;
 using HomelabBot.Configuration;
 using Microsoft.Extensions.Options;
 using Microsoft.SemanticKernel;
+using ModelContextProtocol.Server;
 
 namespace HomelabBot.Plugins;
 
+[McpServerToolType]
 public sealed class AlertmanagerPlugin
 {
     private readonly HttpClient _httpClient;
@@ -25,6 +27,7 @@ public sealed class AlertmanagerPlugin
     }
 
     [KernelFunction]
+    [McpServerTool(Name = "GetAlerts")]
     [Description("Gets all currently firing alerts from Alertmanager.")]
     public async Task<string> GetActiveAlerts()
     {

@@ -102,6 +102,18 @@ try
     {
         builder.Services.AddMcpServer()
             .WithHttpTransport()
+            .WithTools<DockerPlugin>()
+            .WithTools<PrometheusPlugin>()
+            .WithTools<AlertmanagerPlugin>()
+            .WithTools<LokiPlugin>()
+            .WithTools<GrafanaPlugin>()
+            .WithTools<MikroTikPlugin>()
+            .WithTools<TrueNASPlugin>()
+            .WithTools<HomeAssistantPlugin>()
+            .WithTools<NtfyPlugin>()
+            .WithTools<KnowledgePlugin>()
+            .WithTools<InvestigationPlugin>()
+            .WithTools<RunbookPlugin>()
             .WithTools<HomelabMcpTools>();
     }
 
