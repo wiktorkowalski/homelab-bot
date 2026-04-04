@@ -209,6 +209,12 @@ public sealed class KnowledgeService
 
         foreach (var fact in facts)
         {
+            // Notification preferences are managed by SmartNotificationService — don't decay them
+            if (fact.Topic.StartsWith(SmartNotificationService.TopicPrefix))
+            {
+                continue;
+            }
+
             if (fact.LastVerified.HasValue)
             {
                 var daysSinceVerified = (now - fact.LastVerified.Value).TotalDays;

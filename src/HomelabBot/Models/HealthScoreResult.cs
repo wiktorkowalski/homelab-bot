@@ -1,6 +1,6 @@
 namespace HomelabBot.Models;
 
-public sealed class HealthScoreResult
+public sealed record HealthScoreResult
 {
     public required int Score { get; init; }
 
@@ -13,4 +13,6 @@ public sealed class HealthScoreResult
     public required int MonitoringDeductions { get; init; }
 
     public required int ConnectivityDeductions { get; init; }
+
+    public int BlastRadiusDeductions { get; init; }
 }

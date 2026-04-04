@@ -6,37 +6,62 @@ using NSubstitute;
 
 namespace HomelabBot.Tests;
 
-public class LogAnomalyServiceTests
+public class LogAnomalyDetectionTests
 {
-    private readonly LogAnomalyConfiguration _config;
-    private readonly LogAnomalyService _service;
+    private readonly AnomalyDetectionService _service;
 
-    public LogAnomalyServiceTests()
+    public LogAnomalyDetectionTests()
     {
-        _config = new LogAnomalyConfiguration { ErrorThreshold = 50 };
-        var configMonitor = Substitute.For<IOptionsMonitor<LogAnomalyConfiguration>>();
-        configMonitor.CurrentValue.Returns(_config);
+        var config = new AnomalyDetectionConfiguration { LogErrorThreshold = 50 };
+        var configMonitor = Substitute.For<IOptionsMonitor<AnomalyDetectionConfiguration>>();
+        configMonitor.CurrentValue.Returns(config);
+
+        var lokiConfig = Options.Create(new LokiConfiguration());
+        var httpClientFactory = Substitute.For<IHttpClientFactory>();
+        httpClientFactory.CreateClient(Arg.Any<string>()).Returns(new HttpClient());
 
         // DetectErrorSpikes only uses _config — other deps are unused, safe to pass null
-        _service = new LogAnomalyService(
+        _service = new AnomalyDetectionService(
             configMonitor,
-            null!,  // LokiPlugin
+            httpClientFactory,
+            null!,  // PrometheusQueryService
             null!,  // SmartNotificationService
             null!,  // DiscordBotService
-            NullLogger<LogAnomalyService>.Instance,
+            null!,  // IDbContextFactory
+            NullLogger<AnomalyDetectionService>.Instance,
+            null!,  // DockerPlugin
+            null!,  // TrueNASPlugin
+            null!,  // LokiPlugin
+            lokiConfig,
             null!); // ServiceStateStore
     }
 
     [Fact]
-    public void DetectErrorSpikes_FirstSeen_NoSpike()
+    public void DetectErrorSpikes_FirstCall_EstablishesBaseline()
     {
-        // previousCount=0 → condition "previousCount > 0" fails
         var errorCounts = new Dictionary<string, long>
         {
             ["nginx"] = 100,
         };
 
+        // First call establishes baseline — no spikes
         var spikes = _service.DetectErrorSpikes(errorCounts);
+
+        Assert.Empty(spikes);
+    }
+
+    [Fact]
+    public void DetectErrorSpikes_FirstSeen_NoSpike()
+    {
+        // Establish baseline
+        _service.DetectErrorSpikes(new Dictionary<string, long> { ["nginx"] = 10 });
+
+        // New container with previousCount=0 → condition "previousCount > 0" fails
+        var spikes = _service.DetectErrorSpikes(new Dictionary<string, long>
+        {
+            ["nginx"] = 10,
+            ["newservice"] = 100,
+        });
 
         Assert.Empty(spikes);
     }
@@ -131,22 +156,6 @@ public class LogAnomalyServiceTests
     }
 
     [Fact]
-    public void DetectErrorSpikes_NewContainerAppearing_NoSpike()
-    {
-        // Establish baseline for nginx only
-        _service.DetectErrorSpikes(new Dictionary<string, long> { ["nginx"] = 20 });
-
-        // New container appears with high count — still first seen (prev=0)
-        var spikes = _service.DetectErrorSpikes(new Dictionary<string, long>
-        {
-            ["nginx"] = 20,
-            ["newservice"] = 200,
-        });
-
-        Assert.Empty(spikes);
-    }
-
-    [Fact]
     public void DetectErrorSpikes_ExactlyAtThreshold_Spikes()
     {
         // Establish baseline
@@ -161,6 +170,9 @@ public class LogAnomalyServiceTests
     [Fact]
     public void DetectErrorSpikes_EmptyInput_NoSpikes()
     {
+        // Establish baseline
+        _service.DetectErrorSpikes(new Dictionary<string, long>());
+
         var spikes = _service.DetectErrorSpikes(new Dictionary<string, long>());
 
         Assert.Empty(spikes);

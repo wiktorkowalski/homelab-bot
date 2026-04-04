@@ -10,6 +10,7 @@ public sealed class HealthScoreBackgroundService : ScheduledBackgroundService
     private readonly SummaryDataAggregator _aggregator;
     private readonly HealthScoreService _healthScoreService;
     private readonly SmartNotificationService _smartNotification;
+    private readonly ContagionTrackerService _contagionTracker;
     private readonly ILogger<HealthScoreBackgroundService> _logger;
     private int? _lastNotifiedScore;
 
@@ -18,6 +19,7 @@ public sealed class HealthScoreBackgroundService : ScheduledBackgroundService
         SummaryDataAggregator aggregator,
         HealthScoreService healthScoreService,
         SmartNotificationService smartNotification,
+        ContagionTrackerService contagionTracker,
         DiscordBotService discordBot,
         ILogger<HealthScoreBackgroundService> logger)
         : base(discordBot)
@@ -26,6 +28,7 @@ public sealed class HealthScoreBackgroundService : ScheduledBackgroundService
         _aggregator = aggregator;
         _healthScoreService = healthScoreService;
         _smartNotification = smartNotification;
+        _contagionTracker = contagionTracker;
         _logger = logger;
     }
 
@@ -44,6 +47,19 @@ public sealed class HealthScoreBackgroundService : ScheduledBackgroundService
     {
         var data = await _aggregator.AggregateAsync(ct);
         var result = _healthScoreService.CalculateScore(data);
+
+        // Apply additional deductions for stopped containers with high blast radius
+        var blastDeductions = await CalculateBlastRadiusDeductionsAsync(data, ct);
+        if (blastDeductions > 0)
+        {
+            // Cap deductions so they don't exceed the remaining score
+            var cappedDeductions = Math.Min(blastDeductions, result.Score);
+            result = result with
+            {
+                Score = result.Score - cappedDeductions,
+                BlastRadiusDeductions = cappedDeductions,
+            };
+        }
 
         // Query previous score BEFORE recording the new one
         var threshold = _config.CurrentValue.AlertDropThreshold;
@@ -106,6 +122,37 @@ public sealed class HealthScoreBackgroundService : ScheduledBackgroundService
         }
     }
 
+    private async Task<int> CalculateBlastRadiusDeductionsAsync(DailySummaryData data, CancellationToken ct)
+    {
+        var stoppedContainers = data.Containers
+            .Where(c => c.State != "running")
+            .ToList();
+
+        if (stoppedContainers.Count == 0)
+        {
+            return 0;
+        }
+
+        var tasks = stoppedContainers.Select(async container =>
+        {
+            try
+            {
+                var report = await _contagionTracker.AnalyzeBlastRadiusAsync(container.Name, "stopped", ct);
+                return report.AffectedServices.Count * 2;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to analyze blast radius for {Container}", container.Name);
+                return 0;
+            }
+        });
+
+        var deductions = await Task.WhenAll(tasks);
+        var totalDeductions = deductions.Sum();
+
+        return totalDeductions;
+    }
+
     private static string BuildBreakdown(Models.HealthScoreResult result)
     {
         var parts = new List<string>();
@@ -132,6 +179,11 @@ public sealed class HealthScoreBackgroundService : ScheduledBackgroundService
         if (result.ConnectivityDeductions > 0)
         {
             parts.Add($"Connectivity: -{result.ConnectivityDeductions}");
+        }
+
+        if (result.BlastRadiusDeductions > 0)
+        {
+            parts.Add($"Blast radius: -{result.BlastRadiusDeductions}");
         }
 
         return parts.Count > 0 ? $"Deductions: {string.Join(", ", parts)}" : "No deductions";

@@ -91,6 +91,7 @@ public sealed class HealthScoreService
             PoolDeductions = result.PoolDeductions,
             MonitoringDeductions = result.MonitoringDeductions,
             ConnectivityDeductions = result.ConnectivityDeductions,
+            BlastRadiusDeductions = result.BlastRadiusDeductions,
         });
         await db.SaveChangesAsync(ct);
         _logger.LogInformation("Recorded health score: {Score}/100", result.Score);

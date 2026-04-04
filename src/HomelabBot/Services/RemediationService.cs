@@ -11,6 +11,7 @@ public sealed class RemediationService
     private readonly AutoRemediationService _autoRemediation;
     private readonly IncidentSimilarityService _similarityService;
     private readonly HealingChainService _healingChain;
+    private readonly ContagionTrackerService _contagionTracker;
     private readonly ILogger<RemediationService> _logger;
 
     public RemediationService(
@@ -19,6 +20,7 @@ public sealed class RemediationService
         AutoRemediationService autoRemediation,
         IncidentSimilarityService similarityService,
         HealingChainService healingChain,
+        ContagionTrackerService contagionTracker,
         ILogger<RemediationService> logger)
     {
         _runbookTrigger = runbookTrigger;
@@ -26,6 +28,7 @@ public sealed class RemediationService
         _autoRemediation = autoRemediation;
         _similarityService = similarityService;
         _healingChain = healingChain;
+        _contagionTracker = contagionTracker;
         _logger = logger;
     }
 
@@ -94,8 +97,23 @@ public sealed class RemediationService
             };
         }
 
-        // 6. Nothing handled — return context for LLM investigation fallback
+        // 6. Nothing handled — analyze blast radius and return context for LLM investigation fallback
         _logger.LogInformation("Remediation for {AlertName}: no strategy handled, falling back to LLM", alert.AlertName);
+
+        BlastRadiusReport? blastRadius = null;
+        if (containerName != null)
+        {
+            try
+            {
+                blastRadius = await _contagionTracker.AnalyzeBlastRadiusAsync(
+                    containerName, alert.AlertName, ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to analyze blast radius for {Container}", containerName);
+            }
+        }
+
         return new RemediationOutcome
         {
             Message = string.Empty,
@@ -105,6 +123,7 @@ public sealed class RemediationService
             ContainerName = containerName,
             MatchedRunbooks = matchedRunbooks,
             SimilarIncidents = similarIncidents,
+            BlastRadius = blastRadius,
         };
     }
 }

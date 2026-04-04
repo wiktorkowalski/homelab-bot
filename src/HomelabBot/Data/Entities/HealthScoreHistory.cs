@@ -16,5 +16,7 @@ public sealed class HealthScoreHistory
 
     public int ConnectivityDeductions { get; set; }
 
+    public int BlastRadiusDeductions { get; set; }
+
     public DateTime RecordedAt { get; set; } = DateTime.UtcNow;
 }

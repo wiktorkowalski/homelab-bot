@@ -78,9 +78,6 @@ try
     builder.Services.AddOptions<SecurityAuditConfiguration>()
         .Bind(builder.Configuration.GetSection(SecurityAuditConfiguration.SectionName));
 
-    builder.Services.AddOptions<LogAnomalyConfiguration>()
-        .Bind(builder.Configuration.GetSection(LogAnomalyConfiguration.SectionName));
-
     builder.Services.AddOptions<KnowledgeRefreshConfiguration>()
         .Bind(builder.Configuration.GetSection(KnowledgeRefreshConfiguration.SectionName));
 
@@ -205,7 +202,6 @@ try
     builder.Services.AddSingleton<SecurityAuditService>();
     builder.Services.AddHostedService(sp => sp.GetRequiredService<SecurityAuditService>());
     builder.Services.AddHostedService<AnomalyDetectionService>();
-    builder.Services.AddHostedService<LogAnomalyService>();
     builder.Services.AddHostedService<KnowledgeRefreshService>();
 
     // API Controllers

@@ -10,7 +10,7 @@ public sealed class SmartNotificationService
 {
     private const string TopicPrefixSuppress = "notification_preference:suppress:";
     private const string TopicPrefixAlways = "notification_preference:always:";
-    private const string TopicPrefix = "notification_preference";
+    internal const string TopicPrefix = "notification_preference";
     internal const string ButtonPrefixNormal = "notif_normal_";
     internal const string ButtonPrefixInvestigate = "notif_investigate_";
 
