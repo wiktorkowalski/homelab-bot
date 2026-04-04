@@ -146,7 +146,7 @@ public class HomeLabCommands : ApplicationCommandModule
             _logger.LogDebug("Logs command invoked for {Container} by {User}",
                 containerName, ctx.User.Username);
 
-            var logs = await _dockerPlugin.GetContainerLogs(containerName, (int)lines);
+            var logs = await _dockerPlugin.GetContainerLogsFromDocker(containerName, (int)lines);
 
             await EditResponseWithContentOrSplitAsync(ctx, logs,
                 $"Logs for **{containerName}** (last {lines} lines):");
@@ -393,7 +393,7 @@ public class HomeLabCommands : ApplicationCommandModule
             if (!string.IsNullOrWhiteSpace(container))
             {
                 var errors = await _lokiPlugin.CountErrorsByContainer("1h");
-                var logs = await _lokiPlugin.GetContainerLogs(container, "1h");
+                var logs = await _lokiPlugin.GetContainerLogsFromLoki(container, "1h");
 
                 // Truncate for token efficiency
                 if (logs.Length > 2000)

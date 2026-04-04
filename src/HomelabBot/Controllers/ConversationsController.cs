@@ -1,4 +1,5 @@
 using HomelabBot.Data;
+using HomelabBot.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -87,15 +88,6 @@ public class ConversationsController : ControllerBase
         });
     }
 }
-
-public record PagedResult<T>
-{
-    public required IReadOnlyList<T> Items { get; init; }
-    public int TotalCount { get; init; }
-    public int Page { get; init; }
-    public int PageSize { get; init; }
-}
-
 public record ConversationDto
 {
     public int Id { get; init; }
