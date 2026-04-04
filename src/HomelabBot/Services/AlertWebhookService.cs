@@ -76,7 +76,7 @@ public sealed class AlertWebhookService
         var conversationId = BitConverter.ToUInt64(hashBytes, 0);
 
         string analysis;
-        List<Data.Entities.Pattern> matchedPatterns = [];
+        List<Data.Entities.Runbook> matchedRunbooks = [];
 
         if (alert.IsFiring)
         {
@@ -105,11 +105,11 @@ public sealed class AlertWebhookService
 
             // Check for known patterns before LLM investigation
             var searchTerms = $"{alert.AlertName} {alert.Description ?? alert.Summary ?? ""}";
-            matchedPatterns = await _memoryService.GetRelevantPatternsAsync(searchTerms);
+            matchedRunbooks = await _memoryService.GetRelevantRunbooksAsync(searchTerms);
 
             // Try auto-remediation before LLM investigation
             var containerName = AutoRemediationService.ExtractContainerName(alert);
-            var remediationResult = await _autoRemediationService.TryAutoRemediateAsync(alert, matchedPatterns, ct);
+            var remediationResult = await _autoRemediationService.TryAutoRemediateAsync(alert, matchedRunbooks, ct);
             if (remediationResult != null)
             {
                 if (remediationResult.WasAutoExecuted)
@@ -156,14 +156,14 @@ public sealed class AlertWebhookService
             }
 
             var patternContext = "";
-            if (matchedPatterns.Count > 0)
+            if (matchedRunbooks.Count > 0)
             {
-                var patternLines = matchedPatterns.Select(p =>
+                var patternLines = matchedRunbooks.Select(p =>
                 {
                     var successInfo = (p.SuccessCount + p.FailureCount) > 0
                         ? $" (resolved {p.SuccessRate:F0}% of cases)"
                         : "";
-                    return $"- {p.Symptom}: {p.CommonCause} → Fix: {p.Resolution}{successInfo}";
+                    return $"- {p.TriggerCondition}: {p.CommonCause} → Fix: {p.Description}{successInfo}";
                 });
                 patternContext = $"\n\nKNOWN PATTERNS for this type of issue (consider these first):\n{string.Join("\n", patternLines)}\n";
             }
@@ -210,12 +210,12 @@ public sealed class AlertWebhookService
 
         var embed = BuildAlertEmbed(alert, analysis);
 
-        if (matchedPatterns.Count > 0)
+        if (matchedRunbooks.Count > 0)
         {
             await _discordService.SendDmWithComponentsAsync(
                 HomelabOwner.DiscordUserId,
                 embed,
-                BuildPatternFeedbackButtons(matchedPatterns));
+                BuildPatternFeedbackButtons(matchedRunbooks));
         }
         else
         {
@@ -223,7 +223,7 @@ public sealed class AlertWebhookService
         }
     }
 
-    private static List<DiscordComponent> BuildPatternFeedbackButtons(List<Data.Entities.Pattern> patterns)
+    private static List<DiscordComponent> BuildPatternFeedbackButtons(List<Data.Entities.Runbook> patterns)
     {
         var components = new List<DiscordComponent>();
 

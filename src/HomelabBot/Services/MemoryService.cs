@@ -139,7 +139,7 @@ public sealed class MemoryService
         // Try to extract a pattern if we have steps
         if (investigation.Steps.Count > 0)
         {
-            await TryCreatePatternAsync(db, investigation);
+            await TryCreateOrUpdateRunbookAsync(db, investigation);
         }
 
         await db.SaveChangesAsync();
@@ -158,7 +158,7 @@ public sealed class MemoryService
         return investigation;
     }
 
-    public async Task<List<Pattern>> GetRelevantPatternsAsync(string symptom, int limit = 3)
+    public async Task<List<Runbook>> GetRelevantRunbooksAsync(string symptom, int limit = 3)
     {
         await using var db = await _dbFactory.CreateDbContextAsync();
 
@@ -169,63 +169,64 @@ public sealed class MemoryService
             return [];
         }
 
-        var patterns = await db.Patterns
-            .OrderByDescending(p => p.OccurrenceCount)
+        var runbooks = await db.Runbooks
+            .Where(r => r.Enabled)
+            .OrderByDescending(r => r.OccurrenceCount)
             .Take(50)
             .ToListAsync();
 
-        var scored = patterns
-            .Select(p =>
+        var scored = runbooks
+            .Select(r =>
             {
-                var keywordScore = KeywordMatcher.Score(symptom, p.Symptom);
+                var keywordScore = KeywordMatcher.Score(symptom, r.TriggerCondition);
 
                 if (keywordScore == 0)
                 {
-                    return new { Pattern = p, Score = 0.0 };
+                    return new { Runbook = r, Score = 0.0 };
                 }
 
                 // Frequency bonus only when there's a keyword match
-                var score = keywordScore + Math.Min(p.OccurrenceCount / 3, 3);
+                var score = keywordScore + Math.Min(r.OccurrenceCount / 3, 3);
 
-                return new { Pattern = p, Score = score };
+                return new { Runbook = r, Score = score };
             })
             .Where(x => x.Score > 0)
             .OrderByDescending(x => x.Score)
-            .ThenByDescending(x => x.Pattern.SuccessRate)
+            .ThenByDescending(x => x.Runbook.SuccessRate)
             .Take(limit)
-            .Select(x => x.Pattern)
+            .Select(x => x.Runbook)
             .ToList();
 
         return scored;
     }
 
-    public async Task RecordPatternFeedbackAsync(int patternId, bool helpful)
+    public async Task RecordRunbookFeedbackAsync(int runbookId, bool helpful)
     {
         await using var db = await _dbFactory.CreateDbContextAsync();
 
-        var pattern = await db.Patterns.FindAsync(patternId);
-        if (pattern == null)
+        var runbook = await db.Runbooks.FindAsync(runbookId);
+        if (runbook == null)
         {
             return;
         }
 
         if (helpful)
         {
-            pattern.SuccessCount++;
+            runbook.SuccessCount++;
         }
         else
         {
-            pattern.FailureCount++;
+            runbook.FailureCount++;
         }
 
         await db.SaveChangesAsync();
-        _logger.LogDebug("Recorded {Feedback} feedback for pattern {Id}", helpful ? "positive" : "negative", patternId);
+        _logger.LogDebug("Recorded {Feedback} feedback for runbook {Id}", helpful ? "positive" : "negative", runbookId);
     }
 
     public async Task<string> GenerateIncidentContextAsync(string symptom)
     {
         var similarIncidents = await _similarityService.FindSimilarAsync(symptom);
-        var patterns = await GetRelevantPatternsAsync(symptom);
+        var patterns = await GetRelevantRunbooksAsync(symptom);
 
         if (similarIncidents.Count == 0 && patterns.Count == 0)
         {
@@ -243,10 +244,10 @@ public sealed class MemoryService
                 var successInfo = (p.SuccessCount + p.FailureCount) > 0
                     ? $" (resolved {p.SuccessRate:F0}% of cases)"
                     : "";
-                sb.AppendLine($"- **{p.Symptom}**: Usually caused by {p.CommonCause}{successInfo}");
-                if (!string.IsNullOrEmpty(p.Resolution))
+                sb.AppendLine($"- **{p.TriggerCondition}**: Usually caused by {p.CommonCause}{successInfo}");
+                if (!string.IsNullOrEmpty(p.Description))
                 {
-                    sb.AppendLine($"  Fix: {p.Resolution}");
+                    sb.AppendLine($"  Fix: {p.Description}");
                 }
             }
         }
@@ -269,11 +270,11 @@ public sealed class MemoryService
         return sb.ToString();
     }
 
-    private async Task TryCreatePatternAsync(HomelabDbContext db, Investigation investigation)
+    private async Task TryCreateOrUpdateRunbookAsync(HomelabDbContext db, Investigation investigation)
     {
-        // Look for existing pattern with same trigger
-        var existing = await db.Patterns
-            .FirstOrDefaultAsync(p => p.Symptom == investigation.Trigger);
+        // Look for existing runbook with same trigger condition
+        var existing = await db.Runbooks
+            .FirstOrDefaultAsync(r => r.TriggerCondition == investigation.Trigger && r.OccurrenceCount > 0);
 
         if (existing != null)
         {
@@ -281,16 +282,20 @@ public sealed class MemoryService
             existing.LastSeen = DateTime.UtcNow;
             if (!string.IsNullOrEmpty(investigation.Resolution))
             {
-                existing.Resolution = investigation.Resolution;
+                existing.Description = investigation.Resolution;
             }
         }
         else if (!string.IsNullOrEmpty(investigation.Resolution))
         {
-            // Create new pattern from resolved investigation
-            var pattern = new Pattern
+            // Create new runbook from resolved investigation
+            var runbook = new Runbook
             {
-                Symptom = investigation.Trigger,
-                Resolution = investigation.Resolution,
+                Name = $"Pattern: {investigation.Trigger}",
+                TriggerCondition = investigation.Trigger,
+                StepsJson = "[]",
+                SourceType = RunbookSourceType.AutoCompiled,
+                Description = investigation.Resolution,
+                OccurrenceCount = 1,
                 LastSeen = DateTime.UtcNow
             };
 
@@ -301,40 +306,41 @@ public sealed class MemoryService
 
             if (!string.IsNullOrEmpty(stepSummary))
             {
-                pattern.CommonCause = stepSummary.Length > 200
+                runbook.CommonCause = stepSummary.Length > 200
                     ? stepSummary[..197] + "..."
                     : stepSummary;
             }
 
-            db.Patterns.Add(pattern);
+            db.Runbooks.Add(runbook);
         }
     }
 
-    public async Task<List<Pattern>> ListPatternsAsync(int limit = 50)
+    public async Task<List<Runbook>> ListRunbookPatternsAsync(int limit = 50)
     {
         await using var db = await _dbFactory.CreateDbContextAsync();
-        return await db.Patterns
-            .OrderByDescending(p => p.OccurrenceCount)
+        return await db.Runbooks
+            .Where(r => r.OccurrenceCount > 0)
+            .OrderByDescending(r => r.OccurrenceCount)
             .Take(limit)
             .ToListAsync();
     }
 
-    public async Task<Pattern?> GetPatternByIdAsync(int id)
+    public async Task<Runbook?> GetRunbookByIdAsync(int id)
     {
         await using var db = await _dbFactory.CreateDbContextAsync();
-        return await db.Patterns.FindAsync(id);
+        return await db.Runbooks.FindAsync(id);
     }
 
-    public async Task<bool> DeletePatternAsync(int id)
+    public async Task<bool> DeleteRunbookAsync(int id)
     {
         await using var db = await _dbFactory.CreateDbContextAsync();
-        var pattern = await db.Patterns.FindAsync(id);
-        if (pattern == null)
+        var runbook = await db.Runbooks.FindAsync(id);
+        if (runbook == null || runbook.OccurrenceCount == 0)
         {
             return false;
         }
 
-        db.Patterns.Remove(pattern);
+        db.Runbooks.Remove(runbook);
         await db.SaveChangesAsync();
         return true;
     }

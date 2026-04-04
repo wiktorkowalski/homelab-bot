@@ -24,7 +24,6 @@ public class RunbookCompilerServiceTests : IClassFixture<DatabaseFixture>, IDisp
         db.Runbooks.RemoveRange(db.Runbooks);
         db.Investigations.RemoveRange(db.Investigations);
         db.RemediationActions.RemoveRange(db.RemediationActions);
-        db.Patterns.RemoveRange(db.Patterns);
         db.SaveChanges();
     }
 
@@ -41,14 +40,16 @@ public class RunbookCompilerServiceTests : IClassFixture<DatabaseFixture>, IDisp
             Success = true
         };
 
-        var pattern = new Pattern
+        var sourceRunbook = new Runbook
         {
-            Symptom = "nginx high cpu",
+            Name = "Pattern: nginx high cpu",
+            TriggerCondition = "nginx high cpu",
+            StepsJson = "[]",
             CommonCause = "traffic spike",
-            Resolution = "restart container"
+            Description = "restart container"
         };
 
-        var result = await _service.CompileFromRemediationAsync(action, pattern);
+        var result = await _service.CompileFromRemediationAsync(action, sourceRunbook);
 
         Assert.NotNull(result);
         Assert.Contains("nginx high cpu", result.Name);
@@ -170,14 +171,16 @@ public class RunbookCompilerServiceTests : IClassFixture<DatabaseFixture>, IDisp
             Success = true
         };
 
-        var pattern = new Pattern
+        var sourceRunbook = new Runbook
         {
-            Symptom = "nginx container down",
+            Name = "Pattern: nginx container down",
+            TriggerCondition = "nginx container down",
+            StepsJson = "[]",
             CommonCause = "OOM",
-            Resolution = "restart"
+            Description = "restart"
         };
 
-        var result = await _service.CompileFromRemediationAsync(action, pattern);
+        var result = await _service.CompileFromRemediationAsync(action, sourceRunbook);
 
         Assert.NotNull(result);
         Assert.Equal(2, result.Version);
@@ -250,14 +253,16 @@ public class RunbookCompilerServiceTests : IClassFixture<DatabaseFixture>, IDisp
             Success = true
         };
 
-        var pattern = new Pattern
+        var sourceRunbook = new Runbook
         {
-            Symptom = "nginx down",
+            Name = "Pattern: nginx down",
+            TriggerCondition = "nginx down",
+            StepsJson = "[]",
             CommonCause = "crash",
-            Resolution = "restart"
+            Description = "restart"
         };
 
-        var result = await _service.CompileFromRemediationAsync(action, pattern);
+        var result = await _service.CompileFromRemediationAsync(action, sourceRunbook);
 
         Assert.NotNull(result);
         // Should create a NEW runbook, not version the grafana one

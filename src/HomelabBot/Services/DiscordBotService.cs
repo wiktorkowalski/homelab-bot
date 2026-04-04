@@ -196,7 +196,7 @@ public sealed class DiscordBotService : BackgroundService
         {
             try
             {
-                await _memoryService.RecordPatternFeedbackAsync(patternId, isHelpful);
+                await _memoryService.RecordRunbookFeedbackAsync(patternId, isHelpful);
             }
             catch (Exception ex)
             {

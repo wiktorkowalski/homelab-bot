@@ -109,7 +109,7 @@ public class MemoryServiceTests : IClassFixture<DatabaseFixture>
     }
 
     [Fact]
-    public async Task ResolveInvestigation_CreatesPattern()
+    public async Task ResolveInvestigation_CreatesRunbook()
     {
         // Arrange
         var threadId = (ulong)Random.Shared.NextInt64();
@@ -122,26 +122,26 @@ public class MemoryServiceTests : IClassFixture<DatabaseFixture>
 
         // Assert
         using var db = _fixture.DbContextFactory.CreateDbContext();
-        var pattern = db.Patterns.FirstOrDefault(p => p.Symptom == uniqueTrigger);
-        Assert.NotNull(pattern);
-        Assert.Equal("applied fix", pattern.Resolution);
+        var runbook = db.Runbooks.FirstOrDefault(r => r.TriggerCondition == uniqueTrigger);
+        Assert.NotNull(runbook);
+        Assert.Equal("applied fix", runbook.Description);
     }
 
     [Fact]
-    public async Task GetRelevantPatterns_ReturnsMatchingPatterns()
+    public async Task GetRelevantRunbooks_ReturnsMatchingRunbooks()
     {
-        // Arrange - create a resolved investigation to generate pattern
+        // Arrange - create a resolved investigation to generate runbook
         var threadId = (ulong)Random.Shared.NextInt64();
         var inv = await _service.StartInvestigationAsync(threadId, "database connection failed");
         await _service.RecordStepAsync(inv.Id, "checked postgres", "Docker", "container restarting");
         await _service.ResolveInvestigationAsync(inv.Id, "increased memory limit");
 
         // Act
-        var patterns = await _service.GetRelevantPatternsAsync("database");
+        var runbooks = await _service.GetRelevantRunbooksAsync("database");
 
         // Assert
-        Assert.NotEmpty(patterns);
-        Assert.Contains(patterns, p => p.Symptom.Contains("database"));
+        Assert.NotEmpty(runbooks);
+        Assert.Contains(runbooks, r => r.TriggerCondition.Contains("database"));
     }
 
     [Fact]
@@ -216,14 +216,14 @@ public class MemoryServiceTests : IClassFixture<DatabaseFixture>
 
         // Assert
         using var db = _fixture.DbContextFactory.CreateDbContext();
-        var pattern = db.Patterns.FirstOrDefault(p => p.Symptom == trigger);
-        Assert.NotNull(pattern);
-        Assert.Contains("OOM detected", pattern.CommonCause);
-        Assert.Contains("swap exhausted", pattern.CommonCause);
+        var runbook = db.Runbooks.FirstOrDefault(r => r.TriggerCondition == trigger);
+        Assert.NotNull(runbook);
+        Assert.Contains("OOM detected", runbook.CommonCause);
+        Assert.Contains("swap exhausted", runbook.CommonCause);
     }
 
     [Fact]
-    public async Task TryCreatePattern_ExistingSymptom_IncrementsOccurrenceCount()
+    public async Task TryCreateOrUpdateRunbook_ExistingTrigger_IncrementsOccurrenceCount()
     {
         // Arrange
         var trigger = $"recurring-{Guid.NewGuid()}";
@@ -240,25 +240,25 @@ public class MemoryServiceTests : IClassFixture<DatabaseFixture>
 
         // Assert
         using var db = _fixture.DbContextFactory.CreateDbContext();
-        var pattern = db.Patterns.FirstOrDefault(p => p.Symptom == trigger);
-        Assert.NotNull(pattern);
-        Assert.Equal(2, pattern.OccurrenceCount);
+        var runbook = db.Runbooks.FirstOrDefault(r => r.TriggerCondition == trigger);
+        Assert.NotNull(runbook);
+        Assert.Equal(2, runbook.OccurrenceCount);
     }
 
     [Fact]
-    public async Task ListPatterns_ReturnsOrderedByOccurrenceCount()
+    public async Task ListRunbookPatterns_ReturnsOrderedByOccurrenceCount()
     {
-        // Arrange — create patterns with different occurrence counts
+        // Arrange — create runbooks with different occurrence counts
         var trigger1 = $"list-low-{Guid.NewGuid()}";
         var trigger2 = $"list-high-{Guid.NewGuid()}";
 
-        // Create pattern with 1 occurrence
+        // Create runbook with 1 occurrence
         var t1 = (ulong)Random.Shared.NextInt64();
         var inv1 = await _service.StartInvestigationAsync(t1, trigger1);
         await _service.RecordStepAsync(inv1.Id, "s", null, "r");
         await _service.ResolveInvestigationAsync(inv1.Id, "fix");
 
-        // Create pattern with 2 occurrences
+        // Create runbook with 2 occurrences
         var t2 = (ulong)Random.Shared.NextInt64();
         var inv2 = await _service.StartInvestigationAsync(t2, trigger2);
         await _service.RecordStepAsync(inv2.Id, "s", null, "r");
@@ -270,19 +270,19 @@ public class MemoryServiceTests : IClassFixture<DatabaseFixture>
         await _service.ResolveInvestigationAsync(inv3.Id, "fix again");
 
         // Act
-        var patterns = await _service.ListPatternsAsync();
+        var patterns = await _service.ListRunbookPatternsAsync();
 
         // Assert
-        var idx1 = patterns.FindIndex(p => p.Symptom == trigger1);
-        var idx2 = patterns.FindIndex(p => p.Symptom == trigger2);
-        Assert.True(idx2 < idx1, "Higher occurrence pattern should come first");
+        var idx1 = patterns.FindIndex(p => p.TriggerCondition == trigger1);
+        var idx2 = patterns.FindIndex(p => p.TriggerCondition == trigger2);
+        Assert.True(idx2 < idx1, "Higher occurrence runbook should come first");
     }
 
     [Fact]
-    public async Task DeletePattern_Nonexistent_ReturnsFalse()
+    public async Task DeleteRunbook_Nonexistent_ReturnsFalse()
     {
         // Act
-        var result = await _service.DeletePatternAsync(999999);
+        var result = await _service.DeleteRunbookAsync(999999);
 
         // Assert
         Assert.False(result);

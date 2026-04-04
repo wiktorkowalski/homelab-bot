@@ -10,7 +10,7 @@ public sealed class RemediationAction
 
     public required string Trigger { get; set; }
 
-    public int? PatternId { get; set; }
+    public int? RunbookId { get; set; }
 
     public required string BeforeState { get; set; }
 

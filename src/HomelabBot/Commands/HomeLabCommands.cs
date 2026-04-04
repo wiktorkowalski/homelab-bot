@@ -719,7 +719,7 @@ public class HomeLabCommands : ApplicationCommandModule
             switch (action)
             {
                 case "list":
-                    var patterns = await _memoryService.ListPatternsAsync();
+                    var patterns = await _memoryService.ListRunbookPatternsAsync();
                     if (patterns.Count == 0)
                     {
                         response = "No remediation patterns found.";
@@ -727,7 +727,7 @@ public class HomeLabCommands : ApplicationCommandModule
                     else
                     {
                         var lines = patterns.Select(p =>
-                            $"**#{p.Id}** {p.Symptom} — {p.SuccessRate:F0}% success ({p.OccurrenceCount}x seen)");
+                            $"**#{p.Id}** {p.TriggerCondition} — {p.SuccessRate:F0}% success ({p.OccurrenceCount}x seen)");
                         response = $"**Remediation Patterns:**\n{string.Join("\n", lines)}";
                     }
 
@@ -740,7 +740,7 @@ public class HomeLabCommands : ApplicationCommandModule
                         break;
                     }
 
-                    var pattern = await _memoryService.GetPatternByIdAsync((int)id.Value);
+                    var pattern = await _memoryService.GetRunbookByIdAsync((int)id.Value);
                     if (pattern == null)
                     {
                         response = $"Pattern #{id} not found.";
@@ -748,9 +748,9 @@ public class HomeLabCommands : ApplicationCommandModule
                     else
                     {
                         response = $"**Pattern #{pattern.Id}**\n"
-                            + $"**Symptom:** {pattern.Symptom}\n"
+                            + $"**Symptom:** {pattern.TriggerCondition}\n"
                             + $"**Cause:** {pattern.CommonCause ?? "N/A"}\n"
-                            + $"**Resolution:** {pattern.Resolution ?? "N/A"}\n"
+                            + $"**Resolution:** {pattern.Description ?? "N/A"}\n"
                             + $"**Success rate:** {pattern.SuccessRate:F0}% ({pattern.SuccessCount}✓ / {pattern.FailureCount}✗)\n"
                             + $"**Occurrences:** {pattern.OccurrenceCount}\n"
                             + $"**Last seen:** {pattern.LastSeen:u}";
@@ -765,7 +765,7 @@ public class HomeLabCommands : ApplicationCommandModule
                         break;
                     }
 
-                    var deleted = await _memoryService.DeletePatternAsync((int)id.Value);
+                    var deleted = await _memoryService.DeleteRunbookAsync((int)id.Value);
                     response = deleted ? $"Pattern #{id} deleted." : $"Pattern #{id} not found.";
                     break;
 
