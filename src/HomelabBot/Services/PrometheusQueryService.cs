@@ -31,7 +31,7 @@ public sealed class PrometheusQueryService
 
             if (!response.IsSuccessStatusCode)
             {
-                _logger.LogDebug("Prometheus query failed with {Status}: {Query}",
+                _logger.LogWarning("Prometheus query failed with {Status}: {Query}",
                     response.StatusCode, query);
                 return null;
             }
@@ -52,7 +52,7 @@ public sealed class PrometheusQueryService
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "Failed to query Prometheus: {Query}", query);
+            _logger.LogWarning(ex, "Failed to query Prometheus: {Query}", query);
             return null;
         }
     }
@@ -70,7 +70,7 @@ public sealed class PrometheusQueryService
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "Failed to query Prometheus: {Query}", query);
+            _logger.LogWarning(ex, "Failed to query Prometheus: {Query}", query);
             return null;
         }
     }
@@ -109,7 +109,7 @@ public sealed class PrometheusQueryService
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "Failed to query Prometheus multiple: {Query}", query);
+            _logger.LogWarning(ex, "Failed to query Prometheus multiple: {Query}", query);
         }
 
         return results;
@@ -134,7 +134,7 @@ public sealed class PrometheusQueryService
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "Failed to get Prometheus targets");
+            _logger.LogWarning(ex, "Failed to get Prometheus targets");
             return [];
         }
     }
@@ -153,7 +153,7 @@ public sealed class PrometheusQueryService
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "Failed to query Prometheus range: {Query}", query);
+            _logger.LogWarning(ex, "Failed to query Prometheus range: {Query}", query);
             return null;
         }
     }
@@ -171,7 +171,7 @@ public sealed class PrometheusQueryService
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "Failed to get label values for {Label}", label);
+            _logger.LogWarning(ex, "Failed to get label values for {Label}", label);
             return null;
         }
     }

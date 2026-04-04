@@ -26,7 +26,7 @@ public sealed class KnowledgePlugin
         [Description("The fact to remember")] string fact,
         [Description("How/when this was learned (optional)")] string? context = null)
     {
-        _logger.LogDebug("Remembering fact: [{Topic}] {Fact}", topic, fact);
+        _logger.LogInformation("Remembering fact: [{Topic}] {Fact}", topic, fact);
 
         await _knowledgeService.RememberFactAsync(topic, fact, context);
         return $"Remembered: [{topic}] {fact}";
@@ -38,7 +38,7 @@ public sealed class KnowledgePlugin
     public async Task<string> RecallKnowledge(
         [Description("Topic to recall (e.g., 'docker', 'loki', 'network', 'alias'). Leave empty for all.")] string? topic = null)
     {
-        _logger.LogDebug("Recalling knowledge for topic: {Topic}", topic ?? "all");
+        _logger.LogInformation("Recalling knowledge for topic: {Topic}", topic ?? "all");
 
         var facts = await _knowledgeService.RecallAsync(topic, includeStale: true);
 
@@ -58,7 +58,7 @@ public sealed class KnowledgePlugin
         [Description("Natural language query (e.g., 'what port is portainer on', 'docker container info')")] string query,
         Kernel kernel)
     {
-        _logger.LogDebug("Smart recalling knowledge for: {Query}", query);
+        _logger.LogInformation("Smart recalling knowledge for: {Query}", query);
 
         var chatService = kernel.GetRequiredService<IChatCompletionService>();
         var facts = await _knowledgeService.SmartRecallAsync(query, chatService);
@@ -90,7 +90,7 @@ public sealed class KnowledgePlugin
         [Description("Alias type: 'mac' for device MACs, 'container' for Docker containers, 'entity' for Home Assistant")] string aliasType,
         [Description("The user's input containing the alias")] string userInput)
     {
-        _logger.LogDebug("Resolving alias: [{Type}] {Input}", aliasType, userInput);
+        _logger.LogInformation("Resolving alias: [{Type}] {Input}", aliasType, userInput);
 
         var resolved = await _knowledgeService.ResolveAliasAsync(aliasType, userInput);
 

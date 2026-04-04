@@ -32,7 +32,7 @@ public sealed class AlertmanagerPlugin
     [Description("Gets all currently firing alerts from Alertmanager.")]
     public async Task<string> GetActiveAlerts()
     {
-        _logger.LogDebug("Getting active alerts...");
+        _logger.LogInformation("Getting active alerts...");
 
         try
         {
@@ -102,7 +102,7 @@ public sealed class AlertmanagerPlugin
     [Description("Gets alerts grouped by labels (shows how alerts are organized).")]
     public async Task<string> GetAlertGroups()
     {
-        _logger.LogDebug("Getting alert groups...");
+        _logger.LogInformation("Getting alert groups...");
 
         try
         {
@@ -192,7 +192,7 @@ public sealed class AlertmanagerPlugin
     [Description("Lists all active silences.")]
     public async Task<string> ListSilences()
     {
-        _logger.LogDebug("Listing silences...");
+        _logger.LogInformation("Listing silences...");
 
         try
         {

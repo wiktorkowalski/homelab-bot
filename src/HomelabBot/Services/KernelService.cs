@@ -230,8 +230,9 @@ public sealed class KernelService
             activity?.SetTag("langfuse.trace.output", title);
             return title;
         }
-        catch
+        catch (Exception ex)
         {
+            _logger.LogWarning(ex, "Title generation failed, defaulting to 'Chat'");
             return "Chat";
         }
     }

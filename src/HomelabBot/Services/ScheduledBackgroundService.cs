@@ -35,13 +35,13 @@ public abstract class ScheduledBackgroundService : BackgroundService
             {
                 if (!IsEnabled)
                 {
-                    Logger.LogDebug("{Service} disabled, rechecking in 1 minute", GetType().Name);
+                    Logger.LogInformation("{Service} disabled, rechecking in 1 minute", GetType().Name);
                     await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);
                     continue;
                 }
 
                 var delay = GetDelay();
-                Logger.LogDebug("{Service} next run in {Delay}", GetType().Name, delay);
+                Logger.LogInformation("{Service} next run in {Delay}", GetType().Name, delay);
                 await Task.Delay(delay, stoppingToken);
 
                 await RunIterationAsync(stoppingToken);

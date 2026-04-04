@@ -1,4 +1,5 @@
 using HomelabBot.Services;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace HomelabBot.Tests;
 
@@ -8,7 +9,7 @@ public class ServiceStateStoreTests : IClassFixture<DatabaseFixture>
 
     public ServiceStateStoreTests(DatabaseFixture fixture)
     {
-        _store = new ServiceStateStore(fixture.DbContextFactory);
+        _store = new ServiceStateStore(fixture.DbContextFactory, NullLogger<ServiceStateStore>.Instance);
     }
 
     [Fact]

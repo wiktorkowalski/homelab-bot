@@ -117,7 +117,7 @@ public sealed class InvestigationService
         db.InvestigationSteps.Add(step);
         await db.SaveChangesAsync();
 
-        _logger.LogDebug("Recorded step for investigation {Id}: {Action}", investigationId, action);
+        _logger.LogInformation("Recorded step for investigation {Id}: {Action}", investigationId, action);
     }
 
     public async Task<Investigation?> ResolveInvestigationAsync(int investigationId, string resolution)
@@ -220,7 +220,7 @@ public sealed class InvestigationService
         }
 
         await db.SaveChangesAsync();
-        _logger.LogDebug("Recorded {Feedback} feedback for runbook {Id}", helpful ? "positive" : "negative", runbookId);
+        _logger.LogInformation("Recorded {Feedback} feedback for runbook {Id}", helpful ? "positive" : "negative", runbookId);
     }
 
     public async Task<string> GenerateIncidentContextAsync(string symptom)

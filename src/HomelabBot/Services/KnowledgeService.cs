@@ -54,7 +54,7 @@ public sealed class KnowledgeService
 
         db.Knowledge.Add(knowledge);
         await db.SaveChangesAsync();
-        _logger.LogDebug("Remembered: [{Topic}] {Fact}", topic, fact);
+        _logger.LogInformation("Remembered: [{Topic}] {Fact}", topic, fact);
         return knowledge;
     }
 

@@ -254,9 +254,9 @@ public sealed class DiscordBotService : BackgroundService
                         .WithContent("Something went wrong processing your feedback.")
                         .AsEphemeral());
             }
-            catch
+            catch (Exception innerEx)
             {
-                // Already responded or timed out
+                _logger.LogWarning(innerEx, "Failed to send error response for interaction");
             }
         }
     }
@@ -340,9 +340,9 @@ public sealed class DiscordBotService : BackgroundService
                         .WithContent("Failed to process remediation response.")
                         .AsEphemeral());
             }
-            catch
+            catch (Exception innerEx)
             {
-                // Response already sent
+                _logger.LogWarning(innerEx, "Failed to send error response for remediation interaction");
             }
         }
     }
@@ -376,7 +376,7 @@ public sealed class DiscordBotService : BackgroundService
         // Use thread ID for conversation, or channel ID if not in thread
         var conversationId = e.Channel.IsThread ? e.Channel.Id : e.Message.Id;
 
-        _logger.LogDebug("Processing message from {Author} in {Channel}",
+        _logger.LogInformation("Processing message from {Author} in {Channel}",
             e.Author.Username, e.Channel.Name);
 
         try
@@ -443,7 +443,7 @@ public sealed class DiscordBotService : BackgroundService
         var threadId = SmartNotification.CurrentDailyThreadId;
         SmartNotification.MarkConversationActive();
 
-        _logger.LogDebug("Processing DM from owner, using daily cycle threadId={ThreadId}", threadId);
+        _logger.LogInformation("Processing DM from owner, using daily cycle threadId={ThreadId}", threadId);
 
         try
         {
@@ -649,12 +649,12 @@ public sealed class DiscordBotService : BackgroundService
                 {
                     var member = await guild.GetMemberAsync(userId);
                     var dm = await member.CreateDmChannelAsync();
-                    _logger.LogDebug("Found DM channel for user {UserId}", userId);
+                    _logger.LogInformation("Found DM channel for user {UserId}", userId);
                     return dm;
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogDebug(ex, "User {UserId} not found in guild {Guild}", userId, guild.Name);
+                    _logger.LogInformation(ex, "User {UserId} not found in guild {Guild}", userId, guild.Name);
                 }
             }
 

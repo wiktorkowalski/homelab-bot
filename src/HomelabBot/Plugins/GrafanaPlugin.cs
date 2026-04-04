@@ -42,7 +42,7 @@ public sealed class GrafanaPlugin
     [Description("Lists all available Grafana dashboards with their UIDs and titles.")]
     public async Task<string> ListDashboards()
     {
-        _logger.LogDebug("Listing Grafana dashboards...");
+        _logger.LogInformation("Listing Grafana dashboards...");
 
         try
         {
@@ -87,7 +87,7 @@ public sealed class GrafanaPlugin
     [Description("Gets information about a specific dashboard including its panels.")]
     public async Task<string> GetDashboardInfo([Description("Dashboard UID (from ListDashboards)")] string uid)
     {
-        _logger.LogDebug("Getting dashboard info for {Uid}...", uid);
+        _logger.LogInformation("Getting dashboard info for {Uid}...", uid);
 
         try
         {
@@ -148,7 +148,7 @@ public sealed class GrafanaPlugin
         [Description("Optional panel ID to render only that panel")] int? panelId = null,
         [Description("Time range like '1h', '6h', '24h', '7d' (default 1h)")] string timeRange = "1h")
     {
-        _logger.LogDebug("Rendering dashboard screenshot for {Uid}...", uid);
+        _logger.LogInformation("Rendering dashboard screenshot for {Uid}...", uid);
 
         var duration = FormattingHelpers.ParseDuration(timeRange);
         var from = DateTimeOffset.UtcNow.Subtract(duration).ToUnixTimeMilliseconds();
@@ -175,7 +175,7 @@ public sealed class GrafanaPlugin
     [Description("Gets the current health status of Grafana.")]
     public async Task<string> GetGrafanaHealth()
     {
-        _logger.LogDebug("Checking Grafana health...");
+        _logger.LogInformation("Checking Grafana health...");
 
         try
         {

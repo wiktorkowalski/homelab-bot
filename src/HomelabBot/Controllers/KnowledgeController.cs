@@ -10,10 +10,12 @@ namespace HomelabBot.Controllers;
 public class KnowledgeController : ControllerBase
 {
     private readonly IDbContextFactory<HomelabDbContext> _dbFactory;
+    private readonly ILogger<KnowledgeController> _logger;
 
-    public KnowledgeController(IDbContextFactory<HomelabDbContext> dbFactory)
+    public KnowledgeController(IDbContextFactory<HomelabDbContext> dbFactory, ILogger<KnowledgeController> logger)
     {
         _dbFactory = dbFactory;
+        _logger = logger;
     }
 
     [HttpGet]
@@ -22,6 +24,8 @@ public class KnowledgeController : ControllerBase
         [FromQuery] bool? isValid = null,
         CancellationToken ct = default)
     {
+        _logger.LogInformation("Listing knowledge Topic={Topic} IsValid={IsValid}", topic, isValid);
+
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
 
         var query = db.Knowledge.AsQueryable();
@@ -65,6 +69,7 @@ public class KnowledgeController : ControllerBase
         var item = await db.Knowledge.FindAsync([id], ct);
         if (item is null)
         {
+            _logger.LogWarning("Knowledge not found Id={Id}", id);
             return NotFound();
         }
 
@@ -88,6 +93,8 @@ public class KnowledgeController : ControllerBase
         [FromBody] CreateKnowledgeRequest request,
         CancellationToken ct = default)
     {
+        _logger.LogInformation("Creating knowledge Topic={Topic}", request.Topic);
+
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
 
         var item = new Knowledge
@@ -123,11 +130,14 @@ public class KnowledgeController : ControllerBase
         [FromBody] UpdateKnowledgeRequest request,
         CancellationToken ct = default)
     {
+        _logger.LogInformation("Updating knowledge Id={Id}", id);
+
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
 
         var item = await db.Knowledge.FindAsync([id], ct);
         if (item is null)
         {
+            _logger.LogWarning("Knowledge not found Id={Id}", id);
             return NotFound();
         }
 
@@ -176,11 +186,14 @@ public class KnowledgeController : ControllerBase
     [HttpDelete("{id:int}")]
     public async Task<ActionResult> Delete(int id, CancellationToken ct = default)
     {
+        _logger.LogInformation("Deleting knowledge Id={Id}", id);
+
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
 
         var item = await db.Knowledge.FindAsync([id], ct);
         if (item is null)
         {
+            _logger.LogWarning("Knowledge not found Id={Id}", id);
             return NotFound();
         }
 

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
 using OpenTelemetry;
 
 namespace HomelabBot.Services;
@@ -11,59 +12,70 @@ namespace HomelabBot.Services;
 /// </summary>
 public sealed class LangfuseEnrichmentProcessor : BaseProcessor<Activity>
 {
+    private readonly ILogger<LangfuseEnrichmentProcessor> _logger;
+
+    public LangfuseEnrichmentProcessor(ILoggerFactory loggerFactory)
+    {
+        _logger = loggerFactory.CreateLogger<LangfuseEnrichmentProcessor>();
+    }
+
     public override void OnEnd(Activity activity)
     {
-        PropagateFromParent(activity, "langfuse.session.id");
-        PropagateFromParent(activity, "langfuse.user.id");
-
-        // Our custom traces and spans (Chat, Generate Title, SmartRecall, etc.)
-        if (activity.Source.Name == "HomelabBot.Chat")
+        try
         {
-            // Root trace level
-            CopyTag(activity, "langfuse.trace.input", "input.value");
-            CopyTag(activity, "langfuse.trace.output", "output.value");
+            PropagateFromParent(activity, "langfuse.session.id");
+            PropagateFromParent(activity, "langfuse.user.id");
 
-            // Child span level - map to observation for Input/Output preview
-            CopyTag(activity, "langfuse.span.input", "langfuse.observation.input");
-            CopyTag(activity, "langfuse.span.output", "langfuse.observation.output");
-            return;
+            // Our custom traces and spans (Chat, Generate Title, SmartRecall, etc.)
+            if (activity.Source.Name == "HomelabBot.Chat")
+            {
+                // Root trace level
+                CopyTag(activity, "langfuse.trace.input", "input.value");
+                CopyTag(activity, "langfuse.trace.output", "output.value");
+
+                // Child span level - map to observation for Input/Output preview
+                CopyTag(activity, "langfuse.span.input", "langfuse.observation.input");
+                CopyTag(activity, "langfuse.span.output", "langfuse.observation.output");
+            }
+            else if (activity.Source.Name.StartsWith("Microsoft.SemanticKernel"))
+            {
+                var operation = activity.GetTagItem("gen_ai.operation.name")?.ToString();
+
+                if (operation == "execute_tool")
+                {
+                    // Tool call - extract arguments and result
+                    var args = ExtractToolContent(activity, "gen_ai.tool.message");
+                    if (!string.IsNullOrEmpty(args))
+                    {
+                        activity.SetTag("langfuse.observation.input", args);
+                    }
+
+                    var result = ExtractToolContent(activity, "gen_ai.tool.result");
+                    if (!string.IsNullOrEmpty(result))
+                    {
+                        activity.SetTag("langfuse.observation.output", result);
+                    }
+                }
+                else
+                {
+                    // Chat generation - extract user message and response
+                    var input = ExtractContent(activity, "gen_ai.user.message");
+                    if (!string.IsNullOrEmpty(input))
+                    {
+                        activity.SetTag("langfuse.observation.input", input);
+                    }
+
+                    var output = ExtractContent(activity, "gen_ai.choice");
+                    if (!string.IsNullOrEmpty(output))
+                    {
+                        activity.SetTag("langfuse.observation.output", output);
+                    }
+                }
+            }
         }
-
-        // SK spans - extract content for clean Langfuse preview
-        if (activity.Source.Name.StartsWith("Microsoft.SemanticKernel"))
+        catch (Exception ex)
         {
-            var operation = activity.GetTagItem("gen_ai.operation.name")?.ToString();
-
-            if (operation == "execute_tool")
-            {
-                // Tool call - extract arguments and result
-                var args = ExtractToolContent(activity, "gen_ai.tool.message");
-                if (!string.IsNullOrEmpty(args))
-                {
-                    activity.SetTag("langfuse.observation.input", args);
-                }
-
-                var result = ExtractToolContent(activity, "gen_ai.tool.result");
-                if (!string.IsNullOrEmpty(result))
-                {
-                    activity.SetTag("langfuse.observation.output", result);
-                }
-            }
-            else
-            {
-                // Chat generation - extract user message and response
-                var input = ExtractContent(activity, "gen_ai.user.message");
-                if (!string.IsNullOrEmpty(input))
-                {
-                    activity.SetTag("langfuse.observation.input", input);
-                }
-
-                var output = ExtractContent(activity, "gen_ai.choice");
-                if (!string.IsNullOrEmpty(output))
-                {
-                    activity.SetTag("langfuse.observation.output", output);
-                }
-            }
+            _logger.LogError(ex, "Error enriching span {ActivityName} for Langfuse", activity.DisplayName);
         }
 
         base.OnEnd(activity);
@@ -131,7 +143,7 @@ public sealed class LangfuseEnrichmentProcessor : BaseProcessor<Activity>
                         lastContent = mc.GetString();
                     }
                 }
-                catch
+                catch (JsonException)
                 {
                     lastContent = json;
                 }
@@ -182,7 +194,7 @@ public sealed class LangfuseEnrichmentProcessor : BaseProcessor<Activity>
                     // Fallback to full JSON
                     return json;
                 }
-                catch
+                catch (JsonException)
                 {
                     return json;
                 }

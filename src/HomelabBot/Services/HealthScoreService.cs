@@ -93,6 +93,7 @@ public sealed class HealthScoreService
             ConnectivityDeductions = result.ConnectivityDeductions,
         });
         await db.SaveChangesAsync(ct);
+        _logger.LogInformation("Recorded health score: {Score}/100", result.Score);
     }
 
     public async Task<string> GetTrendAsync(TimeSpan window, CancellationToken ct = default)
@@ -155,7 +156,7 @@ public sealed class HealthScoreService
 
         if (deleted > 0)
         {
-            _logger.LogDebug("Pruned {Count} old health score records", deleted);
+            _logger.LogInformation("Pruned {Count} old health score records", deleted);
         }
     }
 

@@ -9,11 +9,13 @@ public sealed class McpApiKeyMiddleware
 {
     private readonly RequestDelegate _next;
     private readonly string _apiKey;
+    private readonly ILogger<McpApiKeyMiddleware> _logger;
 
-    public McpApiKeyMiddleware(RequestDelegate next, IOptions<McpServerConfiguration> config)
+    public McpApiKeyMiddleware(RequestDelegate next, IOptions<McpServerConfiguration> config, ILogger<McpApiKeyMiddleware> logger)
     {
         _next = next;
         _apiKey = config.Value.ApiKey;
+        _logger = logger;
     }
 
     public async Task InvokeAsync(HttpContext context)
@@ -31,10 +33,13 @@ public sealed class McpApiKeyMiddleware
                 || tokenBytes.Length != apiKeyBytes.Length
                 || !CryptographicOperations.FixedTimeEquals(tokenBytes, apiKeyBytes))
             {
+                _logger.LogWarning("MCP auth failed for {Path} from {RemoteIp}", context.Request.Path, context.Connection.RemoteIpAddress);
                 context.Response.StatusCode = 401;
                 await context.Response.WriteAsync("Unauthorized");
                 return;
             }
+
+            _logger.LogInformation("MCP request authenticated for {Path}", context.Request.Path);
         }
 
         await _next(context);

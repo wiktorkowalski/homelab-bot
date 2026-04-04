@@ -10,11 +10,13 @@ public class InvestigationsController : ControllerBase
 {
     private readonly InvestigationService _memoryService;
     private readonly IncidentSimilarityService _similarityService;
+    private readonly ILogger<InvestigationsController> _logger;
 
-    public InvestigationsController(InvestigationService memoryService, IncidentSimilarityService similarityService)
+    public InvestigationsController(InvestigationService memoryService, IncidentSimilarityService similarityService, ILogger<InvestigationsController> logger)
     {
         _memoryService = memoryService;
         _similarityService = similarityService;
+        _logger = logger;
     }
 
     [HttpGet]
@@ -24,6 +26,8 @@ public class InvestigationsController : ControllerBase
         [FromQuery] bool? resolved = null,
         CancellationToken ct = default)
     {
+        _logger.LogInformation("Listing investigations Page={Page} PageSize={PageSize} Resolved={Resolved}", page, pageSize, resolved);
+
         var (items, totalCount) = await _memoryService.GetInvestigationsAsync(page, pageSize, resolved);
 
         return Ok(new PagedResult<InvestigationDto>
@@ -51,6 +55,7 @@ public class InvestigationsController : ControllerBase
 
         if (item is null)
         {
+            _logger.LogWarning("Investigation not found Id={Id}", id);
             return NotFound();
         }
 
@@ -77,6 +82,8 @@ public class InvestigationsController : ControllerBase
     public async Task<ActionResult<InvestigationDetailDto>> Create(
         [FromBody] CreateInvestigationRequest request)
     {
+        _logger.LogInformation("Creating investigation Trigger={Trigger}", request.Trigger);
+
         var investigation = await _memoryService.StartInvestigationAsync(
             request.ThreadId ?? 0,
             request.Trigger);
@@ -98,14 +105,18 @@ public class InvestigationsController : ControllerBase
         int id,
         [FromBody] CreateStepRequest request)
     {
+        _logger.LogInformation("Adding step to investigation Id={Id}", id);
+
         var investigation = await _memoryService.GetInvestigationByIdAsync(id);
         if (investigation is null)
         {
+            _logger.LogWarning("Investigation not found Id={Id}", id);
             return NotFound();
         }
 
         if (investigation.Resolved)
         {
+            _logger.LogWarning("Cannot add step to resolved investigation Id={Id}", id);
             return BadRequest("Cannot add steps to a resolved investigation");
         }
 
@@ -130,10 +141,13 @@ public class InvestigationsController : ControllerBase
         int id,
         [FromBody] ResolveInvestigationRequest request)
     {
+        _logger.LogInformation("Resolving investigation Id={Id}", id);
+
         var investigation = await _memoryService.ResolveInvestigationAsync(id, request.Resolution);
 
         if (investigation is null)
         {
+            _logger.LogWarning("Investigation not found Id={Id}", id);
             return NotFound();
         }
 
@@ -161,6 +175,8 @@ public class InvestigationsController : ControllerBase
         [FromQuery] string symptom,
         [FromQuery] int limit = 5)
     {
+        _logger.LogInformation("Searching investigations Symptom={Symptom} Limit={Limit}", symptom, limit);
+
         var items = await _similarityService.FindSimilarAsync(symptom, limit: limit);
         if (items.Count == 0)
         {

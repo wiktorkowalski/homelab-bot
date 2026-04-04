@@ -182,7 +182,7 @@ public sealed class InvestigationPlugin
     public async Task<string> SearchPastIncidents(
         [Description("Symptom or keywords to search for")] string symptom)
     {
-        _logger.LogDebug("Searching past incidents for '{Symptom}'", symptom);
+        _logger.LogInformation("Searching past incidents for '{Symptom}'", symptom);
 
         var incidents = await _similarityService.FindSimilarAsync(symptom);
 
@@ -222,7 +222,7 @@ public sealed class InvestigationPlugin
     public async Task<string> SearchConversations(
         [Description("Keywords to search for (e.g. 'Plex crashed', 'high CPU', 'TLS cert')")] string query)
     {
-        _logger.LogDebug("Searching conversations for '{Query}'", query);
+        _logger.LogInformation("Searching conversations for '{Query}'", query);
 
         var results = await _conversationService.SearchConversationsAsync(query);
 

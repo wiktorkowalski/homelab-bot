@@ -29,7 +29,7 @@ public sealed class SummaryDataAggregator
 
     public async Task<DailySummaryData> AggregateAsync(CancellationToken ct = default)
     {
-        _logger.LogDebug("Starting data aggregation for daily summary");
+        _logger.LogInformation("Starting data aggregation for daily summary");
 
         var alertsTask = GetAlertsAsync(ct);
         var containersTask = GetContainersAsync(ct);
@@ -82,7 +82,7 @@ public sealed class SummaryDataAggregator
                 .DistinctBy(a => (a.Name, a.Instance))
                 .ToList();
 
-            _logger.LogDebug("Found {Count} alerts in the last 24h", alerts.Count);
+            _logger.LogInformation("Found {Count} alerts in the last 24h", alerts.Count);
             return alerts;
         }
         catch (Exception ex)

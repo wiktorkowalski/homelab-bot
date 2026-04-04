@@ -60,16 +60,23 @@ public sealed class ConfirmationService
 
         _pendingConfirmations[confirmId] = pending;
 
-        _logger.LogDebug("Created confirmation request {ConfirmId} for action: {Action}", confirmId, action);
+        _logger.LogInformation("Created confirmation request {ConfirmId} for action: {Action}", confirmId, action);
 
         // Schedule cleanup
         _ = Task.Run(async () =>
         {
-            await Task.Delay(_confirmationTimeout);
-            if (_pendingConfirmations.TryRemove(confirmId, out var expired))
+            try
             {
-                _logger.LogDebug("Confirmation {ConfirmId} expired", confirmId);
-                await UpdateMessageAsExpired(expired.Message);
+                await Task.Delay(_confirmationTimeout);
+                if (_pendingConfirmations.TryRemove(confirmId, out var expired))
+                {
+                    _logger.LogInformation("Confirmation {ConfirmId} expired", confirmId);
+                    await UpdateMessageAsExpired(expired.Message);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to clean up expired confirmation {ConfirmId}", confirmId);
             }
         });
 
@@ -161,12 +168,12 @@ public sealed class ConfirmationService
         }
         catch (OperationCanceledException)
         {
-            _logger.LogDebug("Confirmation {ConfirmId} wait was cancelled", confirmId);
+            _logger.LogInformation("Confirmation {ConfirmId} wait was cancelled", confirmId);
             return false;
         }
     }
 
-    private static async Task UpdateMessageAsExpired(DiscordMessage message)
+    private async Task UpdateMessageAsExpired(DiscordMessage message)
     {
         try
         {
@@ -178,9 +185,9 @@ public sealed class ConfirmationService
 
             await message.ModifyAsync(new DiscordMessageBuilder().WithEmbed(embed));
         }
-        catch
+        catch (Exception ex)
         {
-            // Message may have been deleted
+            _logger.LogWarning(ex, "Failed to update message as expired");
         }
     }
 

@@ -32,7 +32,7 @@ public sealed class MikroTikPlugin
     [Description("Gets the current status of the MikroTik router including uptime, CPU, memory usage, and temperature.")]
     public async Task<string> GetRouterStatus()
     {
-        _logger.LogDebug("Getting MikroTik router status...");
+        _logger.LogInformation("Getting MikroTik router status...");
 
         var sb = new StringBuilder();
         sb.AppendLine("**MikroTik Router Status**\n");
@@ -72,7 +72,7 @@ public sealed class MikroTikPlugin
     [Description("Gets network interface statistics from the MikroTik router including bandwidth usage.")]
     public async Task<string> GetInterfaceStats()
     {
-        _logger.LogDebug("Getting interface stats...");
+        _logger.LogInformation("Getting interface stats...");
 
         try
         {
@@ -127,7 +127,7 @@ public sealed class MikroTikPlugin
     [Description("Lists connected WiFi clients with their signal strength.")]
     public async Task<string> GetWifiClients()
     {
-        _logger.LogDebug("Getting WiFi clients...");
+        _logger.LogInformation("Getting WiFi clients...");
 
         try
         {
@@ -163,7 +163,7 @@ public sealed class MikroTikPlugin
     [Description("Lists DHCP leases (connected devices) from the MikroTik router.")]
     public async Task<string> GetDhcpLeases()
     {
-        _logger.LogDebug("Getting DHCP leases...");
+        _logger.LogInformation("Getting DHCP leases...");
 
         try
         {

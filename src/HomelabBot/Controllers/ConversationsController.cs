@@ -10,10 +10,12 @@ namespace HomelabBot.Controllers;
 public class ConversationsController : ControllerBase
 {
     private readonly IDbContextFactory<HomelabDbContext> _dbFactory;
+    private readonly ILogger<ConversationsController> _logger;
 
-    public ConversationsController(IDbContextFactory<HomelabDbContext> dbFactory)
+    public ConversationsController(IDbContextFactory<HomelabDbContext> dbFactory, ILogger<ConversationsController> logger)
     {
         _dbFactory = dbFactory;
+        _logger = logger;
     }
 
     [HttpGet]
@@ -22,6 +24,8 @@ public class ConversationsController : ControllerBase
         [FromQuery] int pageSize = 20,
         CancellationToken ct = default)
     {
+        _logger.LogInformation("Listing conversations Page={Page} PageSize={PageSize}", page, pageSize);
+
         await using var db = await this._dbFactory.CreateDbContextAsync(ct);
 
         var totalCount = await db.Conversations.CountAsync(ct);
@@ -55,8 +59,11 @@ public class ConversationsController : ControllerBase
         string threadId,
         CancellationToken ct = default)
     {
+        _logger.LogInformation("Getting conversation ThreadId={ThreadId}", threadId);
+
         if (!ulong.TryParse(threadId, out var tid))
         {
+            _logger.LogWarning("Invalid thread ID format ThreadId={ThreadId}", threadId);
             return this.BadRequest("Invalid thread ID");
         }
 
@@ -68,6 +75,7 @@ public class ConversationsController : ControllerBase
 
         if (conversation is null)
         {
+            _logger.LogWarning("Conversation not found ThreadId={ThreadId}", threadId);
             return this.NotFound();
         }
 

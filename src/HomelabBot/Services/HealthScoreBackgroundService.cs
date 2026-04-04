@@ -50,7 +50,6 @@ public sealed class HealthScoreBackgroundService : ScheduledBackgroundService
         var previousScore = await _healthScoreService.GetScoreAtWindowStartAsync(TimeSpan.FromHours(1), ct);
 
         await _healthScoreService.RecordScoreAsync(result, ct);
-        _logger.LogDebug("Recorded health score: {Score}/100", result.Score);
 
         await _healthScoreService.PruneOldRecordsAsync(TimeSpan.FromDays(30), ct);
 

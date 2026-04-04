@@ -46,8 +46,10 @@ public sealed class FallbackChatCompletionService : IChatCompletionService
         {
             _logger.LogWarning(ex, "Primary LLM failed, falling back to OpenRouter");
 
-            return await _fallback.GetChatMessageContentsAsync(
+            var result = await _fallback.GetChatMessageContentsAsync(
                 chatHistory, executionSettings, kernel, cancellationToken);
+            _logger.LogInformation("Fallback LLM completed successfully");
+            return result;
         }
     }
 

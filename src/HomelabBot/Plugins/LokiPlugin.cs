@@ -31,7 +31,7 @@ public sealed class LokiPlugin
     [Description("Lists available log labels in Loki. Use this to discover what labels are available for querying.")]
     public async Task<string> ListLabels()
     {
-        _logger.LogDebug("Listing Loki labels...");
+        _logger.LogInformation("Listing Loki labels...");
 
         try
         {
@@ -68,7 +68,7 @@ public sealed class LokiPlugin
     [Description("Lists values for a specific label. Useful to see what containers/services are available.")]
     public async Task<string> ListLabelValues([Description("Label name (e.g., 'container_name', 'compose_service', 'job')")] string labelName)
     {
-        _logger.LogDebug("Listing values for label {Label}...", labelName);
+        _logger.LogInformation("Listing values for label {Label}...", labelName);
 
         try
         {
@@ -111,7 +111,7 @@ public sealed class LokiPlugin
         [Description("LogQL query expression (e.g., '{compose_service=\"traefik\"}' or '{container_name=~\".*traefik.*\"}')")] string query,
         [Description("Maximum number of log entries to return (default 100)")] int limit = 100)
     {
-        _logger.LogDebug("Executing LogQL query: {Query}", query);
+        _logger.LogInformation("Executing LogQL query: {Query}", query);
 
         try
         {
@@ -189,7 +189,7 @@ public sealed class LokiPlugin
         [Description("Container name (will try multiple label patterns like compose_service, container_name)")] string containerName,
         [Description("Time range like '1h', '30m', '15m' (default 1h)")] string since = "1h")
     {
-        _logger.LogDebug("Getting logs for container {Container} since {Since}", containerName, since);
+        _logger.LogInformation("Getting logs for container {Container} since {Since}", containerName, since);
 
         var duration = FormattingHelpers.ParseDuration(since);
         var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() * 1_000_000;
@@ -271,9 +271,9 @@ public sealed class LokiPlugin
 
                 return sb.ToString();
             }
-            catch
+            catch (Exception ex)
             {
-                // Try next pattern
+                _logger.LogWarning(ex, "Loki query failed for container {Container}", containerName);
                 continue;
             }
         }
@@ -332,7 +332,7 @@ public sealed class LokiPlugin
         [Description("Time range like '1h', '6h', '24h' (default 1h)")] string since = "1h",
         string? containerName = null)
     {
-        _logger.LogDebug("Counting errors by container since {Since}", since);
+        _logger.LogInformation("Counting errors by container since {Since}", since);
 
         try
         {
@@ -368,7 +368,7 @@ public sealed class LokiPlugin
     public async Task<string> DetectCriticalPatterns(
         [Description("Time range like '1h', '6h', '24h' (default 1h)")] string since = "1h")
     {
-        _logger.LogDebug("Detecting critical patterns since {Since}", since);
+        _logger.LogInformation("Detecting critical patterns since {Since}", since);
 
         var duration = FormattingHelpers.ParseDuration(since);
         var query = "{compose_service=~\".+\",compose_service!=\"loki\"} |~ \"(?i)(\\\\bfatal\\\\b|\\\\bpanic\\\\b|\\\\boom\\\\b|out of memory|killed process|segfault)\"";
@@ -451,7 +451,7 @@ public sealed class LokiPlugin
         [Description("Time range like '1h', '30m', '15m' (default 1h)")] string since = "1h",
         string? containerName = null)
     {
-        _logger.LogDebug("Searching logs for '{SearchText}' since {Since}", searchText, since);
+        _logger.LogInformation("Searching logs for '{SearchText}' since {Since}", searchText, since);
 
         var escapedText = searchText.Replace("\"", "\\\"");
         var selector = string.IsNullOrWhiteSpace(containerName)

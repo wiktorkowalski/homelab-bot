@@ -26,7 +26,7 @@ public sealed class PrometheusPlugin
     [Description("Lists available Prometheus metric names. Use this to discover what metrics are available before querying.")]
     public async Task<string> GetAvailableMetrics([Description("Optional filter prefix (e.g., 'node_', 'container_')")] string? prefix = null)
     {
-        _logger.LogDebug("Getting available metrics with prefix: {Prefix}", prefix ?? "all");
+        _logger.LogInformation("Getting available metrics with prefix: {Prefix}", prefix ?? "all");
 
         try
         {
@@ -89,7 +89,7 @@ public sealed class PrometheusPlugin
     [Description("Executes a PromQL query against Prometheus. Returns the current value of the expression.")]
     public async Task<string> QueryPrometheus([Description("PromQL query expression")] string query)
     {
-        _logger.LogDebug("Executing PromQL query: {Query}", query);
+        _logger.LogInformation("Executing PromQL query: {Query}", query);
 
         try
         {
@@ -130,7 +130,7 @@ public sealed class PrometheusPlugin
     [Description("Gets current CPU, memory, and disk usage for the node (Ubuntu VM).")]
     public async Task<string> GetNodeStats()
     {
-        _logger.LogDebug("Getting node stats...");
+        _logger.LogInformation("Getting node stats...");
 
         var sb = new StringBuilder();
         sb.AppendLine("**Node Statistics**\n");
@@ -166,7 +166,7 @@ public sealed class PrometheusPlugin
     [Description("Gets the status of all Prometheus scrape targets. Shows which services are being monitored and their health.")]
     public async Task<string> GetTargets()
     {
-        _logger.LogDebug("Getting Prometheus targets...");
+        _logger.LogInformation("Getting Prometheus targets...");
 
         try
         {
@@ -214,7 +214,7 @@ public sealed class PrometheusPlugin
     [Description("Gets resource metrics for a specific Docker container (CPU, memory usage).")]
     public async Task<string> GetContainerMetrics([Description("Container name")] string containerName)
     {
-        _logger.LogDebug("Getting metrics for container: {Container}", containerName);
+        _logger.LogInformation("Getting metrics for container: {Container}", containerName);
 
         var sb = new StringBuilder();
         sb.AppendLine($"**Container Metrics: {containerName}**\n");

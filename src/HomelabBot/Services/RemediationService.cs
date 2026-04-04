@@ -1,5 +1,6 @@
 using HomelabBot.Data.Entities;
 using HomelabBot.Models;
+using Microsoft.Extensions.Logging;
 
 namespace HomelabBot.Services;
 
@@ -10,28 +11,34 @@ public sealed class RemediationService
     private readonly AutoRemediationService _autoRemediation;
     private readonly IncidentSimilarityService _similarityService;
     private readonly HealingChainService _healingChain;
+    private readonly ILogger<RemediationService> _logger;
 
     public RemediationService(
         RunbookTriggerService runbookTrigger,
         InvestigationService memoryService,
         AutoRemediationService autoRemediation,
         IncidentSimilarityService similarityService,
-        HealingChainService healingChain)
+        HealingChainService healingChain,
+        ILogger<RemediationService> logger)
     {
         _runbookTrigger = runbookTrigger;
         _memoryService = memoryService;
         _autoRemediation = autoRemediation;
         _similarityService = similarityService;
         _healingChain = healingChain;
+        _logger = logger;
     }
 
     public async Task<RemediationOutcome> TryRemediateAsync(
         AlertmanagerWebhookAlert alert, CancellationToken ct)
     {
+        _logger.LogInformation("Attempting remediation for alert {AlertName}", alert.AlertName);
+
         // 1. Try runbook match — fastest, no LLM needed
         var runbookResult = await _runbookTrigger.TryMatchAndExecuteAsync(alert, ct);
         if (runbookResult != null)
         {
+            _logger.LogInformation("Remediation for {AlertName}: runbook matched", alert.AlertName);
             return new RemediationOutcome
             {
                 Message = runbookResult,
@@ -50,6 +57,8 @@ public sealed class RemediationService
         var remResult = await _autoRemediation.TryAutoRemediateAsync(alert, matchedRunbooks, ct);
         if (remResult is { WasAutoExecuted: true } or { NeedsConfirmation: true })
         {
+            _logger.LogInformation("Remediation for {AlertName}: auto-remediation {Outcome}",
+                alert.AlertName, remResult.WasAutoExecuted ? "executed" : "needs confirmation");
             return new RemediationOutcome
             {
                 Message = remResult.Message,
@@ -72,6 +81,7 @@ public sealed class RemediationService
             searchTerms, containerName, ct, similarIncidents);
         if (chainResult is { Success: true })
         {
+            _logger.LogInformation("Remediation for {AlertName}: healing chain succeeded", alert.AlertName);
             return new RemediationOutcome
             {
                 Message = chainResult.Message,
@@ -85,6 +95,7 @@ public sealed class RemediationService
         }
 
         // 6. Nothing handled — return context for LLM investigation fallback
+        _logger.LogInformation("Remediation for {AlertName}: no strategy handled, falling back to LLM", alert.AlertName);
         return new RemediationOutcome
         {
             Message = string.Empty,

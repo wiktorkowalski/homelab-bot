@@ -71,7 +71,7 @@ public sealed class ContagionTrackerService
             _ => "critical"
         };
 
-        _logger.LogDebug("Blast radius for {Container}: {Count} affected services ({Risk})",
+        _logger.LogInformation("Blast radius for {Container}: {Count} affected services ({Risk})",
             sourceContainer, affected.Count, riskLevel);
 
         return new BlastRadiusReport

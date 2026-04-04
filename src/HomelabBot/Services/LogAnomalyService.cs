@@ -57,7 +57,7 @@ public sealed class LogAnomalyService : ScheduledBackgroundService
 
         if (!hasCritical && newSpikes.Count == 0)
         {
-            _logger.LogDebug("No log anomalies detected");
+            _logger.LogInformation("No log anomalies detected");
             return;
         }
 

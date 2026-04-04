@@ -29,7 +29,7 @@ public sealed class SecurityAuditService : ScheduledBackgroundService
     protected override ILogger Logger => _logger;
 
     protected override TimeSpan GetDelay() =>
-        ScheduleHelper.CalculateDelayUntilNextRun(_config.CurrentValue.ScheduleTime, _config.CurrentValue.TimeZone, _config.CurrentValue.ScheduleDay);
+        ScheduleHelper.CalculateDelayUntilNextRun(_config.CurrentValue.ScheduleTime, _config.CurrentValue.TimeZone, _config.CurrentValue.ScheduleDay, _logger);
 
     protected override Task RunIterationAsync(CancellationToken ct) => RunAuditAndDeliverAsync(ct);
 
@@ -39,6 +39,7 @@ public sealed class SecurityAuditService : ScheduledBackgroundService
 
         try
         {
+            _logger.LogInformation("Running security audit");
             var report = await _kernelService.ProcessMessageAsync(
                 threadId: threadId,
                 userMessage: SecurityAuditPrompts.Investigation,
@@ -47,6 +48,7 @@ public sealed class SecurityAuditService : ScheduledBackgroundService
                 systemPromptOverride: SecurityAuditPrompts.System,
                 ct: ct);
 
+            _logger.LogInformation("Security audit completed, report length: {Length}", report.Length);
             return report;
         }
         finally

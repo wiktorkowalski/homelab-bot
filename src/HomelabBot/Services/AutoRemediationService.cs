@@ -70,6 +70,7 @@ public sealed class AutoRemediationService
 
         if (!_enabled)
         {
+            _logger.LogInformation("Auto-remediation disabled, skipping");
             return null;
         }
 
@@ -82,6 +83,7 @@ public sealed class AutoRemediationService
 
         if (qualifiedRunbooks.Count == 0)
         {
+            _logger.LogInformation("No qualified runbooks for auto-remediation");
             return null;
         }
 
@@ -89,6 +91,7 @@ public sealed class AutoRemediationService
         var containerName = ExtractContainerName(alert);
         if (containerName == null)
         {
+            _logger.LogInformation("Could not extract container name from alert");
             return null;
         }
 
@@ -111,6 +114,7 @@ public sealed class AutoRemediationService
 
         if (isCritical)
         {
+            _logger.LogInformation("Container {Container} is critical, requiring confirmation", containerName);
             return await SuggestRemediationAsync(containerName, bestRunbook, ct);
         }
 

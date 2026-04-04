@@ -45,6 +45,7 @@ public sealed class RunbookTriggerService
 
         if (matched == null)
         {
+            _logger.LogInformation("No runbook matched alert {AlertName}", alert.AlertName);
             return null;
         }
 
@@ -53,6 +54,7 @@ public sealed class RunbookTriggerService
 
         if (matched.TrustLevel == TrustLevel.Risky)
         {
+            _logger.LogWarning("Runbook '{RunbookName}' matched {AlertName} but requires confirmation", matched.Name, alert.AlertName);
             return $"📋 Runbook **{matched.Name}** matched this alert but requires manual confirmation (TrustLevel=Risky). " +
                    $"Use the bot to run: `execute runbook {matched.Id}`";
         }

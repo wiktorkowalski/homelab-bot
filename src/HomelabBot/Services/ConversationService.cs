@@ -51,7 +51,7 @@ public sealed class ConversationService
                 }
             }
 
-            _logger.LogDebug("Loaded {Count} messages for thread {ThreadId}", conversation.Messages.Count, threadId);
+            _logger.LogInformation("Loaded {Count} messages for thread {ThreadId}", conversation.Messages.Count, threadId);
         }
         else
         {
@@ -63,7 +63,7 @@ public sealed class ConversationService
             db.Conversations.Add(conversation);
             await db.SaveChangesAsync(ct);
 
-            _logger.LogDebug("Created new conversation for thread {ThreadId}", threadId);
+            _logger.LogInformation("Created new conversation for thread {ThreadId}", threadId);
         }
 
         _histories[threadId] = history;
@@ -185,7 +185,7 @@ public sealed class ConversationService
     {
         if (_histories.TryRemove(threadId, out _))
         {
-            _logger.LogDebug("Cleared conversation history for thread {ThreadId}", threadId);
+            _logger.LogInformation("Cleared conversation history for thread {ThreadId}", threadId);
         }
     }
 

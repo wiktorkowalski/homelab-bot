@@ -60,7 +60,7 @@ public sealed class TelemetryChatClient : DelegatingChatClient
                     activity?.SetTag("langfuse.observation.input", argsPreview);
                 }
 
-                _logger.LogDebug("Anthropic tool call: {Tool}", content.Name);
+                _logger.LogInformation("Anthropic tool call: {Tool}", content.Name);
             }
 
             // Log tool results (tool → LLM)
