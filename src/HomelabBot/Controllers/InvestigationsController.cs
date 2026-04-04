@@ -8,10 +8,10 @@ namespace HomelabBot.Controllers;
 [Route("api/[controller]")]
 public class InvestigationsController : ControllerBase
 {
-    private readonly MemoryService _memoryService;
+    private readonly InvestigationService _memoryService;
     private readonly IncidentSimilarityService _similarityService;
 
-    public InvestigationsController(MemoryService memoryService, IncidentSimilarityService similarityService)
+    public InvestigationsController(InvestigationService memoryService, IncidentSimilarityService similarityService)
     {
         _memoryService = memoryService;
         _similarityService = similarityService;

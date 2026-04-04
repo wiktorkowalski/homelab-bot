@@ -17,7 +17,7 @@ public class HomeLabCommands : ApplicationCommandModule
     private readonly HealthScoreService _healthScoreService;
     private readonly SecurityAuditService _securityAuditService;
     private readonly AutoRemediationService _autoRemediationService;
-    private readonly MemoryService _memoryService;
+    private readonly InvestigationService _memoryService;
     private readonly ILogger<HomeLabCommands> _logger;
 
     public HomeLabCommands(
@@ -30,7 +30,7 @@ public class HomeLabCommands : ApplicationCommandModule
         HealthScoreService healthScoreService,
         SecurityAuditService securityAuditService,
         AutoRemediationService autoRemediationService,
-        MemoryService memoryService,
+        InvestigationService memoryService,
         ILogger<HomeLabCommands> logger)
     {
         _dockerPlugin = dockerPlugin;

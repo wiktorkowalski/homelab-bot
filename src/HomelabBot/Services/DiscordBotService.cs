@@ -16,7 +16,7 @@ public sealed class DiscordBotService : BackgroundService
     private readonly KernelService _kernelService;
     private readonly ConversationService _conversationService;
     private readonly ConfirmationService _confirmationService;
-    private readonly MemoryService _memoryService;
+    private readonly InvestigationService _memoryService;
     private readonly AutoRemediationService _autoRemediationService;
     private readonly IServiceProvider _serviceProvider;
     private readonly Lazy<SmartNotificationService> _smartNotification;
@@ -32,7 +32,7 @@ public sealed class DiscordBotService : BackgroundService
         KernelService kernelService,
         ConversationService conversationService,
         ConfirmationService confirmationService,
-        MemoryService memoryService,
+        InvestigationService memoryService,
         AutoRemediationService autoRemediationService,
         IServiceProvider serviceProvider)
     {

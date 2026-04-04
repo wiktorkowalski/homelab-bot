@@ -10,7 +10,7 @@ namespace HomelabBot.Plugins;
 [McpServerToolType]
 public sealed class InvestigationPlugin
 {
-    private readonly MemoryService _memoryService;
+    private readonly InvestigationService _memoryService;
     private readonly ConversationService _conversationService;
     private readonly IncidentSimilarityService _similarityService;
     private readonly ILogger<InvestigationPlugin> _logger;
@@ -19,7 +19,7 @@ public sealed class InvestigationPlugin
     private readonly Dictionary<ulong, int> _activeInvestigations = new();
 
     public InvestigationPlugin(
-        MemoryService memoryService,
+        InvestigationService memoryService,
         ConversationService conversationService,
         IncidentSimilarityService similarityService,
         ILogger<InvestigationPlugin> logger)

@@ -5,16 +5,16 @@ using Microsoft.EntityFrameworkCore;
 
 namespace HomelabBot.Services;
 
-public sealed class MemoryService
+public sealed class InvestigationService
 {
     private readonly IDbContextFactory<HomelabDbContext> _dbFactory;
-    private readonly ILogger<MemoryService> _logger;
+    private readonly ILogger<InvestigationService> _logger;
     private readonly RunbookCompilerService _runbookCompiler;
     private readonly IncidentSimilarityService _similarityService;
 
-    public MemoryService(
+    public InvestigationService(
         IDbContextFactory<HomelabDbContext> dbFactory,
-        ILogger<MemoryService> logger,
+        ILogger<InvestigationService> logger,
         RunbookCompilerService runbookCompiler,
         IncidentSimilarityService similarityService)
     {
