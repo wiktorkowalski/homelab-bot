@@ -3,12 +3,11 @@ using Microsoft.Extensions.Options;
 
 namespace HomelabBot.Services;
 
-public sealed class SecurityAuditService : BackgroundService
+public sealed class SecurityAuditService : ScheduledBackgroundService
 {
     private readonly IOptionsMonitor<SecurityAuditConfiguration> _config;
     private readonly KernelService _kernelService;
     private readonly ConversationService _conversationService;
-    private readonly DiscordBotService _discordBot;
     private readonly ILogger<SecurityAuditService> _logger;
 
     public SecurityAuditService(
@@ -17,49 +16,22 @@ public sealed class SecurityAuditService : BackgroundService
         ConversationService conversationService,
         DiscordBotService discordBot,
         ILogger<SecurityAuditService> logger)
+        : base(discordBot)
     {
         _config = config;
         _kernelService = kernelService;
         _conversationService = conversationService;
-        _discordBot = discordBot;
         _logger = logger;
     }
 
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        _logger.LogInformation("Security audit service started, waiting for Discord...");
-        await _discordBot.WaitForReadyAsync(stoppingToken);
-        _logger.LogInformation("Discord ready, security audit service running");
+    protected override bool IsEnabled => _config.CurrentValue.Enabled;
 
-        while (!stoppingToken.IsCancellationRequested)
-        {
-            try
-            {
-                if (!_config.CurrentValue.Enabled)
-                {
-                    _logger.LogDebug("Security audit disabled, rechecking in 1 minute");
-                    await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);
-                    continue;
-                }
+    protected override ILogger Logger => _logger;
 
-                var delay = ScheduleHelper.CalculateDelayUntilNextRun(_config.CurrentValue.ScheduleTime, _config.CurrentValue.TimeZone, _config.CurrentValue.ScheduleDay);
-                _logger.LogInformation("Next security audit in {Delay}", delay);
+    protected override TimeSpan GetDelay() =>
+        ScheduleHelper.CalculateDelayUntilNextRun(_config.CurrentValue.ScheduleTime, _config.CurrentValue.TimeZone, _config.CurrentValue.ScheduleDay);
 
-                await Task.Delay(delay, stoppingToken);
-
-                await RunAuditAndDeliverAsync(stoppingToken);
-            }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-            {
-                break;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error in security audit service");
-                await Task.Delay(TimeSpan.FromMinutes(5), stoppingToken);
-            }
-        }
-    }
+    protected override Task RunIterationAsync(CancellationToken ct) => RunAuditAndDeliverAsync(ct);
 
     public async Task<string> RunAuditAsync(CancellationToken ct = default)
     {
@@ -98,7 +70,7 @@ public sealed class SecurityAuditService : BackgroundService
         {
             var report = await RunAuditAsync(ct);
 
-            await _discordBot.SendDmSplitAsync(userId, report);
+            await DiscordBot.SendDmSplitAsync(userId, report);
 
             _logger.LogInformation("Security audit delivered to user {UserId}", userId);
         }
