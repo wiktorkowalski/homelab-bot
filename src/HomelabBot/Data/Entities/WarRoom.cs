@@ -14,10 +14,6 @@ public sealed class WarRoom
 
     public WarRoomStatus Status { get; set; } = WarRoomStatus.Active;
 
-    public int? InvestigationId { get; set; }
-
-    public int? HealingChainId { get; set; }
-
     public string TimelineJson { get; set; } = "[]";
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;

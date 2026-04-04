@@ -8,13 +8,13 @@ namespace HomelabBot.Mcp;
 [McpServerToolType]
 public sealed class HomelabMcpTools
 {
-    private readonly MemoryService _memoryService;
+    private readonly InvestigationService _memoryService;
     private readonly HealthScoreService _healthScore;
     private readonly SummaryDataAggregator _summaryAggregator;
     private readonly ConversationService _conversationService;
 
     public HomelabMcpTools(
-        MemoryService memoryService,
+        InvestigationService memoryService,
         HealthScoreService healthScore,
         SummaryDataAggregator summaryAggregator,
         ConversationService conversationService)

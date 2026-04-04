@@ -3,12 +3,12 @@ using Microsoft.Extensions.Logging.Abstractions;
 
 namespace HomelabBot.Tests;
 
-public class MemoryServiceTests : IClassFixture<DatabaseFixture>
+public class InvestigationServiceTests : IClassFixture<DatabaseFixture>
 {
     private readonly DatabaseFixture _fixture;
-    private readonly MemoryService _service;
+    private readonly InvestigationService _service;
 
-    public MemoryServiceTests(DatabaseFixture fixture)
+    public InvestigationServiceTests(DatabaseFixture fixture)
     {
         _fixture = fixture;
         var runbookCompiler = new RunbookCompilerService(
@@ -17,9 +17,9 @@ public class MemoryServiceTests : IClassFixture<DatabaseFixture>
         var similarityService = new IncidentSimilarityService(
             _fixture.DbContextFactory,
             NullLogger<IncidentSimilarityService>.Instance);
-        _service = new MemoryService(
+        _service = new InvestigationService(
             _fixture.DbContextFactory,
-            NullLogger<MemoryService>.Instance,
+            NullLogger<InvestigationService>.Instance,
             runbookCompiler,
             similarityService);
     }

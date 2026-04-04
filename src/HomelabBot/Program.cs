@@ -181,7 +181,7 @@ try
     builder.Services.AddSingleton<IncidentSimilarityService>();
     builder.Services.AddSingleton<RunbookCompilerService>();
     builder.Services.AddSingleton<KnowledgeService>();
-    builder.Services.AddSingleton<MemoryService>();
+    builder.Services.AddSingleton<InvestigationService>();
     builder.Services.AddSingleton<UrlService>();
     builder.Services.AddSingleton<ConversationService>();
     builder.Services.AddSingleton<ConfirmationService>();

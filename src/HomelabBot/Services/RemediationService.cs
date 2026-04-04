@@ -6,14 +6,14 @@ namespace HomelabBot.Services;
 public sealed class RemediationService
 {
     private readonly RunbookTriggerService _runbookTrigger;
-    private readonly MemoryService _memoryService;
+    private readonly InvestigationService _memoryService;
     private readonly AutoRemediationService _autoRemediation;
     private readonly IncidentSimilarityService _similarityService;
     private readonly HealingChainService _healingChain;
 
     public RemediationService(
         RunbookTriggerService runbookTrigger,
-        MemoryService memoryService,
+        InvestigationService memoryService,
         AutoRemediationService autoRemediation,
         IncidentSimilarityService similarityService,
         HealingChainService healingChain)

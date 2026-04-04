@@ -1,7 +1,6 @@
 using System.Runtime.CompilerServices;
 using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.ChatCompletion;
-using Microsoft.SemanticKernel.Connectors.OpenAI;
 
 namespace HomelabBot.Services;
 
@@ -47,29 +46,8 @@ public sealed class FallbackChatCompletionService : IChatCompletionService
         {
             _logger.LogWarning(ex, "Primary LLM failed, falling back to OpenRouter");
 
-            // Preserve caller's max_tokens, default temperature and enable tool calling
-            var maxTokens = 2048;
-            if (executionSettings?.ExtensionData?.TryGetValue("max_tokens", out var mt) == true)
-            {
-                if (mt is int i)
-                {
-                    maxTokens = i;
-                }
-                else if (mt is long l)
-                {
-                    maxTokens = (int)l;
-                }
-            }
-
-            var fallbackSettings = new OpenAIPromptExecutionSettings
-            {
-                Temperature = 0.7,
-                MaxTokens = maxTokens,
-                ToolCallBehavior = ToolCallBehavior.AutoInvokeKernelFunctions,
-            };
-
             return await _fallback.GetChatMessageContentsAsync(
-                chatHistory, fallbackSettings, kernel, cancellationToken);
+                chatHistory, executionSettings, kernel, cancellationToken);
         }
     }
 
