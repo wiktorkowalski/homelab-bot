@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Text;
+using HomelabBot.Helpers;
 using HomelabBot.Models.Prometheus;
 using HomelabBot.Services;
 using Microsoft.SemanticKernel;
@@ -245,7 +246,7 @@ public sealed class PrometheusPlugin
         var netTxResult = await _prometheus.QueryScalarAsync(
             $"rate(container_network_transmit_bytes_total{{name=\"{containerName}\"}}[5m])");
 
-        sb.AppendLine($"Network: **{FormatBytes(netRxResult ?? 0)}/s** in, **{FormatBytes(netTxResult ?? 0)}/s** out");
+        sb.AppendLine($"Network: **{FormattingHelpers.FormatBytes(netRxResult ?? 0)}/s** in, **{FormattingHelpers.FormatBytes(netTxResult ?? 0)}/s** out");
 
         return sb.ToString();
     }
@@ -263,25 +264,5 @@ public sealed class PrometheusPlugin
             .Take(3);
 
         return "{" + string.Join(", ", relevant) + "}";
-    }
-
-    private static string FormatBytes(double bytes)
-    {
-        if (bytes < 1024)
-        {
-            return $"{bytes:F0} B";
-        }
-
-        if (bytes < 1024 * 1024)
-        {
-            return $"{bytes / 1024:F1} KB";
-        }
-
-        if (bytes < 1024 * 1024 * 1024)
-        {
-            return $"{bytes / (1024 * 1024):F1} MB";
-        }
-
-        return $"{bytes / (1024 * 1024 * 1024):F2} GB";
     }
 }

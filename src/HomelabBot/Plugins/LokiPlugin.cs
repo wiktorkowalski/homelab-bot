@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using HomelabBot.Configuration;
+using HomelabBot.Helpers;
 using Microsoft.Extensions.Options;
 using Microsoft.SemanticKernel;
 using ModelContextProtocol.Server;
@@ -190,7 +191,7 @@ public sealed class LokiPlugin
     {
         _logger.LogDebug("Getting logs for container {Container} since {Since}", containerName, since);
 
-        var duration = ParseDuration(since);
+        var duration = FormattingHelpers.ParseDuration(since);
         var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() * 1_000_000;
         var start = DateTimeOffset.UtcNow.Subtract(duration).ToUnixTimeMilliseconds() * 1_000_000;
 
@@ -369,7 +370,7 @@ public sealed class LokiPlugin
     {
         _logger.LogDebug("Detecting critical patterns since {Since}", since);
 
-        var duration = ParseDuration(since);
+        var duration = FormattingHelpers.ParseDuration(since);
         var query = "{compose_service=~\".+\",compose_service!=\"loki\"} |~ \"(?i)(\\\\bfatal\\\\b|\\\\bpanic\\\\b|\\\\boom\\\\b|out of memory|killed process|segfault)\"";
         var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() * 1_000_000;
         var start = DateTimeOffset.UtcNow.Subtract(duration).ToUnixTimeMilliseconds() * 1_000_000;
@@ -457,7 +458,7 @@ public sealed class LokiPlugin
             ? "{compose_service=~\".+\"}"
             : $"{{compose_service=\"{containerName}\"}}";
         var query = $"{selector} |~ \"(?i){escapedText}\"";
-        var duration = ParseDuration(since);
+        var duration = FormattingHelpers.ParseDuration(since);
 
         try
         {
@@ -530,7 +531,7 @@ public sealed class LokiPlugin
 
     internal static string NormalizeDuration(string input)
     {
-        var duration = ParseDuration(input);
+        var duration = FormattingHelpers.ParseDuration(input);
         var totalMinutes = (int)duration.TotalMinutes;
         return totalMinutes switch
         {
@@ -559,28 +560,6 @@ public sealed class LokiPlugin
         }
 
         return DateTime.UtcNow;
-    }
-
-    internal static TimeSpan ParseDuration(string duration)
-    {
-        if (string.IsNullOrWhiteSpace(duration))
-        {
-            return TimeSpan.FromHours(1);
-        }
-
-        var unit = duration[^1];
-        if (!int.TryParse(duration[..^1], out var value))
-        {
-            return TimeSpan.FromHours(1);
-        }
-
-        return unit switch
-        {
-            'm' => TimeSpan.FromMinutes(value),
-            'h' => TimeSpan.FromHours(value),
-            'd' => TimeSpan.FromDays(value),
-            _ => TimeSpan.FromHours(1)
-        };
     }
 
     private sealed class LokiQueryResponse

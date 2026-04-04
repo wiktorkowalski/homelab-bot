@@ -19,7 +19,7 @@ public enum TraceType
 
 public sealed class KernelService
 {
-    private static readonly ActivitySource ActivitySource = new("HomelabBot.Chat");
+    private static readonly ActivitySource ActivitySource = TelemetryConstants.ChatActivitySource;
 
     private static readonly Regex ThinkingBlockRegex = new(
         @"<(think|thinking|reasoning|reflection)>[\s\S]*?</\1>",

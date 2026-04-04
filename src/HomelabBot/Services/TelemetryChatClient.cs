@@ -10,7 +10,7 @@ namespace HomelabBot.Services;
 /// </summary>
 public sealed class TelemetryChatClient : DelegatingChatClient
 {
-    private static readonly ActivitySource ActivitySource = new("HomelabBot.Chat");
+    private static readonly ActivitySource ActivitySource = TelemetryConstants.ChatActivitySource;
     private readonly ILogger<TelemetryChatClient> _logger;
 
     public TelemetryChatClient(

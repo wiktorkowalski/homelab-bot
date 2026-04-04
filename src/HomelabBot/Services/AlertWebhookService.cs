@@ -3,6 +3,7 @@ using System.Text;
 using DSharpPlus;
 using DSharpPlus.Entities;
 using HomelabBot.Configuration;
+using HomelabBot.Helpers;
 using HomelabBot.Models;
 using Microsoft.Extensions.Options;
 
@@ -203,7 +204,7 @@ public sealed class AlertWebhookService
         }
         else
         {
-            analysis = $"Alert resolved after {FormatDuration(alert.Duration ?? TimeSpan.Zero)}.";
+            analysis = $"Alert resolved after {FormattingHelpers.FormatDuration(alert.Duration ?? TimeSpan.Zero)}.";
         }
 
         var embed = BuildAlertEmbed(alert, analysis);
@@ -318,7 +319,7 @@ public sealed class AlertWebhookService
 
         if (alert.IsResolved && alert.Duration.HasValue)
         {
-            builder.AddField("Duration", FormatDuration(alert.Duration.Value), true);
+            builder.AddField("Duration", FormattingHelpers.FormatDuration(alert.Duration.Value), true);
         }
 
         // LLM analysis as description
@@ -345,25 +346,5 @@ public sealed class AlertWebhookService
             "warning" => ColorFiringWarning,
             _ => ColorFiringWarning
         };
-    }
-
-    private static string FormatDuration(TimeSpan duration)
-    {
-        if (duration.TotalDays >= 1)
-        {
-            return $"{(int)duration.TotalDays}d {duration.Hours}h";
-        }
-
-        if (duration.TotalHours >= 1)
-        {
-            return $"{(int)duration.TotalHours}h {duration.Minutes}m";
-        }
-
-        if (duration.TotalMinutes >= 1)
-        {
-            return $"{(int)duration.TotalMinutes}m {duration.Seconds}s";
-        }
-
-        return $"{(int)duration.TotalSeconds}s";
     }
 }
