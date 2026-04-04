@@ -94,7 +94,9 @@ public sealed class PrometheusQueryService
                     var value = 0.0;
                     if (item.Value?.Length > 1)
                     {
-                        double.TryParse(item.Value[1].ToString(), out value);
+                        double.TryParse(item.Value[1].ToString(),
+                            System.Globalization.NumberStyles.Float,
+                            System.Globalization.CultureInfo.InvariantCulture, out value);
                     }
 
                     results.Add(new MetricResult
