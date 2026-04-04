@@ -109,7 +109,7 @@ public class AutoRemediationServiceTests : IClassFixture<DatabaseFixture>, IDisp
     [Fact]
     public async Task TryAutoRemediate_CooldownExceeded_ReturnsSkipMessage()
     {
-        var config = new AutoRemediationConfiguration { MaxRestartsPerHour = 1 };
+        var config = new AutoRemediationConfiguration { MaxRestartsPerHour = 1, VerificationDelaySeconds = 0 };
         var svc = CreateService(config);
 
         _dockerPlugin.GetContainerStatus(Arg.Any<string>())
@@ -172,7 +172,7 @@ public class AutoRemediationServiceTests : IClassFixture<DatabaseFixture>, IDisp
     [Fact]
     public async Task TryAutoRemediate_NonCritical_ExecutesRemediation()
     {
-        var svc = CreateService();
+        var svc = CreateService(new AutoRemediationConfiguration { VerificationDelaySeconds = 0 });
 
         _dockerPlugin.GetContainerStatus(Arg.Any<string>())
             .Returns("Status: running");

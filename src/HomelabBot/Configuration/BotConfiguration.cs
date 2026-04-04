@@ -211,6 +211,8 @@ public sealed class AutoRemediationConfiguration
     public int MinFeedbackCount { get; init; } = 3;
 
     public int MaxRestartsPerHour { get; init; } = 3;
+
+    public int VerificationDelaySeconds { get; init; } = 30;
 }
 
 public sealed class McpServerConfiguration
