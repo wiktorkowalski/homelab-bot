@@ -146,7 +146,7 @@ public sealed class AutoRemediationService
                 RecordCooldown(action.ContainerName);
 
                 // Wait and check state
-                await Task.Delay(TimeSpan.FromSeconds(30), ct);
+                await Task.Delay(TimeSpan.FromSeconds(_config.VerificationDelaySeconds), ct);
                 var afterState = await _dockerPlugin.GetContainerStatus(action.ContainerName);
                 action.AfterState = afterState;
                 action.Success = !afterState.Contains("not running", StringComparison.OrdinalIgnoreCase)
@@ -416,7 +416,7 @@ public sealed class AutoRemediationService
             RecordCooldown(containerName);
 
             // Wait and verify
-            await Task.Delay(TimeSpan.FromSeconds(30), ct);
+            await Task.Delay(TimeSpan.FromSeconds(_config.VerificationDelaySeconds), ct);
 
             string afterState;
             try
