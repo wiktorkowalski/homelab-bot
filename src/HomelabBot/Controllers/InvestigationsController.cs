@@ -1,3 +1,4 @@
+using HomelabBot.Models;
 using HomelabBot.Services;
 using Microsoft.AspNetCore.Mvc;
 

@@ -217,8 +217,8 @@ public class DockerPlugin
     }
 
     [KernelFunction]
-    [Description("Gets the recent logs from a container. Returns the last N lines of logs.")]
-    public async Task<string> GetContainerLogs(
+    [Description("Gets the recent logs from a Docker container via the Docker API. Returns the last N lines of logs.")]
+    public async Task<string> GetContainerLogsFromDocker(
         [Description("Container name or ID")] string containerName,
         [Description("Number of lines to retrieve (default 50)")] int lines = 50)
     {

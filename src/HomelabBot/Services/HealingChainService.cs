@@ -118,7 +118,7 @@ public sealed class HealingChainService
             Issue: {symptom}{containerContext}{pastSection}
 
             Available plugins and functions:
-            - Docker: ListContainers, GetContainerStatus(containerName), GetContainerLogs(containerName, tail), RestartContainer(containerName), StartContainer(containerName), StopContainer(containerName)
+            - Docker: ListContainers, GetContainerStatus(containerName), GetContainerLogsFromDocker(containerName, tail), RestartContainer(containerName), StartContainer(containerName), StopContainer(containerName)
             - Prometheus: GetNodeStats, GetTargets
             - Loki: SearchLogs(query, since), CountErrorsByContainer(since)
             - TrueNAS: GetPoolStatus, GetDatasetUsage

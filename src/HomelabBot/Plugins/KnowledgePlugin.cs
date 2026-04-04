@@ -49,26 +49,7 @@ public sealed class KnowledgePlugin
                 : "I don't have any knowledge stored yet. Use /discover to learn about the homelab.";
         }
 
-        var sb = new StringBuilder();
-        sb.AppendLine($"**What I know about {topic ?? "the homelab"}:**\n");
-
-        var byTopic = facts.GroupBy(f => f.Topic);
-        foreach (var group in byTopic)
-        {
-            sb.AppendLine($"**{group.Key}**");
-            foreach (var fact in group)
-            {
-                var stale = fact.LastVerified.HasValue &&
-                    (DateTime.UtcNow - fact.LastVerified.Value).TotalDays > 30;
-                var confidence = fact.Confidence < 0.5 ? " (uncertain)" : "";
-                var warning = stale ? " ⚠️" : "";
-                sb.AppendLine($"- {fact.Fact}{confidence}{warning}");
-            }
-
-            sb.AppendLine();
-        }
-
-        return sb.ToString();
+        return FormatKnowledgeFacts(facts, $"What I know about {topic ?? "the homelab"}");
     }
 
     [KernelFunction]
@@ -87,26 +68,7 @@ public sealed class KnowledgePlugin
             return $"No relevant knowledge found for: {query}";
         }
 
-        var sb = new StringBuilder();
-        sb.AppendLine($"**Relevant knowledge for \"{query}\":**\n");
-
-        var byTopic = facts.GroupBy(f => f.Topic);
-        foreach (var group in byTopic)
-        {
-            sb.AppendLine($"**{group.Key}**");
-            foreach (var fact in group)
-            {
-                var stale = fact.LastVerified.HasValue &&
-                    (DateTime.UtcNow - fact.LastVerified.Value).TotalDays > 30;
-                var confidence = fact.Confidence < 0.5 ? " (uncertain)" : "";
-                var warning = stale ? " ⚠️" : "";
-                sb.AppendLine($"- {fact.Fact}{confidence}{warning}");
-            }
-
-            sb.AppendLine();
-        }
-
-        return sb.ToString();
+        return FormatKnowledgeFacts(facts, $"Relevant knowledge for \"{query}\"");
     }
 
     [KernelFunction]
@@ -166,5 +128,29 @@ public sealed class KnowledgePlugin
 
         await _knowledgeService.InvalidateAsync(topic, factContains);
         return $"Marked knowledge about '{factContains}' in {topic} as outdated.";
+    }
+
+    private static string FormatKnowledgeFacts(List<Data.Entities.Knowledge> facts, string heading)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine($"**{heading}:**\n");
+
+        var byTopic = facts.GroupBy(f => f.Topic);
+        foreach (var group in byTopic)
+        {
+            sb.AppendLine($"**{group.Key}**");
+            foreach (var fact in group)
+            {
+                var stale = fact.LastVerified.HasValue &&
+                    (DateTime.UtcNow - fact.LastVerified.Value).TotalDays > 30;
+                var confidence = fact.Confidence < 0.5 ? " (uncertain)" : "";
+                var warning = stale ? " ⚠️" : "";
+                sb.AppendLine($"- {fact.Fact}{confidence}{warning}");
+            }
+
+            sb.AppendLine();
+        }
+
+        return sb.ToString();
     }
 }

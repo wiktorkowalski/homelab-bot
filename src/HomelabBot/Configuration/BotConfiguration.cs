@@ -37,14 +37,6 @@ public sealed class BotConfiguration
 public sealed class MikroTikConfiguration
 {
     public const string SectionName = "MikroTik";
-
-    public required string Host { get; init; }
-
-    public int ApiPort { get; init; } = 8728;
-
-    public required string Username { get; init; }
-
-    public required string Password { get; init; }
 }
 
 public sealed class TrueNASConfiguration

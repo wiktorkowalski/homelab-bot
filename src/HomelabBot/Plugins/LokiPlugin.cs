@@ -183,9 +183,9 @@ public sealed class LokiPlugin
     }
 
     [KernelFunction]
-    [McpServerTool]
-    [Description("Gets recent logs for a specific Docker container. Tries multiple label patterns to find logs.")]
-    public async Task<string> GetContainerLogs(
+    [McpServerTool(Name = "GetContainerLogs")]
+    [Description("Gets recent logs for a specific Docker container from Loki. Tries multiple label patterns to find logs.")]
+    public async Task<string> GetContainerLogsFromLoki(
         [Description("Container name (will try multiple label patterns like compose_service, container_name)")] string containerName,
         [Description("Time range like '1h', '30m', '15m' (default 1h)")] string since = "1h")
     {
