@@ -3,6 +3,7 @@ using System.Text.Json;
 using HomelabBot.Configuration;
 using HomelabBot.Data;
 using HomelabBot.Data.Entities;
+using HomelabBot.Helpers;
 using HomelabBot.Models;
 using HomelabBot.Plugins;
 using Microsoft.EntityFrameworkCore;
@@ -402,7 +403,7 @@ public sealed class AnomalyDetectionService : BackgroundService
                 anomalies.Add(new Anomaly
                 {
                     Type = "Network",
-                    Message = $"Network RX spike: {FormatBytes(previous)}/s -> {FormatBytes(rxRate.Value)}/s",
+                    Message = $"Network RX spike: {FormattingHelpers.FormatBytes(previous)}/s -> {FormattingHelpers.FormatBytes(rxRate.Value)}/s",
                     Severity = AnomalySeverity.Warning,
                     Value = rxRate.Value,
                 });
@@ -609,26 +610,6 @@ public sealed class AnomalyDetectionService : BackgroundService
         {
             _logger.LogWarning(ex, "Failed to record anomaly event");
         }
-    }
-
-    private static string FormatBytes(double bytes)
-    {
-        if (bytes < 1024)
-        {
-            return $"{bytes:F0} B";
-        }
-
-        if (bytes < 1024 * 1024)
-        {
-            return $"{bytes / 1024:F1} KB";
-        }
-
-        if (bytes < 1024 * 1024 * 1024)
-        {
-            return $"{bytes / (1024 * 1024):F1} MB";
-        }
-
-        return $"{bytes / (1024 * 1024 * 1024):F2} GB";
     }
 
 #pragma warning disable SA1201

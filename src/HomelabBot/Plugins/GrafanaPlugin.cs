@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text;
 using HomelabBot.Configuration;
+using HomelabBot.Helpers;
 using HomelabBot.Services;
 using Microsoft.Extensions.Options;
 using Microsoft.SemanticKernel;
@@ -149,7 +150,7 @@ public sealed class GrafanaPlugin
     {
         _logger.LogDebug("Rendering dashboard screenshot for {Uid}...", uid);
 
-        var duration = ParseDuration(timeRange);
+        var duration = FormattingHelpers.ParseDuration(timeRange);
         var from = DateTimeOffset.UtcNow.Subtract(duration).ToUnixTimeMilliseconds();
         var to = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
@@ -196,28 +197,6 @@ public sealed class GrafanaPlugin
             _logger.LogError(ex, "Error checking Grafana health");
             return $"Error checking health: {ex.Message}";
         }
-    }
-
-    private static TimeSpan ParseDuration(string duration)
-    {
-        if (string.IsNullOrWhiteSpace(duration))
-        {
-            return TimeSpan.FromHours(1);
-        }
-
-        var unit = duration[^1];
-        if (!int.TryParse(duration[..^1], out var value))
-        {
-            return TimeSpan.FromHours(1);
-        }
-
-        return unit switch
-        {
-            'm' => TimeSpan.FromMinutes(value),
-            'h' => TimeSpan.FromHours(value),
-            'd' => TimeSpan.FromDays(value),
-            _ => TimeSpan.FromHours(1)
-        };
     }
 
     private sealed class GrafanaDashboard

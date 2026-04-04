@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json.Serialization;
 using HomelabBot.Configuration;
+using HomelabBot.Helpers;
 using Microsoft.Extensions.Options;
 using Microsoft.SemanticKernel;
 using ModelContextProtocol.Server;
@@ -147,7 +148,7 @@ public sealed class AlertmanagerPlugin
 
         try
         {
-            var durationSpan = ParseDuration(duration);
+            var durationSpan = FormattingHelpers.ParseDuration(duration, TimeSpan.Zero);
             if (durationSpan == TimeSpan.Zero)
             {
                 return "Invalid duration format. Use formats like '2h', '30m', '1d'.";
@@ -231,28 +232,6 @@ public sealed class AlertmanagerPlugin
             _logger.LogError(ex, "Error listing silences");
             return $"Error listing silences: {ex.Message}";
         }
-    }
-
-    private static TimeSpan ParseDuration(string duration)
-    {
-        if (string.IsNullOrWhiteSpace(duration))
-        {
-            return TimeSpan.Zero;
-        }
-
-        var unit = duration[^1];
-        if (!int.TryParse(duration[..^1], out var value))
-        {
-            return TimeSpan.Zero;
-        }
-
-        return unit switch
-        {
-            'm' => TimeSpan.FromMinutes(value),
-            'h' => TimeSpan.FromHours(value),
-            'd' => TimeSpan.FromDays(value),
-            _ => TimeSpan.Zero
-        };
     }
 
     private sealed class AlertmanagerAlert

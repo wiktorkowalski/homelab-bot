@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Text;
 using HomelabBot.Configuration;
+using HomelabBot.Helpers;
 using HomelabBot.Models.Prometheus;
 using HomelabBot.Services;
 using Microsoft.Extensions.Options;
@@ -48,7 +49,7 @@ public sealed class MikroTikPlugin
         if (metrics.MemoryTotal > 0)
         {
             var memUsed = metrics.MemoryTotal - metrics.MemoryFree;
-            sb.AppendLine($"Memory: **{metrics.MemoryPercent:F1}%** used ({FormatBytes(memUsed)} / {FormatBytes(metrics.MemoryTotal)})");
+            sb.AppendLine($"Memory: **{metrics.MemoryPercent:F1}%** used ({FormattingHelpers.FormatBytes(memUsed)} / {FormattingHelpers.FormatBytes(metrics.MemoryTotal)})");
         }
 
         if (metrics.Temperature > 0)
@@ -264,26 +265,6 @@ public sealed class MikroTikPlugin
             Temperature = temp,
             Uptime = TimeSpan.FromSeconds(uptimeSeconds)
         };
-    }
-
-    private static string FormatBytes(double bytes)
-    {
-        if (bytes < 1024)
-        {
-            return $"{bytes:F0} B";
-        }
-
-        if (bytes < 1024 * 1024)
-        {
-            return $"{bytes / 1024:F1} KB";
-        }
-
-        if (bytes < 1024 * 1024 * 1024)
-        {
-            return $"{bytes / (1024 * 1024):F1} MB";
-        }
-
-        return $"{bytes / (1024 * 1024 * 1024):F2} GB";
     }
 
     private static string FormatBitsPerSecond(double bps)

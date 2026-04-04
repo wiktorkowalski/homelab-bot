@@ -1,3 +1,4 @@
+using HomelabBot.Helpers;
 using HomelabBot.Plugins;
 
 namespace HomelabBot.Tests;
@@ -11,7 +12,7 @@ public class LokiPluginParsingTests
     public void ParseDuration_ValidInputs(string input, int minutes, int hours, int days)
     {
         var expected = new TimeSpan(days, hours, minutes, 0);
-        var result = LokiPlugin.ParseDuration(input);
+        var result = FormattingHelpers.ParseDuration(input);
         Assert.Equal(expected, result);
     }
 
@@ -21,7 +22,7 @@ public class LokiPluginParsingTests
     [InlineData("abc")]
     public void ParseDuration_InvalidOrEmpty_ReturnsOneHour(string? input)
     {
-        var result = LokiPlugin.ParseDuration(input!);
+        var result = FormattingHelpers.ParseDuration(input!);
         Assert.Equal(TimeSpan.FromHours(1), result);
     }
 

@@ -10,7 +10,7 @@ namespace HomelabBot.Services;
 
 public sealed class KnowledgeService
 {
-    private static readonly ActivitySource ActivitySource = new("HomelabBot.Chat");
+    private static readonly ActivitySource ActivitySource = TelemetryConstants.ChatActivitySource;
 
     private readonly IDbContextFactory<HomelabDbContext> _dbFactory;
     private readonly ILogger<KnowledgeService> _logger;

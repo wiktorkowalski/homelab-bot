@@ -3,6 +3,7 @@ using System.Text.Json;
 using HomelabBot.Configuration;
 using HomelabBot.Data;
 using HomelabBot.Data.Entities;
+using HomelabBot.Helpers;
 using HomelabBot.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -157,7 +158,7 @@ public sealed class WarRoomService
         sb.AppendLine("**Post-Mortem Summary**");
         sb.AppendLine($"Trigger: {warRoom.Trigger}");
         sb.AppendLine($"Severity: {warRoom.Severity}");
-        sb.AppendLine($"Duration: {FormatDuration(warRoom.Mttr ?? TimeSpan.Zero)}");
+        sb.AppendLine($"Duration: {FormattingHelpers.FormatDuration(warRoom.Mttr ?? TimeSpan.Zero)}");
         sb.AppendLine($"Resolution: {warRoom.Resolution}");
         sb.AppendLine();
         sb.AppendLine("**Timeline:**");
@@ -168,18 +169,6 @@ public sealed class WarRoomService
         }
 
         return sb.ToString();
-    }
-
-    private static string FormatDuration(TimeSpan duration)
-    {
-        if (duration.TotalHours >= 1)
-        {
-            return $"{(int)duration.TotalHours}h {duration.Minutes}m";
-        }
-
-        return duration.TotalMinutes >= 1
-            ? $"{(int)duration.TotalMinutes}m {duration.Seconds}s"
-            : $"{(int)duration.TotalSeconds}s";
     }
 
     internal sealed class TimelineEvent
