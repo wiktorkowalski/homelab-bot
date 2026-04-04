@@ -25,6 +25,10 @@ public sealed class WarRoom
     public string? PostMortemSummary { get; set; }
 
     public TimeSpan? Mttr { get; set; }
+
+    public int? InvestigationId { get; set; }
+
+    public Investigation? Investigation { get; set; }
 }
 
 public enum WarRoomStatus

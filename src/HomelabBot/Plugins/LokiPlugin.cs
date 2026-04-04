@@ -184,7 +184,7 @@ public sealed class LokiPlugin
 
     [KernelFunction]
     [McpServerTool(Name = "GetContainerLogs")]
-    [Description("Gets recent logs for a specific Docker container from Loki. Tries multiple label patterns to find logs.")]
+    [Description("Gets historical logs for a Docker container from Loki with time-range filtering. Best for searching logs over a specific period (e.g. last 1h, 6h). For real-time tail of the latest output, use Docker's GetContainerLogsFromDocker instead.")]
     public async Task<string> GetContainerLogsFromLoki(
         [Description("Container name (will try multiple label patterns like compose_service, container_name)")] string containerName,
         [Description("Time range like '1h', '30m', '15m' (default 1h)")] string since = "1h")
@@ -441,6 +441,22 @@ public sealed class LokiPlugin
             _logger.LogError(ex, "Error detecting critical patterns");
             return $"Error detecting critical patterns: {ex.Message}";
         }
+    }
+
+    internal async Task<bool> HasCriticalPatternsAsync(string since = "1h", CancellationToken ct = default)
+    {
+        var duration = FormattingHelpers.ParseDuration(since);
+        var query = "{compose_service=~\".+\",compose_service!=\"loki\"} |~ \"(?i)(\\\\bfatal\\\\b|\\\\bpanic\\\\b|\\\\boom\\\\b|out of memory|killed process|segfault)\"";
+        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() * 1_000_000;
+        var start = DateTimeOffset.UtcNow.Subtract(duration).ToUnixTimeMilliseconds() * 1_000_000;
+
+        var encodedQuery = Uri.EscapeDataString(query);
+        var url = $"{_baseUrl}/loki/api/v1/query_range?query={encodedQuery}&start={start}&end={now}&limit=1";
+        var response = await _httpClient.GetAsync(url, ct);
+        response.EnsureSuccessStatusCode();
+
+        var result = await response.Content.ReadFromJsonAsync<LokiQueryResponse>(ct);
+        return result?.Data?.Result is { Count: > 0 };
     }
 
     [KernelFunction]

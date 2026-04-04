@@ -132,6 +132,8 @@ public sealed class AnomalyDetectionConfiguration
     public int HeuristicIntervalMinutes { get; init; } = 60;
 
     public int LlmIntervalTicks { get; init; } = 1;
+
+    public int LogErrorThreshold { get; init; } = 50;
 }
 
 public sealed class SecurityAuditConfiguration
@@ -145,17 +147,6 @@ public sealed class SecurityAuditConfiguration
     public string ScheduleTime { get; init; } = "04:00";
 
     public string TimeZone { get; init; } = "Europe/Warsaw";
-}
-
-public sealed class LogAnomalyConfiguration
-{
-    public const string SectionName = "LogAnomaly";
-
-    public bool Enabled { get; init; } = true;
-
-    public int IntervalMinutes { get; init; } = 30;
-
-    public int ErrorThreshold { get; init; } = 50;
 }
 
 public sealed class HealthScoreConfiguration

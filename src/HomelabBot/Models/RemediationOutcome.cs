@@ -24,6 +24,8 @@ public sealed class RemediationOutcome
     public List<Runbook> MatchedRunbooks { get; init; } = [];
 
     public List<SimilarIncident> SimilarIncidents { get; init; } = [];
+
+    public BlastRadiusReport? BlastRadius { get; init; }
 }
 
 public enum RemediationMethod

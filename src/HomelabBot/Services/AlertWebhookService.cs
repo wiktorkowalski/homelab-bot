@@ -170,10 +170,22 @@ public sealed class AlertWebhookService
             : "";
 
         var blastRadiusPrompt = "";
-        if (outcome.ContainerName != null)
+        var blastRadius = outcome.BlastRadius;
+        if (blastRadius == null && outcome.ContainerName != null)
         {
-            var blastRadius = await _contagionTracker.AnalyzeBlastRadiusAsync(
-                outcome.ContainerName, alert.AlertName, ct);
+            try
+            {
+                blastRadius = await _contagionTracker.AnalyzeBlastRadiusAsync(
+                    outcome.ContainerName, alert.AlertName, ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to analyze blast radius for {Container}", outcome.ContainerName);
+            }
+        }
+
+        if (blastRadius != null)
+        {
             var blastRadiusText = ContagionTrackerService.FormatBlastRadius(blastRadius);
             if (!string.IsNullOrEmpty(blastRadiusText))
             {

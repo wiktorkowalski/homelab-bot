@@ -13,4 +13,8 @@ public sealed class AnomalyEvent
     public int AnomalyCount { get; set; }
 
     public DateTime DetectedAt { get; set; } = DateTime.UtcNow;
+
+    public int? InvestigationId { get; set; }
+
+    public Investigation? Investigation { get; set; }
 }

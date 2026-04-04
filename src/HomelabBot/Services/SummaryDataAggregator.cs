@@ -7,11 +7,16 @@ namespace HomelabBot.Services;
 
 public sealed class SummaryDataAggregator
 {
+    private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(5);
     private readonly PrometheusQueryService _prometheus;
     private readonly MikroTikPlugin _mikrotikPlugin;
     private readonly TrueNASPlugin _truenasPlugin;
     private readonly ILogger<SummaryDataAggregator> _logger;
     private readonly HealthScoreService _healthScoreService;
+    private readonly SemaphoreSlim _cacheLock = new(1, 1);
+
+    private DailySummaryData? _cachedData;
+    private DateTime _cacheExpiry = DateTime.MinValue;
 
     public SummaryDataAggregator(
         PrometheusQueryService prometheus,
@@ -28,6 +33,34 @@ public sealed class SummaryDataAggregator
     }
 
     public async Task<DailySummaryData> AggregateAsync(CancellationToken ct = default)
+    {
+        if (_cachedData != null && DateTime.UtcNow < _cacheExpiry)
+        {
+            _logger.LogDebug("Returning cached aggregation data");
+            return _cachedData;
+        }
+
+        await _cacheLock.WaitAsync(ct);
+        try
+        {
+            // Double-check after acquiring lock
+            if (_cachedData != null && DateTime.UtcNow < _cacheExpiry)
+            {
+                return _cachedData;
+            }
+
+            var data = await AggregateInternalAsync(ct);
+            _cachedData = data;
+            _cacheExpiry = DateTime.UtcNow.Add(CacheTtl);
+            return data;
+        }
+        finally
+        {
+            _cacheLock.Release();
+        }
+    }
+
+    private async Task<DailySummaryData> AggregateInternalAsync(CancellationToken ct)
     {
         _logger.LogInformation("Starting data aggregation for daily summary");
 

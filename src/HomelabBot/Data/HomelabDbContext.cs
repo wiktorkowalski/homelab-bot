@@ -107,6 +107,10 @@ public sealed class HomelabDbContext : DbContext
         modelBuilder.Entity<AnomalyEvent>(entity =>
         {
             entity.HasIndex(a => a.DetectedAt);
+            entity.HasOne(a => a.Investigation)
+                .WithMany()
+                .HasForeignKey(a => a.InvestigationId)
+                .OnDelete(DeleteBehavior.SetNull);
         });
 
         modelBuilder.Entity<ContainerCriticality>(entity =>
@@ -128,6 +132,10 @@ public sealed class HomelabDbContext : DbContext
         {
             entity.HasIndex(w => w.Status);
             entity.HasIndex(w => w.DiscordThreadId);
+            entity.HasOne(w => w.Investigation)
+                .WithMany()
+                .HasForeignKey(w => w.InvestigationId)
+                .OnDelete(DeleteBehavior.SetNull);
         });
 
         modelBuilder.Entity<ServiceState>(entity =>

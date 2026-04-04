@@ -22,12 +22,15 @@ public sealed class AnomalyDetectionService : BackgroundService
     private readonly ILogger<AnomalyDetectionService> _logger;
     private readonly DockerPlugin _dockerPlugin;
     private readonly TrueNASPlugin _truenasPlugin;
+    private readonly LokiPlugin _lokiPlugin;
     private readonly string _lokiUrl;
 
     private readonly ServiceStateStore _stateStore;
 
     // In-memory baselines for rate-of-change detection
     private readonly Dictionary<string, double> _lastMetricValues = new();
+    private readonly Dictionary<string, long> _lastKnownErrorCounts = new();
+    private bool _logAnomalyBaselineEstablished;
     private int _heuristicTick;
 
     public AnomalyDetectionService(
@@ -40,6 +43,7 @@ public sealed class AnomalyDetectionService : BackgroundService
         ILogger<AnomalyDetectionService> logger,
         DockerPlugin dockerPlugin,
         TrueNASPlugin truenasPlugin,
+        LokiPlugin lokiPlugin,
         IOptions<LokiConfiguration> lokiConfig,
         ServiceStateStore stateStore)
     {
@@ -52,6 +56,7 @@ public sealed class AnomalyDetectionService : BackgroundService
         _logger = logger;
         _dockerPlugin = dockerPlugin;
         _truenasPlugin = truenasPlugin;
+        _lokiPlugin = lokiPlugin;
         _lokiUrl = lokiConfig.Value.Host.TrimEnd('/');
         _stateStore = stateStore;
     }
@@ -125,6 +130,8 @@ public sealed class AnomalyDetectionService : BackgroundService
             CheckCertExpiryAsync(ct),
             CheckPrometheusCardinalityAsync(ct),
             CheckLokiHealthAsync(ct),
+            CheckLogErrorSpikesAsync(ct),
+            CheckCriticalLogPatternsAsync(ct),
         };
 
         await Task.WhenAll(tasks);
@@ -562,6 +569,58 @@ public sealed class AnomalyDetectionService : BackgroundService
         return anomalies;
     }
 
+    private async Task<List<Anomaly>> CheckLogErrorSpikesAsync(CancellationToken ct)
+    {
+        var anomalies = new List<Anomaly>();
+        try
+        {
+            var errorCounts = await _lokiPlugin.GetErrorCountsByContainerAsync("1h");
+            var spikes = DetectErrorSpikes(errorCounts);
+
+            foreach (var spike in spikes)
+            {
+                anomalies.Add(new Anomaly
+                {
+                    Type = "LogSpike",
+                    Message = $"Error rate spike in {spike.Container}: {spike.PreviousCount} → {spike.CurrentCount} errors/h",
+                    Severity = AnomalySeverity.Warning,
+                    Value = spike.CurrentCount,
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to check log error spikes");
+        }
+
+        return anomalies;
+    }
+
+    private async Task<List<Anomaly>> CheckCriticalLogPatternsAsync(CancellationToken ct)
+    {
+        var anomalies = new List<Anomaly>();
+        try
+        {
+            var hasCritical = await _lokiPlugin.HasCriticalPatternsAsync("1h", ct);
+            if (hasCritical)
+            {
+                anomalies.Add(new Anomaly
+                {
+                    Type = "CriticalLog",
+                    Message = "Critical log patterns detected (fatal/panic/OOM/segfault)",
+                    Severity = AnomalySeverity.Critical,
+                    Value = 1,
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to check critical log patterns");
+        }
+
+        return anomalies;
+    }
+
     private async Task NotifyAnomaliesAsync(List<Anomaly> anomalies, CancellationToken ct)
     {
         var anomalySummary = new StringBuilder();
@@ -613,6 +672,46 @@ public sealed class AnomalyDetectionService : BackgroundService
     }
 
 #pragma warning disable SA1201
+    internal List<ErrorSpike> DetectErrorSpikes(Dictionary<string, long> errorCounts)
+    {
+        var spikes = new List<ErrorSpike>();
+        var threshold = _config.CurrentValue.LogErrorThreshold;
+
+        // First run with no persisted baseline → establish baseline only
+        if (!_logAnomalyBaselineEstablished)
+        {
+            foreach (var (container, count) in errorCounts)
+            {
+                _lastKnownErrorCounts[container] = count;
+            }
+
+            _logAnomalyBaselineEstablished = true;
+            return spikes;
+        }
+
+        foreach (var (container, count) in errorCounts)
+        {
+            var previousCount = _lastKnownErrorCounts.GetValueOrDefault(container, 0);
+            _lastKnownErrorCounts[container] = count;
+
+            if (count >= threshold && count > previousCount * 2 && previousCount > 0)
+            {
+                spikes.Add(new ErrorSpike { Container = container, PreviousCount = previousCount, CurrentCount = count });
+            }
+        }
+
+        return spikes;
+    }
+
+    internal sealed class ErrorSpike
+    {
+        public required string Container { get; init; }
+
+        public required long PreviousCount { get; init; }
+
+        public required long CurrentCount { get; init; }
+    }
+
     private enum AnomalySeverity
     {
         Warning,
@@ -647,7 +746,26 @@ public sealed class AnomalyDetectionService : BackgroundService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to load anomaly detection baselines");
+            _logger.LogWarning(ex, "Failed to load metric baselines");
+        }
+
+        try
+        {
+            var errorJson = await _stateStore.GetAsync("AnomalyDetection", "lastKnownErrorCounts");
+            if (errorJson != null)
+            {
+                var data = JsonSerializer.Deserialize<Dictionary<string, long>>(errorJson);
+                if (data != null)
+                {
+                    foreach (var (key, value) in data)
+                        _lastKnownErrorCounts[key] = value;
+                    _logAnomalyBaselineEstablished = true;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to load error count baselines");
         }
     }
 
@@ -657,6 +775,8 @@ public sealed class AnomalyDetectionService : BackgroundService
         {
             await _stateStore.SetAsync("AnomalyDetection", "lastMetricValues",
                 JsonSerializer.Serialize(_lastMetricValues));
+            await _stateStore.SetAsync("AnomalyDetection", "lastKnownErrorCounts",
+                JsonSerializer.Serialize(_lastKnownErrorCounts));
         }
         catch (Exception ex)
         {

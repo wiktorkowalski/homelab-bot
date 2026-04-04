@@ -487,6 +487,32 @@ public class KnowledgeServiceTests : IClassFixture<DatabaseFixture>
     }
 
     [Fact]
+    public async Task DecayConfidenceAsync_SkipsNotificationPreferences()
+    {
+        // Arrange
+        var topic = $"notification_preference:suppress:{Guid.NewGuid()}";
+        var fact = await _service.RememberFactAsync(topic, "suppress this", confidence: 0.9);
+
+        using (var db = _fixture.DbContextFactory.CreateDbContext())
+        {
+            var entity = await db.Knowledge.FindAsync(fact.Id);
+            entity!.LastVerified = DateTime.UtcNow.AddDays(-60);
+            entity.LastUsed = DateTime.UtcNow.AddDays(-90);
+            await db.SaveChangesAsync();
+        }
+
+        // Act
+        await _service.DecayConfidenceAsync();
+
+        // Assert — confidence should be unchanged
+        using (var db = _fixture.DbContextFactory.CreateDbContext())
+        {
+            var updated = await db.Knowledge.FindAsync(fact.Id);
+            Assert.Equal(0.9, updated!.Confidence);
+        }
+    }
+
+    [Fact]
     public async Task RecallAsync_UpdatesLastUsed()
     {
         // Arrange

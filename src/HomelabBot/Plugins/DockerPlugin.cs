@@ -216,7 +216,7 @@ public class DockerPlugin
     }
 
     [KernelFunction]
-    [Description("Gets the recent logs from a Docker container via the Docker API. Returns the last N lines of logs.")]
+    [Description("Gets the most recent logs from a Docker container via the Docker API. Best for real-time tail of recent output (last N lines). For historical log search or time-range queries, use Loki's GetContainerLogs instead.")]
     public async Task<string> GetContainerLogsFromDocker(
         [Description("Container name or ID")] string containerName,
         [Description("Number of lines to retrieve (default 50)")] int lines = 50)
