@@ -3,7 +3,6 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using HomelabBot.Configuration;
 using HomelabBot.Plugins;
-using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Options;
 using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.ChatCompletion;
@@ -91,7 +90,6 @@ public sealed class KernelService
     public KernelService(
         IOptions<BotConfiguration> config,
         ILogger<KernelService> logger,
-        ILoggerFactory loggerFactory,
         ILogger<TelemetryFunctionFilter> filterLogger,
         ConversationService conversationService,
         TelemetryService telemetryService,
@@ -111,21 +109,15 @@ public sealed class KernelService
         _logger = logger;
         _conversationService = conversationService;
         _telemetryService = telemetryService;
+        _modelId = config.Value.OpenRouterModel;
 
         var builder = Kernel.CreateBuilder();
 
-        // Always register OpenRouter as OpenAI-compatible endpoint (used as fallback)
         builder.AddOpenAIChatCompletion(
             modelId: config.Value.OpenRouterModel,
             apiKey: config.Value.OpenRouterApiKey,
             endpoint: new Uri(config.Value.OpenRouterEndpoint));
 
-        // Determine primary model ID for logging/telemetry
-        _modelId = !string.IsNullOrEmpty(config.Value.AnthropicApiKey)
-            ? config.Value.AnthropicModel
-            : config.Value.OpenRouterModel;
-
-        // Register plugins
         builder.Plugins.AddFromObject(dockerPlugin, "Docker");
         builder.Plugins.AddFromObject(prometheusPlugin, "Prometheus");
         builder.Plugins.AddFromObject(alertmanagerPlugin, "Alertmanager");
@@ -140,49 +132,12 @@ public sealed class KernelService
         builder.Plugins.AddFromObject(runbookPlugin, "Runbook");
 
         _kernel = builder.Build();
-
-        // Add telemetry filter for tool call logging
         _kernel.FunctionInvocationFilters.Add(new TelemetryFunctionFilter(telemetryService, filterLogger));
+        _chatService = _kernel.GetRequiredService<IChatCompletionService>();
 
-        // Use Anthropic as primary or just OpenRouter if no Anthropic config
-        var useAnthropic = !string.IsNullOrEmpty(config.Value.AnthropicApiKey)
-                           && !string.IsNullOrEmpty(config.Value.AnthropicBaseUrl);
-
-        if (useAnthropic)
-        {
-            // Use official Anthropic SDK → IChatClient → IChatCompletionService
-            // UseFunctionInvocation() handles the tool use loop automatically
-            var anthropicClient = new Anthropic.AnthropicClient
-            {
-                ApiKey = config.Value.AnthropicApiKey!,
-                BaseUrl = config.Value.AnthropicBaseUrl!,
-            };
-
-            var anthropicService = new ChatClientBuilder(
-                    anthropicClient.AsIChatClient(config.Value.AnthropicModel))
-                .UseOpenTelemetry(sourceName: "HomelabBot.Chat", configure: otel =>
-                    otel.EnableSensitiveData = true)
-                .Use(inner => new TelemetryChatClient(
-                    inner, loggerFactory.CreateLogger<TelemetryChatClient>()))
-                .UseFunctionInvocation()
-                .Build()
-                .AsChatCompletionService();
-
-            // Wrap with fallback to OpenRouter
-            var openRouterFallback = _kernel.GetRequiredService<IChatCompletionService>();
-            _chatService = new FallbackChatCompletionService(
-                anthropicService, openRouterFallback, logger);
-
-            _logger.LogInformation(
-                "Kernel initialized with Anthropic {Model} (fallback: OpenRouter {Fallback}), {PluginCount} plugins",
-                config.Value.AnthropicModel, config.Value.OpenRouterModel, _kernel.Plugins.Count);
-        }
-        else
-        {
-            _chatService = _kernel.GetRequiredService<IChatCompletionService>();
-            _logger.LogInformation("Kernel initialized with OpenRouter {Model} and {PluginCount} plugins",
-                config.Value.OpenRouterModel, _kernel.Plugins.Count);
-        }
+        _logger.LogInformation(
+            "Kernel initialized with OpenRouter {Model} and {PluginCount} plugins",
+            config.Value.OpenRouterModel, _kernel.Plugins.Count);
     }
 
     public async Task<string> GenerateThreadTitleAsync(
@@ -307,6 +262,10 @@ public sealed class KernelService
 
             return responseText;
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             sw.Stop();
@@ -329,19 +288,10 @@ public sealed class KernelService
             return (null, null);
         }
 
-        if (response.Metadata.TryGetValue("Usage", out var usage))
+        if (response.Metadata.TryGetValue("Usage", out var usage)
+            && usage is OpenAI.Chat.ChatTokenUsage openAiUsage)
         {
-            // OpenAI format (OpenRouter path)
-            if (usage is OpenAI.Chat.ChatTokenUsage openAiUsage)
-            {
-                return (openAiUsage.InputTokenCount, openAiUsage.OutputTokenCount);
-            }
-
-            // M.E.AI format (Anthropic SDK via AsChatCompletionService adapter)
-            if (usage is Microsoft.Extensions.AI.UsageDetails usageDetails)
-            {
-                return ((int?)usageDetails.InputTokenCount, (int?)usageDetails.OutputTokenCount);
-            }
+            return (openAiUsage.InputTokenCount, openAiUsage.OutputTokenCount);
         }
 
         return (null, null);
