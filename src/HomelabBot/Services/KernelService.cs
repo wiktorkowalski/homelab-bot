@@ -334,6 +334,13 @@ public sealed class KernelService
 
                 if (!IsEmptyResponse(response))
                 {
+                    if (attempt > 1)
+                    {
+                        logger.LogInformation(
+                            "Recovered non-empty response from {Model} for thread {ThreadId} on attempt {Attempt}/{MaxAttempts}",
+                            modelId, threadId, attempt, maxAttempts);
+                    }
+
                     return response;
                 }
 
