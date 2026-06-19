@@ -261,6 +261,12 @@ public sealed class KernelService
                 // The retry helper already logged the give-up at Error level (finish reason + tokens).
                 const string fallback =
                     "I couldn't generate a response - the model returned nothing. Try asking again or rephrasing.";
+
+                // Close the turn so a failed response doesn't leave the user message (and any
+                // tool turns the model ran) dangling without an assistant reply, which would break
+                // user/assistant alternation on the next request.
+                _conversationService.AddAssistantMessage(threadId, fallback);
+
                 var (emptyPromptTokens, emptyCompletionTokens) = ExtractTokenUsage(response);
                 await _telemetryService.LogInteractionCompleteAsync(
                     interaction.Id, fallback, emptyPromptTokens, emptyCompletionTokens, sw.ElapsedMilliseconds, ct);
@@ -345,6 +351,20 @@ public sealed class KernelService
                 }
 
                 var finishReason = GetFinishReason(response);
+                var (promptTokens, completionTokens) = ExtractTokenUsage(response);
+
+                // The model ran tools (side effects already happened) then returned empty - the
+                // exact empty-after-thinking case this targets. Retrying would trim those tool
+                // turns and re-run them, so a "restart container"/"send alert" could fire again.
+                // Give up instead and let the caller surface a fallback.
+                if (ToolsExecuted(history, baseline))
+                {
+                    logger.LogError(
+                        "Empty response after tool execution from {Model} for thread {ThreadId} (finishReason={FinishReason}, promptTokens={PromptTokens}, completionTokens={CompletionTokens}); not retrying to avoid re-running tools",
+                        modelId, threadId, finishReason, promptTokens, completionTokens);
+                    return response;
+                }
+
                 if (attempt < maxAttempts)
                 {
                     logger.LogWarning(
@@ -353,7 +373,6 @@ public sealed class KernelService
                 }
                 else
                 {
-                    var (promptTokens, completionTokens) = ExtractTokenUsage(response);
                     logger.LogError(
                         "Exhausted {MaxAttempts} attempts, still empty response from {Model} for thread {ThreadId} (finishReason={FinishReason}, promptTokens={PromptTokens}, completionTokens={CompletionTokens})",
                         maxAttempts, modelId, threadId, finishReason, promptTokens, completionTokens);
@@ -366,6 +385,17 @@ public sealed class KernelService
             }
             catch (HttpOperationException ex) when (IsTransient(ex))
             {
+                // Same hazard as the empty case: if tools already ran this attempt, retrying
+                // re-executes their side effects, so don't.
+                if (ToolsExecuted(history, baseline))
+                {
+                    logger.LogError(
+                        ex,
+                        "Transient {StatusCode} after tool execution from {Model} for thread {ThreadId}; not retrying to avoid re-running tools",
+                        ex.StatusCode, modelId, threadId);
+                    throw;
+                }
+
                 if (attempt >= maxAttempts)
                 {
                     logger.LogError(
@@ -395,6 +425,21 @@ public sealed class KernelService
         {
             history.RemoveAt(i);
         }
+    }
+
+    // A Tool-role message past the baseline means a function actually executed this attempt, so
+    // its side effects already happened and the attempt must not be retried.
+    private static bool ToolsExecuted(ChatHistory history, int baseline)
+    {
+        for (var i = baseline; i < history.Count; i++)
+        {
+            if (history[i].Role == AuthorRole.Tool)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     // Empty when missing, blank, or only a <think> block (which strips to nothing downstream).

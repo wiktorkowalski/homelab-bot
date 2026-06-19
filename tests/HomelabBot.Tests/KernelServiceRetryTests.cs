@@ -165,8 +165,8 @@ public class KernelServiceRetryTests
         {
             observedCounts.Add(history.Count);
             calls++;
-            // Simulate SK auto function invocation appending tool-call / tool-result messages.
-            history.AddAssistantMessage($"tool junk {calls}");
+            // A non-tool partial message (e.g. SK's empty final assistant message) - safe to trim and retry.
+            history.AddAssistantMessage($"partial {calls}");
             return Task.FromResult(calls < 3 ? Msg(null) : Msg("done"));
         }
 
@@ -177,6 +177,46 @@ public class KernelServiceRetryTests
         // Every attempt should have started from the same clean baseline, not stacked on prior junk.
         Assert.All(observedCounts, c => Assert.Equal(baseline, c));
         Assert.Equal(3, observedCounts.Count);
+    }
+
+    [Fact]
+    public async Task InvokeWithRetry_EmptyAfterToolExecution_DoesNotRetry()
+    {
+        var history = NewHistory();
+        var calls = 0;
+        var logger = new ListLogger();
+        Task<ChatMessageContent> Invoke(CancellationToken _)
+        {
+            calls++;
+            // A tool actually ran (side effect happened); SK appends a Tool-role result message.
+            history.AddMessage(AuthorRole.Tool, "container restarted");
+            return Task.FromResult(Msg(null));
+        }
+
+        var result = await KernelService.InvokeWithRetryAsync(
+            Invoke, history, "test-model", 3, threadId: 0, logger, _ => TimeSpan.Zero);
+
+        Assert.True(KernelService.IsEmptyResponse(result));
+        Assert.Equal(1, calls); // retrying would re-execute the tool
+        Assert.Contains(logger.Entries, e => e.Level == LogLevel.Error);
+    }
+
+    [Fact]
+    public async Task InvokeWithRetry_TransientAfterToolExecution_DoesNotRetry()
+    {
+        var history = NewHistory();
+        var calls = 0;
+        Task<ChatMessageContent> Invoke(CancellationToken _)
+        {
+            calls++;
+            history.AddMessage(AuthorRole.Tool, "container restarted");
+            throw new HttpOperationException(HttpStatusCode.ServiceUnavailable, null, "503", null);
+        }
+
+        await Assert.ThrowsAsync<HttpOperationException>(() => KernelService.InvokeWithRetryAsync(
+            Invoke, history, "test-model", 3, threadId: 0, NullLogger.Instance, _ => TimeSpan.Zero));
+
+        Assert.Equal(1, calls); // retrying would re-execute the tool
     }
 
     [Fact]
