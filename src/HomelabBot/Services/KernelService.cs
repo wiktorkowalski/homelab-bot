@@ -37,6 +37,8 @@ public sealed class KernelService
     private readonly TelemetryService _telemetryService;
     private readonly IChatCompletionService _chatService;
     private readonly string _modelId;
+    private readonly int _maxAttempts;
+    private readonly int _maxTokens;
 
     public const string SystemPrompt = """
         You are HomeLabBot, a chill and helpful assistant for managing a homelab infrastructure.
@@ -110,6 +112,8 @@ public sealed class KernelService
         _conversationService = conversationService;
         _telemetryService = telemetryService;
         _modelId = config.Value.OpenRouterModel;
+        _maxAttempts = Math.Max(1, config.Value.MaxResponseAttempts);
+        _maxTokens = config.Value.MaxTokens;
 
         var builder = Kernel.CreateBuilder();
 
@@ -235,21 +239,37 @@ public sealed class KernelService
             ExtensionData = new Dictionary<string, object>
             {
                 ["temperature"] = 0.7,
-                ["max_tokens"] = maxTokens ?? 2048,
+                ["max_tokens"] = maxTokens ?? _maxTokens,
             },
         };
 
         try
         {
-            var response = await _chatService.GetChatMessageContentAsync(
+            var response = await InvokeWithRetryAsync(
+                c => _chatService.GetChatMessageContentAsync(history, activeSettings, _kernel, c),
                 history,
-                activeSettings,
-                _kernel,
-                ct);
+                _modelId,
+                _maxAttempts,
+                threadId,
+                _logger,
+                c: ct);
 
             sw.Stop();
-            var responseText = response.Content ?? "I couldn't generate a response.";
-            responseText = StripThinkingBlocks(responseText);
+
+            if (IsEmptyResponse(response))
+            {
+                // The retry helper already logged the give-up at Error level (finish reason + tokens).
+                const string fallback =
+                    "I couldn't generate a response - the model returned nothing. Try asking again or rephrasing.";
+                var (emptyPromptTokens, emptyCompletionTokens) = ExtractTokenUsage(response);
+                await _telemetryService.LogInteractionCompleteAsync(
+                    interaction.Id, fallback, emptyPromptTokens, emptyCompletionTokens, sw.ElapsedMilliseconds, ct);
+                activity?.SetTag("langfuse.observation.level", "WARNING");
+                activity?.SetTag("langfuse.trace.output", fallback);
+                return fallback;
+            }
+
+            var responseText = StripThinkingBlocks(response!.Content!);
             _conversationService.AddAssistantMessage(threadId, responseText);
 
             var (promptTokens, completionTokens) = ExtractTokenUsage(response);
@@ -281,9 +301,150 @@ public sealed class KernelService
         }
     }
 
-    private static (int? PromptTokens, int? CompletionTokens) ExtractTokenUsage(ChatMessageContent response)
+    // Retries empty/whitespace responses (OpenRouter occasionally returns HTTP 200 with no
+    // content - notably reasoning models that spend the whole budget thinking) and transient
+    // HTTP failures (408/429/5xx/timeouts). SK auto function invocation appends tool-call and
+    // tool-result messages to the shared history in place, so each retry first resets it to the
+    // pre-call length - otherwise attempts stack duplicate/partial turns on one another.
+    internal static async Task<ChatMessageContent?> InvokeWithRetryAsync(
+        Func<CancellationToken, Task<ChatMessageContent>> invoke,
+        ChatHistory history,
+        string modelId,
+        int maxAttempts,
+        ulong threadId,
+        ILogger logger,
+        Func<int, TimeSpan>? backoffDelay = null,
+        CancellationToken c = default)
     {
-        if (response.Metadata == null)
+        backoffDelay ??= BackoffDelay;
+        maxAttempts = Math.Max(1, maxAttempts);
+        var baseline = history.Count;
+        ChatMessageContent? response = null;
+
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
+        {
+            if (attempt > 1)
+            {
+                TrimToBaseline(history, baseline);
+            }
+
+            try
+            {
+                response = await invoke(c);
+
+                if (!IsEmptyResponse(response))
+                {
+                    return response;
+                }
+
+                var finishReason = GetFinishReason(response);
+                if (attempt < maxAttempts)
+                {
+                    logger.LogWarning(
+                        "Empty response from {Model} for thread {ThreadId} (attempt {Attempt}/{MaxAttempts}, finishReason={FinishReason}); retrying",
+                        modelId, threadId, attempt, maxAttempts, finishReason);
+                }
+                else
+                {
+                    var (promptTokens, completionTokens) = ExtractTokenUsage(response);
+                    logger.LogError(
+                        "Exhausted {MaxAttempts} attempts, still empty response from {Model} for thread {ThreadId} (finishReason={FinishReason}, promptTokens={PromptTokens}, completionTokens={CompletionTokens})",
+                        maxAttempts, modelId, threadId, finishReason, promptTokens, completionTokens);
+                    return response;
+                }
+            }
+            catch (OperationCanceledException) when (c.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (HttpOperationException ex) when (IsTransient(ex))
+            {
+                if (attempt >= maxAttempts)
+                {
+                    logger.LogError(
+                        ex,
+                        "Exhausted {MaxAttempts} attempts on transient {StatusCode} from {Model} for thread {ThreadId}",
+                        maxAttempts, ex.StatusCode, modelId, threadId);
+                    throw;
+                }
+
+                logger.LogWarning(
+                    ex,
+                    "Transient {StatusCode} from {Model} for thread {ThreadId} (attempt {Attempt}/{MaxAttempts}); retrying",
+                    ex.StatusCode, modelId, threadId, attempt, maxAttempts);
+            }
+
+            await Task.Delay(backoffDelay(attempt), c);
+        }
+
+        return response;
+    }
+
+    // SK appends tool-call/result messages to the shared history during a call; drop anything
+    // past the pre-call length so a retry starts from a clean state.
+    private static void TrimToBaseline(ChatHistory history, int baseline)
+    {
+        for (var i = history.Count - 1; i >= baseline; i--)
+        {
+            history.RemoveAt(i);
+        }
+    }
+
+    // Empty when missing, blank, or only a <think> block (which strips to nothing downstream).
+    internal static bool IsEmptyResponse(ChatMessageContent? response)
+    {
+        if (response is null)
+        {
+            return true;
+        }
+
+        var content = response.Content;
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            return true;
+        }
+
+        // A response that is nothing but a <think> block collapses to empty once stripped.
+        return string.IsNullOrWhiteSpace(StripThinkingBlocks(content));
+    }
+
+    // Transport failures (no status) and retryable HTTP codes (408/429/5xx).
+    internal static bool IsTransient(HttpOperationException ex)
+    {
+        if (ex.StatusCode is null)
+        {
+            // No HTTP response received (connection reset, timeout, DNS, etc.).
+            return true;
+        }
+
+        var code = (int)ex.StatusCode.Value;
+        return code == 408 || code == 429 || code >= 500;
+    }
+
+    internal static string GetFinishReason(ChatMessageContent? response)
+    {
+        if (response?.Metadata is not null
+            && response.Metadata.TryGetValue("FinishReason", out var finishReason)
+            && finishReason is not null)
+        {
+            return finishReason.ToString() ?? "unknown";
+        }
+
+        return "unknown";
+    }
+
+    // Full-jitter exponential backoff: random delay in [0, min(8s, 500ms * 2^(attempt-1))).
+    internal static TimeSpan BackoffDelay(int attempt)
+    {
+        const double baseMs = 500;
+        const double capMs = 8000;
+        var ceiling = Math.Min(capMs, baseMs * Math.Pow(2, attempt - 1));
+        return TimeSpan.FromMilliseconds(Random.Shared.NextDouble() * ceiling);
+    }
+
+    internal static (int? PromptTokens, int? CompletionTokens) ExtractTokenUsage(ChatMessageContent? response)
+    {
+        if (response?.Metadata is null)
         {
             return (null, null);
         }
@@ -297,7 +458,7 @@ public sealed class KernelService
         return (null, null);
     }
 
-    private static string StripThinkingBlocks(string text)
+    internal static string StripThinkingBlocks(string text)
     {
         if (string.IsNullOrEmpty(text))
         {
