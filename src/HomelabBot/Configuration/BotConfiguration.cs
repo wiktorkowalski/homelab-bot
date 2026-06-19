@@ -17,9 +17,18 @@ public sealed class BotConfiguration
 
     public required string OpenRouterApiKey { get; init; }
 
-    public string OpenRouterModel { get; init; } = "moonshotai/kimi-k2.6";
+    public string OpenRouterModel { get; init; } = "anthropic/claude-sonnet-4.6";
 
     public string OpenRouterEndpoint { get; init; } = "https://openrouter.ai/api/v1";
+
+    // Total attempts for a chat completion before giving up (1 = no retry). Covers both
+    // empty/null responses and transient HTTP failures (408/429/5xx/timeouts).
+    public int MaxResponseAttempts { get; init; } = 3;
+
+    // Generous on purpose: must exceed a reasoning model's thinking budget, else reasoning
+    // tokens consume it all and the model returns empty content (finish_reason=length). Only a
+    // cap - billed for tokens actually generated, not this ceiling.
+    public int MaxTokens { get; init; } = 50000;
 
     public List<ulong> DedicatedChannels { get; init; } = [];
 
