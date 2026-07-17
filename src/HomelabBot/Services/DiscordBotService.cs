@@ -365,10 +365,16 @@ public sealed class DiscordBotService : BackgroundService
         // Check if we should respond
         var isMentioned = e.Message.MentionedUsers.Any(u => u.Id == client.CurrentUser.Id);
         var isDedicatedChannel = _config.DedicatedChannels.Contains(e.Channel.Id);
-        var isThread = e.Channel.IsThread;
 
-        // Respond in: mentions anywhere, dedicated channels, or threads we're already in
-        if (!isMentioned && !isDedicatedChannel && !isThread)
+        // Only treat a thread as "ours" if the bot created it (mention-spawned
+        // conversation threads and war rooms). Threads created by other bots or
+        // users — e.g. the owner chatting with a different bot — must not trigger
+        // us unless we're explicitly mentioned.
+        var isOwnThread = e.Channel is DiscordThreadChannel threadChannel
+            && threadChannel.CreatorId == client.CurrentUser.Id;
+
+        // Respond in: mentions anywhere, dedicated channels, or threads we created
+        if (!isMentioned && !isDedicatedChannel && !isOwnThread)
         {
             return;
         }
