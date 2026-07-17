@@ -17,7 +17,7 @@ public sealed class BotConfiguration
 
     public required string OpenRouterApiKey { get; init; }
 
-    public string OpenRouterModel { get; init; } = "anthropic/claude-sonnet-4.6";
+    public string OpenRouterModel { get; init; } = "anthropic/claude-sonnet-5";
 
     public string OpenRouterEndpoint { get; init; } = "https://openrouter.ai/api/v1";
 
