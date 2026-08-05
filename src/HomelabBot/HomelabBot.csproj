@@ -11,6 +11,8 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="HomelabBot.Tests" />
+    <!-- Lets NSubstitute proxy internal virtual members (e.g. DockerPlugin.GetStoppedContainersAsync). -->
+    <InternalsVisibleTo Include="DynamicProxyGenAssembly2" />
   </ItemGroup>
 
   <ItemGroup>

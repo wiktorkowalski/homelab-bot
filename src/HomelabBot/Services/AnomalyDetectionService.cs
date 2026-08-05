@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using HomelabBot.Configuration;
@@ -13,6 +14,9 @@ namespace HomelabBot.Services;
 
 public sealed class AnomalyDetectionService : BackgroundService
 {
+    private const double BucketRatio = 1.25;
+    private const double BucketFloor = 1;
+
     private readonly IOptionsMonitor<AnomalyDetectionConfiguration> _config;
     private readonly PrometheusQueryService _prometheus;
     private readonly HttpClient _httpClient;
@@ -32,6 +36,8 @@ public sealed class AnomalyDetectionService : BackgroundService
     private readonly Dictionary<string, long> _lastKnownErrorCounts = new();
     private bool _logAnomalyBaselineEstablished;
     private int _heuristicTick;
+    private string? _lastEvaluatedFingerprint;
+    private DateTime? _lastEvaluatedAt;
 
     public AnomalyDetectionService(
         IOptionsMonitor<AnomalyDetectionConfiguration> config,
@@ -95,7 +101,7 @@ public sealed class AnomalyDetectionService : BackgroundService
                     && (_heuristicTick % llmInterval == 0
                         || anomalies.Any(a => a.Severity == AnomalySeverity.Critical)))
                 {
-                    await NotifyAnomaliesAsync(anomalies, stoppingToken);
+                    await EvaluateIfChangedAsync(anomalies, stoppingToken);
                 }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -283,21 +289,37 @@ public sealed class AnomalyDetectionService : BackgroundService
         return anomalies;
     }
 
-    private async Task<List<Anomaly>> CheckContainerHealthAsync(CancellationToken ct)
+    internal async Task<List<Anomaly>> CheckContainerHealthAsync(CancellationToken ct)
     {
         var anomalies = new List<Anomaly>();
         try
         {
-            var output = await _dockerPlugin.ListContainers();
-            var stoppedCount = output.Split('\n').Count(l => l.Contains("\ud83d\udd34"));
-            if (stoppedCount > 0)
+            var grace = TimeSpan.FromHours(Math.Max(0, _config.CurrentValue.StoppedContainerGraceHours));
+            var stopped = await _dockerPlugin.GetStoppedContainersAsync(ct);
+
+            // Containers parked for longer than the grace window are a deliberate state, not an
+            // anomaly. Reporting them keeps a permanent "critical" finding alive forever.
+            var recentlyStopped = stopped
+                .Where(c => c.StoppedFor is null || c.StoppedFor < grace)
+                .ToList();
+
+            var parkedCount = stopped.Count - recentlyStopped.Count;
+            if (parkedCount > 0)
             {
+                _logger.LogDebug(
+                    "Ignoring {Count} container(s) stopped longer than {GraceHours}h",
+                    parkedCount, grace.TotalHours);
+            }
+
+            if (recentlyStopped.Count > 0)
+            {
+                var names = string.Join(", ", recentlyStopped.Select(c => c.Name).Order(StringComparer.Ordinal));
                 anomalies.Add(new Anomaly
                 {
                     Type = "Container",
-                    Message = $"{stoppedCount} container(s) stopped",
-                    Severity = stoppedCount > 3 ? AnomalySeverity.Critical : AnomalySeverity.Warning,
-                    Value = stoppedCount,
+                    Message = $"{recentlyStopped.Count} container(s) stopped: {names}",
+                    Severity = recentlyStopped.Count > 3 ? AnomalySeverity.Critical : AnomalySeverity.Warning,
+                    Value = recentlyStopped.Count,
                 });
             }
         }
@@ -621,6 +643,78 @@ public sealed class AnomalyDetectionService : BackgroundService
         return anomalies;
     }
 
+    // A standing finding (parked containers, a chatty log) otherwise buys an identical LLM answer
+    // every tick at ~30k prompt tokens a time — the bot's single largest source of token spend.
+    private async Task EvaluateIfChangedAsync(List<Anomaly> anomalies, CancellationToken ct)
+    {
+        var fingerprint = BuildFingerprint(anomalies);
+        var repeatAfter = TimeSpan.FromHours(Math.Max(1, _config.CurrentValue.RepeatEvaluationHours));
+
+        if (!ShouldEvaluate(fingerprint, _lastEvaluatedFingerprint, _lastEvaluatedAt, DateTime.UtcNow, repeatAfter))
+        {
+            _logger.LogInformation(
+                "Anomaly set unchanged since {LastEvaluatedAt:u}, skipping LLM evaluation (fingerprint {Fingerprint})",
+                _lastEvaluatedAt, fingerprint);
+
+            // Still record the event so the anomaly history keeps showing how long it has stood.
+            await RecordAnomalyEventAsync(anomalies, "Skipped LLM evaluation — anomaly set unchanged", ct);
+            return;
+        }
+
+        await NotifyAnomaliesAsync(anomalies, ct);
+
+        _lastEvaluatedFingerprint = fingerprint;
+        _lastEvaluatedAt = DateTime.UtcNow;
+        await PersistEvaluationStateAsync();
+    }
+
+    // Message text is excluded on purpose — it carries exact values that jitter between ticks.
+    internal static string BuildFingerprint(List<Anomaly> anomalies) =>
+        string.Join(
+            "|",
+            anomalies
+                .Select(a => $"{a.Type}:{a.Severity}:{MagnitudeBucket(a.Value)}")
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(key => key, StringComparer.Ordinal));
+
+    internal static int MagnitudeBucket(double value)
+    {
+        var magnitude = Math.Abs(value);
+
+        // Log-scale buckets ~25% wide: CPU drifting 87% → 88% stays put, while 9 stopped
+        // containers → 20 lands in another bucket and earns a fresh investigation.
+        return magnitude < BucketFloor ? 0 : (int)Math.Round(Math.Log(magnitude) / Math.Log(BucketRatio));
+    }
+
+    internal static bool ShouldEvaluate(
+        string fingerprint,
+        string? lastFingerprint,
+        DateTime? lastEvaluatedAt,
+        DateTime now,
+        TimeSpan repeatAfter)
+    {
+        if (!string.Equals(fingerprint, lastFingerprint, StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        return lastEvaluatedAt is null || now - lastEvaluatedAt.Value >= repeatAfter;
+    }
+
+    private async Task PersistEvaluationStateAsync()
+    {
+        try
+        {
+            await _stateStore.SetAsync("AnomalyDetection", "lastEvaluatedFingerprint", _lastEvaluatedFingerprint ?? "");
+            await _stateStore.SetAsync("AnomalyDetection", "lastEvaluatedAt",
+                (_lastEvaluatedAt ?? DateTime.UtcNow).ToString("O", CultureInfo.InvariantCulture));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to persist last anomaly evaluation state");
+        }
+    }
+
     private async Task NotifyAnomaliesAsync(List<Anomaly> anomalies, CancellationToken ct)
     {
         var anomalySummary = new StringBuilder();
@@ -712,13 +806,13 @@ public sealed class AnomalyDetectionService : BackgroundService
         public required long CurrentCount { get; init; }
     }
 
-    private enum AnomalySeverity
+    internal enum AnomalySeverity
     {
         Warning,
         Critical,
     }
 
-    private sealed class Anomaly
+    internal sealed class Anomaly
     {
         public required string Type { get; init; }
 
@@ -766,6 +860,22 @@ public sealed class AnomalyDetectionService : BackgroundService
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to load error count baselines");
+        }
+
+        try
+        {
+            _lastEvaluatedFingerprint = await _stateStore.GetAsync("AnomalyDetection", "lastEvaluatedFingerprint");
+
+            var evaluatedAt = await _stateStore.GetAsync("AnomalyDetection", "lastEvaluatedAt");
+            if (evaluatedAt != null
+                && DateTime.TryParse(evaluatedAt, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var parsed))
+            {
+                _lastEvaluatedAt = parsed.ToUniversalTime();
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to load last anomaly evaluation state");
         }
     }
 
