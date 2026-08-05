@@ -122,6 +122,23 @@ public class ConversationSearchTests : IClassFixture<DatabaseFixture>
     }
 
     [Fact]
+    public async Task Search_SingleKeywordBeyondTheCandidateCap_ReturnsTheNewestMatches()
+    {
+        var keyword = $"dockerish{Random.Shared.NextInt64()}";
+        var start = new DateTime(2018, 6, 1, 0, 0, 0, DateTimeKind.Utc);
+
+        // Every row scores 1, so only the tie-break decides which 200 reach the scorer.
+        var rows = Enumerable.Range(0, 260)
+            .Select(i => ((ulong)Random.Shared.NextInt64(), $"{keyword} event {i}", start.AddDays(i)))
+            .ToArray();
+        await SeedAsync(rows);
+
+        var results = await SearchAsync(keyword);
+
+        Assert.Equal(start.AddDays(259), results[0].Date);
+    }
+
+    [Fact]
     public async Task Search_UnknownKeyword_ReturnsNothing()
     {
         var results = await SearchAsync($"nosuchterm{Random.Shared.NextInt64()}");

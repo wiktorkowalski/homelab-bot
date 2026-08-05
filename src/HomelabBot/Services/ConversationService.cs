@@ -178,8 +178,12 @@ public sealed class ConversationService
         // Cap by how many keywords each conversation matched, not by recency. One common word
         // ("on", "docker") matches most of the table, and a recency cap would then serve the
         // newest rows regardless of relevance — the very failure this replaces.
+        // Id is autoincrement, so it stands in for recency and breaks ties toward newer
+        // conversations. Without it a single-keyword query keeps whichever rows SQLite happened
+        // to return first, which is the oldest ones.
         var candidateIds = hitsPerConversation
             .OrderByDescending(kv => kv.Value)
+            .ThenByDescending(kv => kv.Key)
             .Take(MaxScoredConversations)
             .Select(kv => kv.Key)
             .ToList();
