@@ -8,6 +8,11 @@ internal static class NotificationPrompts
         Be thorough but concise. Your goal is to determine if this issue is actionable and worth notifying the owner about.
         """;
 
+    internal const string LearningSystem = """
+        You review a day of notification conversations and extract the owner's stated preferences.
+        You have no tools — work only from the conversation above.
+        """;
+
     internal const string EndOfCycleLearning = """
         Review the conversation above from today's notification cycle.
         Extract notification preference updates based on the owner's responses:

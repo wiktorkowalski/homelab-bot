@@ -231,6 +231,7 @@ public sealed class SmartNotificationService
                 userMessage: NotificationPrompts.EndOfCycleLearning,
                 traceType: TraceType.Scheduled,
                 maxTokens: 1024,
+                systemPromptOverride: NotificationPrompts.LearningSystem,
                 allowToolUse: false,
                 ct: ct);
 

@@ -205,11 +205,15 @@ public sealed class AlertWebhookService
             Provide a brief summary of what you found and any recommended actions.
             """;
 
+        // The default system prompt instructs the model to call Knowledge, HomeAssistant and Ntfy
+        // functions, none of which survive the allow-list; the analyst prompt matches the tools
+        // this path actually has.
         return await _kernelService.ProcessMessageAsync(
             conversationId,
             prompt,
             HomelabOwner.DiscordUserId,
             TraceType.Scheduled,
+            systemPromptOverride: NotificationPrompts.InvestigationSystem,
             pluginAllowList: NotificationPrompts.InvestigationPlugins,
             ct: ct);
     }

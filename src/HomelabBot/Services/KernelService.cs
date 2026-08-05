@@ -239,10 +239,11 @@ public sealed class KernelService
 
         var activeSettings = new PromptExecutionSettings
         {
-            // A prompt that forbids tool use should not ship any tool schemas either.
+            // None() still advertises every kernel function (SK only sets tool_choice=none), so
+            // the empty list is what actually keeps the schemas out of the request.
             FunctionChoiceBehavior = allowToolUse
                 ? FunctionChoiceBehavior.Auto(ResolveFunctions(pluginAllowList))
-                : FunctionChoiceBehavior.None(),
+                : FunctionChoiceBehavior.None(functions: []),
             ExtensionData = new Dictionary<string, object>
             {
                 ["temperature"] = 0.7,

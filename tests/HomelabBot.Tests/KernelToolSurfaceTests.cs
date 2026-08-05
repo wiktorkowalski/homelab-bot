@@ -63,6 +63,20 @@ public class KernelToolSurfaceTests
     }
 
     [Fact]
+    public void FunctionChoiceBehaviorNone_OnlySuppressesSchemasWithAnEmptyList()
+    {
+        var context = new FunctionChoiceBehaviorConfigurationContext([]) { Kernel = CreateKernel() };
+
+        var bare = FunctionChoiceBehavior.None().GetConfiguration(context);
+        var empty = FunctionChoiceBehavior.None(functions: []).GetConfiguration(context);
+
+        // The bare form still advertises every function — it only sets tool_choice=none. Pinned
+        // here because ProcessMessageAsync relies on the empty-list form to send no schemas.
+        Assert.Equal(5, bare.Functions?.Count);
+        Assert.Null(empty.Functions);
+    }
+
+    [Fact]
     public void InvestigationPlugins_HaveNoDuplicates()
     {
         var plugins = NotificationPrompts.InvestigationPlugins;
