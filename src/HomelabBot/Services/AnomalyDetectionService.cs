@@ -272,7 +272,12 @@ public sealed class AnomalyDetectionService : BackgroundService
         try
         {
             var targets = await _prometheus.GetTargetStatusesAsync(ct);
-            var downTargets = targets.Where(t => t.Health == "down").Select(t => t.Job).ToList();
+
+            // Job alone is not a target: blackbox probes fan one job out over many instances.
+            var downTargets = targets
+                .Where(t => t.Health == "down")
+                .Select(t => $"{t.Job}/{t.Instance}")
+                .ToList();
 
             if (downTargets.Count > 0)
             {
@@ -675,7 +680,7 @@ public sealed class AnomalyDetectionService : BackgroundService
         var fingerprint = BuildFingerprint(anomalies);
         var repeatHours = _config.CurrentValue.RepeatEvaluationHours;
 
-        // Non-positive means no time gate — an unchanged set is still gated by its fingerprint.
+        // Non-positive turns the gate off entirely: every tick with anomalies reaches the LLM.
         var repeatAfter = repeatHours > 0 ? TimeSpan.FromHours(repeatHours) : TimeSpan.Zero;
 
         if (!ShouldEvaluate(fingerprint, _lastEvaluatedFingerprint, _lastEvaluatedAt, DateTime.UtcNow, repeatAfter))
