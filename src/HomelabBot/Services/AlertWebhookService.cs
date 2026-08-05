@@ -210,6 +210,7 @@ public sealed class AlertWebhookService
             prompt,
             HomelabOwner.DiscordUserId,
             TraceType.Scheduled,
+            pluginAllowList: NotificationPrompts.InvestigationPlugins,
             ct: ct);
     }
 

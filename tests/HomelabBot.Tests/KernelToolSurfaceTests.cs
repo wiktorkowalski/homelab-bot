@@ -53,6 +53,16 @@ public class KernelToolSurfaceTests
     }
 
     [Fact]
+    public void SelectFunctions_PartiallyWrongAllowList_KeepsTheNamesThatMatch()
+    {
+        var selected = KernelService.SelectFunctions(CreateKernel(), ["Docker", "Lokii"]);
+
+        // The bad name drops Loki's tools silently — the Error log is what surfaces it.
+        Assert.Equal(2, selected.Count);
+        Assert.DoesNotContain(selected, f => f.Name == "SearchLogs");
+    }
+
+    [Fact]
     public void InvestigationPlugins_HaveNoDuplicates()
     {
         var plugins = NotificationPrompts.InvestigationPlugins;

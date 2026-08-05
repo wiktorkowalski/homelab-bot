@@ -208,6 +208,7 @@ public sealed class KernelService
         int? maxTokens = null,
         string? systemPromptOverride = null,
         IReadOnlyList<string>? pluginAllowList = null,
+        bool allowToolUse = true,
         CancellationToken ct = default)
     {
         var (traceName, traceTags) = TraceConfig[traceType];
@@ -238,7 +239,10 @@ public sealed class KernelService
 
         var activeSettings = new PromptExecutionSettings
         {
-            FunctionChoiceBehavior = FunctionChoiceBehavior.Auto(ResolveFunctions(pluginAllowList)),
+            // A prompt that forbids tool use should not ship any tool schemas either.
+            FunctionChoiceBehavior = allowToolUse
+                ? FunctionChoiceBehavior.Auto(ResolveFunctions(pluginAllowList))
+                : FunctionChoiceBehavior.None(),
             ExtensionData = new Dictionary<string, object>
             {
                 ["temperature"] = 0.7,
@@ -513,12 +517,21 @@ public sealed class KernelService
 
     private IReadOnlyList<KernelFunction> LogAndSelectFunctions(IReadOnlyList<string> pluginAllowList)
     {
-        var matched = _kernel.Plugins.Count(p => pluginAllowList.Contains(p.Name, StringComparer.Ordinal));
-        if (matched == 0)
+        // One bad name out of seven drops that plugin's tools just as silently as a fully wrong
+        // list, so report the names, not just the count.
+        var unmatched = pluginAllowList
+            .Where(n => !_kernel.Plugins.Any(p => string.Equals(p.Name, n, StringComparison.Ordinal)))
+            .ToList();
+        var matched = pluginAllowList.Count - unmatched.Count;
+
+        if (unmatched.Count > 0)
         {
             _logger.LogError(
-                "Plugin allow-list {AllowList} matched no plugins, falling back to all {PluginCount}",
-                string.Join(",", pluginAllowList), _kernel.Plugins.Count);
+                "Plugin allow-list entries {Unmatched} matched no plugin; {MatchedCount}/{PluginCount} plugins selected{Fallback}",
+                string.Join(",", unmatched),
+                matched,
+                _kernel.Plugins.Count,
+                matched == 0 ? ", falling back to all" : "");
         }
 
         var selected = SelectFunctions(_kernel, pluginAllowList);

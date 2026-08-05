@@ -122,6 +122,8 @@ public sealed class SmartNotificationService
         string analysis;
         try
         {
+            // The decision-only prompt tells the model not to use tools; sending their schemas
+            // anyway is pure cost.
             analysis = await _kernelService.ProcessMessageAsync(
                 threadId: CurrentDailyThreadId,
                 userMessage: prompt,
@@ -129,6 +131,7 @@ public sealed class SmartNotificationService
                 maxTokens: NotificationPrompts.MaxTokens,
                 systemPromptOverride: NotificationPrompts.InvestigationSystem,
                 pluginAllowList: NotificationPrompts.InvestigationPlugins,
+                allowToolUse: !candidate.AlreadyInvestigated,
                 ct: ct);
         }
         catch (Exception ex)
@@ -228,6 +231,7 @@ public sealed class SmartNotificationService
                 userMessage: NotificationPrompts.EndOfCycleLearning,
                 traceType: TraceType.Scheduled,
                 maxTokens: 1024,
+                allowToolUse: false,
                 ct: ct);
 
             if (analysis.Contains(NotificationPrompts.TagNoUpdates, StringComparison.OrdinalIgnoreCase))
