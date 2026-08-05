@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using HomelabBot.Configuration;
@@ -5,6 +6,7 @@ using HomelabBot.Data;
 using HomelabBot.Data.Entities;
 using HomelabBot.Helpers;
 using HomelabBot.Models;
+using HomelabBot.Models.Prometheus;
 using HomelabBot.Plugins;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -13,6 +15,9 @@ namespace HomelabBot.Services;
 
 public sealed class AnomalyDetectionService : BackgroundService
 {
+    private const double BucketRatio = 1.25;
+    private const double BucketFloor = 1;
+
     private readonly IOptionsMonitor<AnomalyDetectionConfiguration> _config;
     private readonly PrometheusQueryService _prometheus;
     private readonly HttpClient _httpClient;
@@ -32,6 +37,8 @@ public sealed class AnomalyDetectionService : BackgroundService
     private readonly Dictionary<string, long> _lastKnownErrorCounts = new();
     private bool _logAnomalyBaselineEstablished;
     private int _heuristicTick;
+    private string? _lastEvaluatedFingerprint;
+    private DateTime? _lastEvaluatedAt;
 
     public AnomalyDetectionService(
         IOptionsMonitor<AnomalyDetectionConfiguration> config,
@@ -95,7 +102,7 @@ public sealed class AnomalyDetectionService : BackgroundService
                     && (_heuristicTick % llmInterval == 0
                         || anomalies.Any(a => a.Severity == AnomalySeverity.Critical)))
                 {
-                    await NotifyAnomaliesAsync(anomalies, stoppingToken);
+                    await EvaluateIfChangedAsync(anomalies, stoppingToken);
                 }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -169,6 +176,7 @@ public sealed class AnomalyDetectionService : BackgroundService
             anomalies.Add(new Anomaly
             {
                 Type = "CPU",
+                Key = "usage",
                 Message = $"CPU usage at {cpuUsage:F1}%",
                 Severity = cpuUsage > 95 ? AnomalySeverity.Critical : AnomalySeverity.Warning,
                 Value = cpuUsage.Value,
@@ -179,6 +187,7 @@ public sealed class AnomalyDetectionService : BackgroundService
             anomalies.Add(new Anomaly
             {
                 Type = "CPU",
+                Key = "spike",
                 Message = $"CPU spike: {previous:F1}% → {cpuUsage:F1}% (rapid increase)",
                 Severity = AnomalySeverity.Warning,
                 Value = cpuUsage.Value,
@@ -231,6 +240,7 @@ public sealed class AnomalyDetectionService : BackgroundService
             anomalies.Add(new Anomaly
             {
                 Type = "Disk",
+                Key = "usage",
                 Message = $"Disk usage at {diskUsage:F1}%",
                 Severity = diskUsage > 95 ? AnomalySeverity.Critical : AnomalySeverity.Warning,
                 Value = diskUsage.Value,
@@ -246,6 +256,7 @@ public sealed class AnomalyDetectionService : BackgroundService
             anomalies.Add(new Anomaly
             {
                 Type = "Disk",
+                Key = "fill-forecast",
                 Message = "Disk predicted to fill within 30 days based on current trend",
                 Severity = AnomalySeverity.Warning,
                 Value = diskUsage ?? 0,
@@ -255,6 +266,16 @@ public sealed class AnomalyDetectionService : BackgroundService
         return anomalies;
     }
 
+    // Job alone is not a target — blackbox probes fan one job out over many instances — and the
+    // set is sorted so that swapping one down target for another changes the anomaly key even
+    // when the count does not.
+    internal static List<string> DownTargetIds(List<PrometheusTargetInfo> targets) =>
+        targets
+            .Where(t => t.Health == "down")
+            .Select(t => $"{t.Job}/{t.Instance}")
+            .Order(StringComparer.Ordinal)
+            .ToList();
+
     private async Task<List<Anomaly>> CheckTargetsAsync(CancellationToken ct)
     {
         var anomalies = new List<Anomaly>();
@@ -262,13 +283,14 @@ public sealed class AnomalyDetectionService : BackgroundService
         try
         {
             var targets = await _prometheus.GetTargetStatusesAsync(ct);
-            var downTargets = targets.Where(t => t.Health == "down").Select(t => t.Job).ToList();
+            var downTargets = DownTargetIds(targets);
 
             if (downTargets.Count > 0)
             {
                 anomalies.Add(new Anomaly
                 {
                     Type = "Monitoring",
+                    Key = $"targets-down:{string.Join(",", downTargets)}",
                     Message = $"{downTargets.Count} targets down: {string.Join(", ", downTargets.Take(5))}",
                     Severity = downTargets.Count > 2 ? AnomalySeverity.Critical : AnomalySeverity.Warning,
                     Value = downTargets.Count,
@@ -283,21 +305,44 @@ public sealed class AnomalyDetectionService : BackgroundService
         return anomalies;
     }
 
-    private async Task<List<Anomaly>> CheckContainerHealthAsync(CancellationToken ct)
+    internal async Task<List<Anomaly>> CheckContainerHealthAsync(CancellationToken ct)
     {
         var anomalies = new List<Anomaly>();
         try
         {
-            var output = await _dockerPlugin.ListContainers();
-            var stoppedCount = output.Split('\n').Count(l => l.Contains("\ud83d\udd34"));
-            if (stoppedCount > 0)
+            var graceHours = _config.CurrentValue.StoppedContainerGraceHours;
+
+            // Non-positive means "no grace at all" — report every stopped container.
+            var grace = graceHours > 0 ? TimeSpan.FromHours(graceHours) : TimeSpan.MaxValue;
+            var stopped = await _dockerPlugin.GetStoppedContainersAsync(ct);
+
+            // Containers parked for longer than the grace window are a deliberate state, not an
+            // anomaly. Reporting them keeps a permanent "critical" finding alive forever.
+            var recentlyStopped = stopped
+                .Where(c => c.StoppedFor is null || c.StoppedFor < grace)
+                .ToList();
+
+            var parkedCount = stopped.Count - recentlyStopped.Count;
+            if (parkedCount > 0)
             {
+                _logger.LogDebug(
+                    "Ignoring {Count} container(s) stopped longer than {GraceHours}h",
+                    parkedCount, grace.TotalHours);
+            }
+
+            if (recentlyStopped.Count > 0)
+            {
+                var names = string.Join(", ", recentlyStopped.Select(c => c.Name).Order(StringComparer.Ordinal));
+
+                // Key carries which containers, not how many: one crashing while another is fixed
+                // keeps the count identical but is a different failure.
                 anomalies.Add(new Anomaly
                 {
                     Type = "Container",
-                    Message = $"{stoppedCount} container(s) stopped",
-                    Severity = stoppedCount > 3 ? AnomalySeverity.Critical : AnomalySeverity.Warning,
-                    Value = stoppedCount,
+                    Key = $"stopped:{names}",
+                    Message = $"{recentlyStopped.Count} container(s) stopped: {names}",
+                    Severity = recentlyStopped.Count > 3 ? AnomalySeverity.Critical : AnomalySeverity.Warning,
+                    Value = recentlyStopped.Count,
                 });
             }
         }
@@ -321,6 +366,7 @@ public sealed class AnomalyDetectionService : BackgroundService
                 anomalies.Add(new Anomaly
                 {
                     Type = "Container",
+                    Key = "restarts",
                     Message = $"Container restarts detected in last 5m (rate: {restartRate:F1})",
                     Severity = restartRate > 3 ? AnomalySeverity.Critical : AnomalySeverity.Warning,
                     Value = restartRate.Value,
@@ -346,6 +392,7 @@ public sealed class AnomalyDetectionService : BackgroundService
                 anomalies.Add(new Anomaly
                 {
                     Type = "Router",
+                    Key = "cpu",
                     Message = $"Router CPU load at {cpuLoad:F0}%",
                     Severity = cpuLoad > 95 ? AnomalySeverity.Critical : AnomalySeverity.Warning,
                     Value = cpuLoad.Value,
@@ -358,6 +405,7 @@ public sealed class AnomalyDetectionService : BackgroundService
                 anomalies.Add(new Anomaly
                 {
                     Type = "Router",
+                    Key = "temperature",
                     Message = $"Router CPU temperature at {temp:F1}\u00b0C",
                     Severity = temp > 85 ? AnomalySeverity.Critical : AnomalySeverity.Warning,
                     Value = temp.Value,
@@ -374,6 +422,7 @@ public sealed class AnomalyDetectionService : BackgroundService
                     anomalies.Add(new Anomaly
                     {
                         Type = "Router",
+                        Key = "memory",
                         Message = $"Router memory at {memUsedPct:F1}%",
                         Severity = AnomalySeverity.Warning,
                         Value = memUsedPct,
@@ -438,6 +487,7 @@ public sealed class AnomalyDetectionService : BackgroundService
                     anomalies.Add(new Anomaly
                     {
                         Type = "Storage",
+                        Key = pool.Name,
                         Message = $"Pool '{pool.Name}' status: {pool.Status} (healthy: {pool.Healthy})",
                         Severity = pool.Status == "DEGRADED" ? AnomalySeverity.Warning : AnomalySeverity.Critical,
                         Value = 0,
@@ -524,6 +574,7 @@ public sealed class AnomalyDetectionService : BackgroundService
                 anomalies.Add(new Anomaly
                 {
                     Type = "Monitoring",
+                    Key = "cardinality",
                     Message = $"Prometheus cardinality high: {headSeries:N0} series",
                     Severity = headSeries > 1_000_000 ? AnomalySeverity.Critical : AnomalySeverity.Warning,
                     Value = headSeries.Value,
@@ -549,6 +600,7 @@ public sealed class AnomalyDetectionService : BackgroundService
                 anomalies.Add(new Anomaly
                 {
                     Type = "Logging",
+                    Key = "loki-not-ready",
                     Message = $"Loki not ready (HTTP {(int)response.StatusCode})",
                     Severity = AnomalySeverity.Warning,
                     Value = (int)response.StatusCode,
@@ -560,6 +612,7 @@ public sealed class AnomalyDetectionService : BackgroundService
             anomalies.Add(new Anomaly
             {
                 Type = "Logging",
+                Key = "loki-unreachable",
                 Message = $"Loki unreachable: {ex.Message}",
                 Severity = AnomalySeverity.Warning,
                 Value = 0,
@@ -582,6 +635,7 @@ public sealed class AnomalyDetectionService : BackgroundService
                 anomalies.Add(new Anomaly
                 {
                     Type = "LogSpike",
+                    Key = spike.Container,
                     Message = $"Error rate spike in {spike.Container}: {spike.PreviousCount} → {spike.CurrentCount} errors/h",
                     Severity = AnomalySeverity.Warning,
                     Value = spike.CurrentCount,
@@ -619,6 +673,81 @@ public sealed class AnomalyDetectionService : BackgroundService
         }
 
         return anomalies;
+    }
+
+    // A standing finding (parked containers, a chatty log) otherwise buys an identical LLM answer
+    // every tick at ~30k prompt tokens a time — the bot's single largest source of token spend.
+    private async Task EvaluateIfChangedAsync(List<Anomaly> anomalies, CancellationToken ct)
+    {
+        var fingerprint = BuildFingerprint(anomalies);
+        var repeatHours = _config.CurrentValue.RepeatEvaluationHours;
+
+        // Non-positive turns the gate off entirely: every tick with anomalies reaches the LLM.
+        var repeatAfter = repeatHours > 0 ? TimeSpan.FromHours(repeatHours) : TimeSpan.Zero;
+
+        if (!ShouldEvaluate(fingerprint, _lastEvaluatedFingerprint, _lastEvaluatedAt, DateTime.UtcNow, repeatAfter))
+        {
+            _logger.LogInformation(
+                "Anomaly set unchanged since {LastEvaluatedAt:u}, skipping LLM evaluation (fingerprint {Fingerprint})",
+                _lastEvaluatedAt, fingerprint);
+
+            // Still record the event so the anomaly history keeps showing how long it has stood.
+            await RecordAnomalyEventAsync(anomalies, "Skipped LLM evaluation — anomaly set unchanged", ct);
+            return;
+        }
+
+        await NotifyAnomaliesAsync(anomalies, ct);
+
+        _lastEvaluatedFingerprint = fingerprint;
+        _lastEvaluatedAt = DateTime.UtcNow;
+        await PersistEvaluationStateAsync();
+    }
+
+    // Message text is excluded on purpose — it carries exact values that jitter between ticks.
+    // Duplicates are kept: a second pool degrading must change the fingerprint.
+    internal static string BuildFingerprint(List<Anomaly> anomalies) =>
+        string.Join(
+            "|",
+            anomalies
+                .Select(a => $"{a.Type}:{a.Key}:{a.Severity}:{MagnitudeBucket(a.Value)}")
+                .OrderBy(key => key, StringComparer.Ordinal));
+
+    internal static int MagnitudeBucket(double value)
+    {
+        var magnitude = Math.Abs(value);
+
+        // Log-scale buckets ~25% wide: CPU drifting 87% → 88% stays put, while 9 stopped
+        // containers → 20 lands in another bucket and earns a fresh investigation.
+        return magnitude < BucketFloor ? 0 : (int)Math.Round(Math.Log(magnitude) / Math.Log(BucketRatio));
+    }
+
+    internal static bool ShouldEvaluate(
+        string fingerprint,
+        string? lastFingerprint,
+        DateTime? lastEvaluatedAt,
+        DateTime now,
+        TimeSpan repeatAfter)
+    {
+        if (!string.Equals(fingerprint, lastFingerprint, StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        return lastEvaluatedAt is null || now - lastEvaluatedAt.Value >= repeatAfter;
+    }
+
+    private async Task PersistEvaluationStateAsync()
+    {
+        try
+        {
+            await _stateStore.SetAsync("AnomalyDetection", "lastEvaluatedFingerprint", _lastEvaluatedFingerprint ?? "");
+            await _stateStore.SetAsync("AnomalyDetection", "lastEvaluatedAt",
+                (_lastEvaluatedAt ?? DateTime.UtcNow).ToString("O", CultureInfo.InvariantCulture));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to persist last anomaly evaluation state");
+        }
     }
 
     private async Task NotifyAnomaliesAsync(List<Anomaly> anomalies, CancellationToken ct)
@@ -712,15 +841,19 @@ public sealed class AnomalyDetectionService : BackgroundService
         public required long CurrentCount { get; init; }
     }
 
-    private enum AnomalySeverity
+    internal enum AnomalySeverity
     {
         Warning,
         Critical,
     }
 
-    private sealed class Anomaly
+    internal sealed class Anomaly
     {
         public required string Type { get; init; }
+
+        // Identity of the thing that is broken (pool name, check name, …). Two anomalies of the
+        // same type are only "the same finding" when their keys match.
+        public string Key { get; init; } = "";
 
         public required string Message { get; init; }
 
@@ -766,6 +899,22 @@ public sealed class AnomalyDetectionService : BackgroundService
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to load error count baselines");
+        }
+
+        try
+        {
+            _lastEvaluatedFingerprint = await _stateStore.GetAsync("AnomalyDetection", "lastEvaluatedFingerprint");
+
+            var evaluatedAt = await _stateStore.GetAsync("AnomalyDetection", "lastEvaluatedAt");
+            if (evaluatedAt != null
+                && DateTime.TryParse(evaluatedAt, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var parsed))
+            {
+                _lastEvaluatedAt = parsed.ToUniversalTime();
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to load last anomaly evaluation state");
         }
     }
 

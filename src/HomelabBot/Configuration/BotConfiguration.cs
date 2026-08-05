@@ -135,6 +135,14 @@ public sealed class AnomalyDetectionConfiguration
     public int LlmIntervalTicks { get; init; } = 1;
 
     public int LogErrorThreshold { get; init; } = 50;
+
+    // An unchanged anomaly set is not re-investigated by the LLM until this many hours pass.
+    // Without it a permanent finding (parked containers, a chatty log) buys the same answer
+    // every tick at ~30k prompt tokens a time.
+    public int RepeatEvaluationHours { get; init; } = 6;
+
+    // Containers stopped for longer than this are treated as a deliberate state, not an anomaly.
+    public int StoppedContainerGraceHours { get; init; } = 24;
 }
 
 public sealed class SecurityAuditConfiguration

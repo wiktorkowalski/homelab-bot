@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Globalization;
 using System.Text;
 using Docker.DotNet;
 using Docker.DotNet.Models;
@@ -318,6 +319,56 @@ public class DockerPlugin
         }
 
         return sb.ToString();
+    }
+
+    // Deliberately not a kernel function: it serves the anomaly monitor, and every extra tool
+    // schema is re-sent (and billed) on every LLM call.
+    internal virtual async Task<List<StoppedContainerInfo>> GetStoppedContainersAsync(CancellationToken ct = default)
+    {
+        var containers = await _client.Containers.ListContainersAsync(
+            new ContainersListParameters { All = true }, ct);
+
+        List<StoppedContainerInfo> stopped = [];
+        foreach (var container in containers.Where(c => c.State is "exited" or "dead"))
+        {
+            var name = container.Names.FirstOrDefault()?.TrimStart('/') ?? container.ID[..12];
+            stopped.Add(new StoppedContainerInfo
+            {
+                Name = name,
+                StoppedFor = await GetStoppedDurationAsync(container.ID, name, ct)
+            });
+        }
+
+        return stopped;
+    }
+
+    private async Task<TimeSpan?> GetStoppedDurationAsync(string containerId, string name, CancellationToken ct)
+    {
+        try
+        {
+            var inspect = await _client.Containers.InspectContainerAsync(containerId, ct);
+
+            // Docker reports 0001-01-01T00:00:00Z for containers that never ran.
+            if (!DateTimeOffset.TryParse(
+                    inspect.State.FinishedAt,
+                    CultureInfo.InvariantCulture,
+                    DateTimeStyles.RoundtripKind,
+                    out var finishedAt)
+                || finishedAt.Year <= 1)
+            {
+                return null;
+            }
+
+            var elapsed = DateTimeOffset.UtcNow - finishedAt;
+            return elapsed > TimeSpan.Zero ? elapsed : TimeSpan.Zero;
+        }
+        catch (Exception ex) when (ex is DockerApiException or HttpRequestException or TimeoutException)
+        {
+            // Transport failures must not take down the whole sweep — losing one container's exit
+            // time is recoverable, losing the check for a whole tick is not.
+            _logger.LogWarning(ex, "Failed to inspect stopped container {Container}", name);
+            return null;
+        }
     }
 
     internal async Task<List<ContainerNetworkInfo>> GetContainerNetworkMapAsync()
