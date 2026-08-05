@@ -6,6 +6,7 @@ using HomelabBot.Data;
 using HomelabBot.Data.Entities;
 using HomelabBot.Helpers;
 using HomelabBot.Models;
+using HomelabBot.Models.Prometheus;
 using HomelabBot.Plugins;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -265,6 +266,16 @@ public sealed class AnomalyDetectionService : BackgroundService
         return anomalies;
     }
 
+    // Job alone is not a target — blackbox probes fan one job out over many instances — and the
+    // set is sorted so that swapping one down target for another changes the anomaly key even
+    // when the count does not.
+    internal static List<string> DownTargetIds(List<PrometheusTargetInfo> targets) =>
+        targets
+            .Where(t => t.Health == "down")
+            .Select(t => $"{t.Job}/{t.Instance}")
+            .Order(StringComparer.Ordinal)
+            .ToList();
+
     private async Task<List<Anomaly>> CheckTargetsAsync(CancellationToken ct)
     {
         var anomalies = new List<Anomaly>();
@@ -272,23 +283,14 @@ public sealed class AnomalyDetectionService : BackgroundService
         try
         {
             var targets = await _prometheus.GetTargetStatusesAsync(ct);
-
-            // Job alone is not a target: blackbox probes fan one job out over many instances.
-            var downTargets = targets
-                .Where(t => t.Health == "down")
-                .Select(t => $"{t.Job}/{t.Instance}")
-                .ToList();
+            var downTargets = DownTargetIds(targets);
 
             if (downTargets.Count > 0)
             {
-                // The full sorted set, not the truncated message text: swapping one down target
-                // for another must change the fingerprint even though the count is unchanged.
-                var downJobs = string.Join(",", downTargets.Order(StringComparer.Ordinal));
-
                 anomalies.Add(new Anomaly
                 {
                     Type = "Monitoring",
-                    Key = $"targets-down:{downJobs}",
+                    Key = $"targets-down:{string.Join(",", downTargets)}",
                     Message = $"{downTargets.Count} targets down: {string.Join(", ", downTargets.Take(5))}",
                     Severity = downTargets.Count > 2 ? AnomalySeverity.Critical : AnomalySeverity.Warning,
                     Value = downTargets.Count,

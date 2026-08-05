@@ -1,5 +1,6 @@
 using HomelabBot.Configuration;
 using HomelabBot.Models;
+using HomelabBot.Models.Prometheus;
 using HomelabBot.Plugins;
 using HomelabBot.Services;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -216,6 +217,40 @@ public class AnomalyEvaluationGateTests
         Assert.NotEqual(
             AnomalyDetectionService.BuildFingerprint([stopped]),
             AnomalyDetectionService.BuildFingerprint([stopped, restarts]));
+    }
+
+    [Fact]
+    public void DownTargetIds_SwappedProbeUnderSameJob_ChangesIds()
+    {
+        var before = AnomalyDetectionService.DownTargetIds([
+            new PrometheusTargetInfo { Job = "blackbox", Instance = "https://nas.lan", Health = "down" },
+            new PrometheusTargetInfo { Job = "node", Instance = "ubuntu:9100", Health = "up" },
+        ]);
+
+        var after = AnomalyDetectionService.DownTargetIds([
+            new PrometheusTargetInfo { Job = "blackbox", Instance = "https://git.lan", Health = "down" },
+            new PrometheusTargetInfo { Job = "node", Instance = "ubuntu:9100", Health = "up" },
+        ]);
+
+        Assert.Single(before);
+        Assert.Single(after);
+        Assert.NotEqual(before, after);
+    }
+
+    [Fact]
+    public void DownTargetIds_SameTargetsInDifferentOrder_AreEqual()
+    {
+        var first = AnomalyDetectionService.DownTargetIds([
+            new PrometheusTargetInfo { Job = "blackbox", Instance = "https://nas.lan", Health = "down" },
+            new PrometheusTargetInfo { Job = "node", Instance = "ubuntu:9100", Health = "down" },
+        ]);
+
+        var second = AnomalyDetectionService.DownTargetIds([
+            new PrometheusTargetInfo { Job = "node", Instance = "ubuntu:9100", Health = "down" },
+            new PrometheusTargetInfo { Job = "blackbox", Instance = "https://nas.lan", Health = "down" },
+        ]);
+
+        Assert.Equal(first, second);
     }
 
     [Fact]
