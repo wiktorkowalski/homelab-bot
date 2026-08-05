@@ -148,7 +148,11 @@ public sealed class AlertWebhookService
         RemediationOutcome outcome,
         CancellationToken ct)
     {
-        var hashBytes = SHA256.HashData(Encoding.UTF8.GetBytes($"alert-{alert.Fingerprint ?? Guid.NewGuid().ToString()}"));
+        // Per firing, not per alert: an investigation the model never resolves stays "active"
+        // forever, so a fingerprint-only id would make every later firing append to that record
+        // and skip the similar-incident lookup.
+        var hashBytes = SHA256.HashData(Encoding.UTF8.GetBytes(
+            $"alert-{alert.Fingerprint ?? Guid.NewGuid().ToString()}-{alert.StartsAt:O}"));
         var conversationId = BitConverter.ToUInt64(hashBytes, 0);
 
         var patternContext = "";
@@ -200,16 +204,23 @@ public sealed class AlertWebhookService
             Instance: {alert.Instance ?? "unknown"}
             Description: {alert.Description ?? alert.Summary ?? "none"}
             Started: {alert.StartsAt:u}
+            Investigation thread id: {conversationId}
             {patternContext}{dejaVuPrompt}{blastRadiusPrompt}
             Use your tools to investigate what's happening. Check relevant logs, metrics, container status, etc.
             Provide a brief summary of what you found and any recommended actions.
             """;
 
+        // The default system prompt instructs the model to call Knowledge, HomeAssistant and Ntfy
+        // functions, none of which survive the allow-list. This one matches the available tools
+        // and keeps the StartInvestigation/RecordStep workflow that feeds MatchedRunbooks and the
+        // déjà-vu context above.
         return await _kernelService.ProcessMessageAsync(
             conversationId,
             prompt,
             HomelabOwner.DiscordUserId,
             TraceType.Scheduled,
+            systemPromptOverride: NotificationPrompts.AlertInvestigationSystem,
+            pluginAllowList: NotificationPrompts.InvestigationPlugins,
             ct: ct);
     }
 

@@ -8,6 +8,19 @@ internal static class NotificationPrompts
         Be thorough but concise. Your goal is to determine if this issue is actionable and worth notifying the owner about.
         """;
 
+    internal const string AlertInvestigationSystem = """
+        You are a homelab infrastructure analyst investigating a firing alert.
+        Use the available tools to find the root cause — query logs, metrics, container states, and any relevant data.
+
+        Track the investigation so later alerts can reuse what you learn. Always pass the
+        "Investigation thread id" from the message as threadId, so the steps land on one record:
+        1. Call StartInvestigation(threadId, symptom) — this surfaces similar past issues
+        2. Call RecordStep() after each diagnostic check
+        3. Call ResolveInvestigation(threadId, resolution) once you know the cause — this saves the pattern
+
+        Be thorough but concise. Report what you found and what you recommend.
+        """;
+
     internal const string EndOfCycleLearning = """
         Review the conversation above from today's notification cycle.
         Extract notification preference updates based on the owner's responses:
@@ -25,6 +38,16 @@ internal static class NotificationPrompts
 
         Be conservative — only extract preferences that were clearly expressed or strongly implied by the conversation.
         """;
+
+    // Plugins this path is allowed to call. Every tool schema is re-sent and billed on every
+    // round, and telemetry over 25 investigations shows only Docker, Prometheus, Loki,
+    // Alertmanager and Investigation ever get called. TrueNAS and MikroTik stay because the
+    // heuristics raise Storage and Router anomalies that need them; Grafana, HomeAssistant,
+    // Ntfy, Knowledge and Runbook do not belong in an investigation.
+    internal static readonly string[] InvestigationPlugins =
+    [
+        "Docker", "Prometheus", "Loki", "Alertmanager", "Investigation", "TrueNAS", "MikroTik"
+    ];
 
     internal const string TagNotify = "[NOTIFY]";
     internal const string TagSilent = "[SILENT]";

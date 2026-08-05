@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -32,6 +33,7 @@ public sealed class KernelService
     };
 
     private readonly Kernel _kernel;
+    private readonly ConcurrentDictionary<string, IReadOnlyList<KernelFunction>> _functionCache = new();
     private readonly ILogger<KernelService> _logger;
     private readonly ConversationService _conversationService;
     private readonly TelemetryService _telemetryService;
@@ -205,6 +207,8 @@ public sealed class KernelService
         TraceType traceType = TraceType.Chat,
         int? maxTokens = null,
         string? systemPromptOverride = null,
+        IReadOnlyList<string>? pluginAllowList = null,
+        bool allowToolUse = true,
         CancellationToken ct = default)
     {
         var (traceName, traceTags) = TraceConfig[traceType];
@@ -235,7 +239,11 @@ public sealed class KernelService
 
         var activeSettings = new PromptExecutionSettings
         {
-            FunctionChoiceBehavior = FunctionChoiceBehavior.Auto(),
+            // None() still advertises every kernel function (SK only sets tool_choice=none), so
+            // the empty list is what actually keeps the schemas out of the request.
+            FunctionChoiceBehavior = allowToolUse
+                ? FunctionChoiceBehavior.Auto(ResolveFunctions(pluginAllowList))
+                : FunctionChoiceBehavior.None(functions: []),
             ExtensionData = new Dictionary<string, object>
             {
                 ["temperature"] = 0.7,
@@ -492,6 +500,60 @@ public sealed class KernelService
         const double capMs = 8000;
         var ceiling = Math.Min(capMs, baseMs * Math.Pow(2, attempt - 1));
         return TimeSpan.FromMilliseconds(Random.Shared.NextDouble() * ceiling);
+    }
+
+    // Null exposes every plugin (SK's own default). A named subset keeps the tool schemas out of
+    // the prompt entirely, which is billed on every round of every call.
+    private IReadOnlyList<KernelFunction>? ResolveFunctions(IReadOnlyList<string>? pluginAllowList)
+    {
+        if (pluginAllowList is null || pluginAllowList.Count == 0)
+        {
+            return null;
+        }
+
+        return _functionCache.GetOrAdd(
+            string.Join(",", pluginAllowList),
+            _ => LogAndSelectFunctions(pluginAllowList));
+    }
+
+    private IReadOnlyList<KernelFunction> LogAndSelectFunctions(IReadOnlyList<string> pluginAllowList)
+    {
+        // One bad name out of seven drops that plugin's tools just as silently as a fully wrong
+        // list, so report the names, not just the count.
+        var unmatched = pluginAllowList
+            .Where(n => !_kernel.Plugins.Any(p => string.Equals(p.Name, n, StringComparison.Ordinal)))
+            .ToList();
+        var matched = pluginAllowList.Count - unmatched.Count;
+
+        if (unmatched.Count > 0)
+        {
+            _logger.LogError(
+                "Plugin allow-list entries {Unmatched} matched no plugin; {MatchedCount}/{PluginCount} plugins selected{Fallback}",
+                string.Join(",", unmatched),
+                matched,
+                _kernel.Plugins.Count,
+                matched == 0 ? ", falling back to all" : "");
+        }
+
+        var selected = SelectFunctions(_kernel, pluginAllowList);
+
+        _logger.LogInformation(
+            "Tool surface for this call: {FunctionCount} functions from {MatchedCount}/{PluginCount} plugins",
+            selected.Count, matched, _kernel.Plugins.Count);
+
+        return selected;
+    }
+
+    // A typo in the allow-list would otherwise leave the model with no tools at all, which reads
+    // as the model refusing to investigate rather than as a config error.
+    internal static List<KernelFunction> SelectFunctions(Kernel kernel, IReadOnlyList<string> pluginAllowList)
+    {
+        var selected = kernel.Plugins
+            .Where(p => pluginAllowList.Contains(p.Name, StringComparer.Ordinal))
+            .SelectMany(p => p)
+            .ToList();
+
+        return selected.Count > 0 ? selected : kernel.Plugins.SelectMany(p => p).ToList();
     }
 
     internal static (int? PromptTokens, int? CompletionTokens) ExtractTokenUsage(ChatMessageContent? response)

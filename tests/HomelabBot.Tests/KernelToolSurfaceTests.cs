@@ -1,0 +1,86 @@
+using HomelabBot.Services;
+using Microsoft.SemanticKernel;
+
+namespace HomelabBot.Tests;
+
+public class KernelToolSurfaceTests
+{
+    private static Kernel CreateKernel()
+    {
+        var builder = Kernel.CreateBuilder();
+
+        builder.Plugins.Add(KernelPluginFactory.CreateFromFunctions("Docker", [
+            KernelFunctionFactory.CreateFromMethod(() => "containers", "ListContainers"),
+            KernelFunctionFactory.CreateFromMethod(() => "status", "GetContainerStatus"),
+        ]));
+
+        builder.Plugins.Add(KernelPluginFactory.CreateFromFunctions("Loki", [
+            KernelFunctionFactory.CreateFromMethod(() => "logs", "SearchLogs"),
+        ]));
+
+        builder.Plugins.Add(KernelPluginFactory.CreateFromFunctions("HomeAssistant", [
+            KernelFunctionFactory.CreateFromMethod(() => "on", "TurnOn"),
+            KernelFunctionFactory.CreateFromMethod(() => "off", "TurnOff"),
+        ]));
+
+        return builder.Build();
+    }
+
+    [Fact]
+    public void SelectFunctions_KeepsOnlyAllowedPlugins()
+    {
+        var selected = KernelService.SelectFunctions(CreateKernel(), ["Docker", "Loki"]);
+
+        Assert.Equal(3, selected.Count);
+        Assert.DoesNotContain(selected, f => f.Name is "TurnOn" or "TurnOff");
+    }
+
+    [Fact]
+    public void SelectFunctions_UnknownPluginName_FallsBackToEverything()
+    {
+        var selected = KernelService.SelectFunctions(CreateKernel(), ["Dockerr"]);
+
+        // Better a full tool surface than a model with no tools at all.
+        Assert.Equal(5, selected.Count);
+    }
+
+    [Fact]
+    public void SelectFunctions_IsCaseSensitive_SoTyposDoNotSilentlyPass()
+    {
+        var selected = KernelService.SelectFunctions(CreateKernel(), ["docker"]);
+
+        Assert.Equal(5, selected.Count);
+    }
+
+    [Fact]
+    public void SelectFunctions_PartiallyWrongAllowList_KeepsTheNamesThatMatch()
+    {
+        var selected = KernelService.SelectFunctions(CreateKernel(), ["Docker", "Lokii"]);
+
+        // The bad name drops Loki's tools silently — the Error log is what surfaces it.
+        Assert.Equal(2, selected.Count);
+        Assert.DoesNotContain(selected, f => f.Name == "SearchLogs");
+    }
+
+    [Fact]
+    public void FunctionChoiceBehaviorNone_OnlySuppressesSchemasWithAnEmptyList()
+    {
+        var context = new FunctionChoiceBehaviorConfigurationContext([]) { Kernel = CreateKernel() };
+
+        var bare = FunctionChoiceBehavior.None().GetConfiguration(context);
+        var empty = FunctionChoiceBehavior.None(functions: []).GetConfiguration(context);
+
+        // The bare form still advertises every function — it only sets tool_choice=none. Pinned
+        // here because ProcessMessageAsync relies on the empty-list form to send no schemas.
+        Assert.Equal(5, bare.Functions?.Count);
+        Assert.Null(empty.Functions);
+    }
+
+    [Fact]
+    public void InvestigationPlugins_HaveNoDuplicates()
+    {
+        var plugins = NotificationPrompts.InvestigationPlugins;
+
+        Assert.Equal(plugins.Length, plugins.Distinct(StringComparer.Ordinal).Count());
+    }
+}
