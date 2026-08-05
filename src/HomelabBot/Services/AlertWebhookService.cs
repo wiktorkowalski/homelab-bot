@@ -148,7 +148,11 @@ public sealed class AlertWebhookService
         RemediationOutcome outcome,
         CancellationToken ct)
     {
-        var hashBytes = SHA256.HashData(Encoding.UTF8.GetBytes($"alert-{alert.Fingerprint ?? Guid.NewGuid().ToString()}"));
+        // Per firing, not per alert: an investigation the model never resolves stays "active"
+        // forever, so a fingerprint-only id would make every later firing append to that record
+        // and skip the similar-incident lookup.
+        var hashBytes = SHA256.HashData(Encoding.UTF8.GetBytes(
+            $"alert-{alert.Fingerprint ?? Guid.NewGuid().ToString()}-{alert.StartsAt:O}"));
         var conversationId = BitConverter.ToUInt64(hashBytes, 0);
 
         var patternContext = "";
