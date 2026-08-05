@@ -128,6 +128,7 @@ public sealed class SmartNotificationService
                 traceType: TraceType.Scheduled,
                 maxTokens: NotificationPrompts.MaxTokens,
                 systemPromptOverride: NotificationPrompts.InvestigationSystem,
+                pluginAllowList: NotificationPrompts.InvestigationPlugins,
                 ct: ct);
         }
         catch (Exception ex)

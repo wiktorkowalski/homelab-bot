@@ -26,6 +26,16 @@ internal static class NotificationPrompts
         Be conservative — only extract preferences that were clearly expressed or strongly implied by the conversation.
         """;
 
+    // Plugins this path is allowed to call. Every tool schema is re-sent and billed on every
+    // round, and telemetry over 25 investigations shows only Docker, Prometheus, Loki,
+    // Alertmanager and Investigation ever get called. TrueNAS and MikroTik stay because the
+    // heuristics raise Storage and Router anomalies that need them; Grafana, HomeAssistant,
+    // Ntfy, Knowledge and Runbook do not belong in an investigation.
+    internal static readonly string[] InvestigationPlugins =
+    [
+        "Docker", "Prometheus", "Loki", "Alertmanager", "Investigation", "TrueNAS", "MikroTik"
+    ];
+
     internal const string TagNotify = "[NOTIFY]";
     internal const string TagSilent = "[SILENT]";
     internal const string TagNoUpdates = "NO_UPDATES";
