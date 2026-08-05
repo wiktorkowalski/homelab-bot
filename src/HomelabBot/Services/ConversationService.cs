@@ -14,6 +14,10 @@ public sealed class ConversationService
     private readonly ILogger<ConversationService> _logger;
     private const int MaxHistoryMessages = 20;
 
+    // Ceiling on how many keyword-matched conversations get loaded and scored in memory.
+    private const int MaxScoredConversations = 200;
+    private const string LikeEscapeChar = "\\";
+
     public ConversationService(
         IDbContextFactory<HomelabDbContext> dbFactory,
         ILogger<ConversationService> logger)
@@ -146,12 +150,48 @@ public sealed class ConversationService
             return [];
         }
 
+        // Match in SQL first. Scanning the newest N conversations and scoring them in memory made
+        // every older conversation unfindable, and one busy source (alert investigations) could
+        // fill that window on its own.
+        var hitsPerConversation = new Dictionary<int, int>();
+        foreach (var keyword in keywords)
+        {
+            var pattern = $"%{EscapeLike(keyword)}%";
+            var ids = await db.ConversationMessages
+                .AsNoTracking()
+                .Where(m => EF.Functions.Like(m.Content, pattern, LikeEscapeChar))
+                .Select(m => m.ConversationId)
+                .Distinct()
+                .ToListAsync(ct);
+
+            foreach (var id in ids)
+            {
+                hitsPerConversation[id] = hitsPerConversation.GetValueOrDefault(id) + 1;
+            }
+        }
+
+        if (hitsPerConversation.Count == 0)
+        {
+            return [];
+        }
+
+        // Cap by how many keywords each conversation matched, not by recency. One common word
+        // ("on", "docker") matches most of the table, and a recency cap would then serve the
+        // newest rows regardless of relevance — the very failure this replaces.
+        // Id is autoincrement, so it stands in for recency and breaks ties toward newer
+        // conversations. Without it a single-keyword query keeps whichever rows SQLite happened
+        // to return first, which is the oldest ones.
+        var candidateIds = hitsPerConversation
+            .OrderByDescending(kv => kv.Value)
+            .ThenByDescending(kv => kv.Key)
+            .Take(MaxScoredConversations)
+            .Select(kv => kv.Key)
+            .ToList();
+
         var conversations = await db.Conversations
             .AsNoTracking()
             .Include(c => c.Messages)
-            .Where(c => c.Messages.Count > 0)
-            .OrderByDescending(c => c.LastMessageAt)
-            .Take(100)
+            .Where(c => candidateIds.Contains(c.Id))
             .ToListAsync(ct);
 
         return conversations
@@ -180,6 +220,12 @@ public sealed class ConversationService
             })
             .ToList();
     }
+
+    // LIKE wildcards in a user's query would otherwise match far more than they typed.
+    internal static string EscapeLike(string value) => value
+        .Replace("\\", "\\\\", StringComparison.Ordinal)
+        .Replace("%", "\\%", StringComparison.Ordinal)
+        .Replace("_", "\\_", StringComparison.Ordinal);
 
     public void ClearHistory(ulong threadId)
     {
