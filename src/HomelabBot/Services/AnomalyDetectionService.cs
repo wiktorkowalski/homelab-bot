@@ -175,6 +175,7 @@ public sealed class AnomalyDetectionService : BackgroundService
             anomalies.Add(new Anomaly
             {
                 Type = "CPU",
+                Key = "usage",
                 Message = $"CPU usage at {cpuUsage:F1}%",
                 Severity = cpuUsage > 95 ? AnomalySeverity.Critical : AnomalySeverity.Warning,
                 Value = cpuUsage.Value,
@@ -185,6 +186,7 @@ public sealed class AnomalyDetectionService : BackgroundService
             anomalies.Add(new Anomaly
             {
                 Type = "CPU",
+                Key = "spike",
                 Message = $"CPU spike: {previous:F1}% → {cpuUsage:F1}% (rapid increase)",
                 Severity = AnomalySeverity.Warning,
                 Value = cpuUsage.Value,
@@ -237,6 +239,7 @@ public sealed class AnomalyDetectionService : BackgroundService
             anomalies.Add(new Anomaly
             {
                 Type = "Disk",
+                Key = "usage",
                 Message = $"Disk usage at {diskUsage:F1}%",
                 Severity = diskUsage > 95 ? AnomalySeverity.Critical : AnomalySeverity.Warning,
                 Value = diskUsage.Value,
@@ -252,6 +255,7 @@ public sealed class AnomalyDetectionService : BackgroundService
             anomalies.Add(new Anomaly
             {
                 Type = "Disk",
+                Key = "fill-forecast",
                 Message = "Disk predicted to fill within 30 days based on current trend",
                 Severity = AnomalySeverity.Warning,
                 Value = diskUsage ?? 0,
@@ -275,6 +279,7 @@ public sealed class AnomalyDetectionService : BackgroundService
                 anomalies.Add(new Anomaly
                 {
                     Type = "Monitoring",
+                    Key = "targets-down",
                     Message = $"{downTargets.Count} targets down: {string.Join(", ", downTargets.Take(5))}",
                     Severity = downTargets.Count > 2 ? AnomalySeverity.Critical : AnomalySeverity.Warning,
                     Value = downTargets.Count,
@@ -294,7 +299,10 @@ public sealed class AnomalyDetectionService : BackgroundService
         var anomalies = new List<Anomaly>();
         try
         {
-            var grace = TimeSpan.FromHours(Math.Max(0, _config.CurrentValue.StoppedContainerGraceHours));
+            var graceHours = _config.CurrentValue.StoppedContainerGraceHours;
+
+            // Non-positive means "no grace at all" — report every stopped container.
+            var grace = graceHours > 0 ? TimeSpan.FromHours(graceHours) : TimeSpan.MaxValue;
             var stopped = await _dockerPlugin.GetStoppedContainersAsync(ct);
 
             // Containers parked for longer than the grace window are a deliberate state, not an
@@ -317,6 +325,7 @@ public sealed class AnomalyDetectionService : BackgroundService
                 anomalies.Add(new Anomaly
                 {
                     Type = "Container",
+                    Key = "stopped",
                     Message = $"{recentlyStopped.Count} container(s) stopped: {names}",
                     Severity = recentlyStopped.Count > 3 ? AnomalySeverity.Critical : AnomalySeverity.Warning,
                     Value = recentlyStopped.Count,
@@ -343,6 +352,7 @@ public sealed class AnomalyDetectionService : BackgroundService
                 anomalies.Add(new Anomaly
                 {
                     Type = "Container",
+                    Key = "restarts",
                     Message = $"Container restarts detected in last 5m (rate: {restartRate:F1})",
                     Severity = restartRate > 3 ? AnomalySeverity.Critical : AnomalySeverity.Warning,
                     Value = restartRate.Value,
@@ -368,6 +378,7 @@ public sealed class AnomalyDetectionService : BackgroundService
                 anomalies.Add(new Anomaly
                 {
                     Type = "Router",
+                    Key = "cpu",
                     Message = $"Router CPU load at {cpuLoad:F0}%",
                     Severity = cpuLoad > 95 ? AnomalySeverity.Critical : AnomalySeverity.Warning,
                     Value = cpuLoad.Value,
@@ -380,6 +391,7 @@ public sealed class AnomalyDetectionService : BackgroundService
                 anomalies.Add(new Anomaly
                 {
                     Type = "Router",
+                    Key = "temperature",
                     Message = $"Router CPU temperature at {temp:F1}\u00b0C",
                     Severity = temp > 85 ? AnomalySeverity.Critical : AnomalySeverity.Warning,
                     Value = temp.Value,
@@ -396,6 +408,7 @@ public sealed class AnomalyDetectionService : BackgroundService
                     anomalies.Add(new Anomaly
                     {
                         Type = "Router",
+                        Key = "memory",
                         Message = $"Router memory at {memUsedPct:F1}%",
                         Severity = AnomalySeverity.Warning,
                         Value = memUsedPct,
@@ -460,6 +473,7 @@ public sealed class AnomalyDetectionService : BackgroundService
                     anomalies.Add(new Anomaly
                     {
                         Type = "Storage",
+                        Key = pool.Name,
                         Message = $"Pool '{pool.Name}' status: {pool.Status} (healthy: {pool.Healthy})",
                         Severity = pool.Status == "DEGRADED" ? AnomalySeverity.Warning : AnomalySeverity.Critical,
                         Value = 0,
@@ -546,6 +560,7 @@ public sealed class AnomalyDetectionService : BackgroundService
                 anomalies.Add(new Anomaly
                 {
                     Type = "Monitoring",
+                    Key = "cardinality",
                     Message = $"Prometheus cardinality high: {headSeries:N0} series",
                     Severity = headSeries > 1_000_000 ? AnomalySeverity.Critical : AnomalySeverity.Warning,
                     Value = headSeries.Value,
@@ -571,6 +586,7 @@ public sealed class AnomalyDetectionService : BackgroundService
                 anomalies.Add(new Anomaly
                 {
                     Type = "Logging",
+                    Key = "loki-not-ready",
                     Message = $"Loki not ready (HTTP {(int)response.StatusCode})",
                     Severity = AnomalySeverity.Warning,
                     Value = (int)response.StatusCode,
@@ -582,6 +598,7 @@ public sealed class AnomalyDetectionService : BackgroundService
             anomalies.Add(new Anomaly
             {
                 Type = "Logging",
+                Key = "loki-unreachable",
                 Message = $"Loki unreachable: {ex.Message}",
                 Severity = AnomalySeverity.Warning,
                 Value = 0,
@@ -604,6 +621,7 @@ public sealed class AnomalyDetectionService : BackgroundService
                 anomalies.Add(new Anomaly
                 {
                     Type = "LogSpike",
+                    Key = spike.Container,
                     Message = $"Error rate spike in {spike.Container}: {spike.PreviousCount} → {spike.CurrentCount} errors/h",
                     Severity = AnomalySeverity.Warning,
                     Value = spike.CurrentCount,
@@ -669,12 +687,12 @@ public sealed class AnomalyDetectionService : BackgroundService
     }
 
     // Message text is excluded on purpose — it carries exact values that jitter between ticks.
+    // Duplicates are kept: a second pool degrading must change the fingerprint.
     internal static string BuildFingerprint(List<Anomaly> anomalies) =>
         string.Join(
             "|",
             anomalies
-                .Select(a => $"{a.Type}:{a.Severity}:{MagnitudeBucket(a.Value)}")
-                .Distinct(StringComparer.Ordinal)
+                .Select(a => $"{a.Type}:{a.Key}:{a.Severity}:{MagnitudeBucket(a.Value)}")
                 .OrderBy(key => key, StringComparer.Ordinal));
 
     internal static int MagnitudeBucket(double value)
@@ -815,6 +833,10 @@ public sealed class AnomalyDetectionService : BackgroundService
     internal sealed class Anomaly
     {
         public required string Type { get; init; }
+
+        // Identity of the thing that is broken (pool name, check name, …). Two anomalies of the
+        // same type are only "the same finding" when their keys match.
+        public string Key { get; init; } = "";
 
         public required string Message { get; init; }
 

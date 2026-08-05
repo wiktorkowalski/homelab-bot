@@ -167,6 +167,57 @@ public class AnomalyEvaluationGateTests
         Assert.NotEqual(warning, critical);
     }
 
+    [Fact]
+    public void BuildFingerprint_SecondPoolDegrades_ChangesFingerprint()
+    {
+        // Storage anomalies all carry Value = 0, so only the key and the entry count differ.
+        var tank = new AnomalyDetectionService.Anomaly
+        {
+            Type = "Storage",
+            Key = "tank",
+            Message = "Pool 'tank' status: DEGRADED",
+            Severity = AnomalyDetectionService.AnomalySeverity.Warning,
+            Value = 0,
+        };
+        var backup = new AnomalyDetectionService.Anomaly
+        {
+            Type = "Storage",
+            Key = "backup",
+            Message = "Pool 'backup' status: DEGRADED",
+            Severity = AnomalyDetectionService.AnomalySeverity.Warning,
+            Value = 0,
+        };
+
+        Assert.NotEqual(
+            AnomalyDetectionService.BuildFingerprint([tank]),
+            AnomalyDetectionService.BuildFingerprint([tank, backup]));
+    }
+
+    [Fact]
+    public void BuildFingerprint_StoppedAndRestartsSameBucket_DoNotCollide()
+    {
+        var stopped = new AnomalyDetectionService.Anomaly
+        {
+            Type = "Container",
+            Key = "stopped",
+            Message = "9 container(s) stopped: a",
+            Severity = AnomalyDetectionService.AnomalySeverity.Critical,
+            Value = 9,
+        };
+        var restarts = new AnomalyDetectionService.Anomaly
+        {
+            Type = "Container",
+            Key = "restarts",
+            Message = "Container restarts detected in last 5m (rate: 9.0)",
+            Severity = AnomalyDetectionService.AnomalySeverity.Critical,
+            Value = 9,
+        };
+
+        Assert.NotEqual(
+            AnomalyDetectionService.BuildFingerprint([stopped]),
+            AnomalyDetectionService.BuildFingerprint([stopped, restarts]));
+    }
+
     [Theory]
     [InlineData(9, 20)]      // real jump in stopped containers
     [InlineData(87.3, 150)]  // CPU warning escalating into a spike
@@ -216,6 +267,18 @@ public class AnomalyEvaluationGateTests
         var anomalies = await service.CheckContainerHealthAsync(CancellationToken.None);
 
         Assert.Single(anomalies);
+    }
+
+    [Fact]
+    public async Task CheckContainerHealth_ZeroGrace_ReportsEveryStoppedContainer()
+    {
+        var docker = CreateDockerPlugin(
+            new StoppedContainerInfo { Name = "sonarr", StoppedFor = TimeSpan.FromDays(10) });
+        var service = CreateService(docker, stoppedContainerGraceHours: 0);
+
+        var anomalies = await service.CheckContainerHealthAsync(CancellationToken.None);
+
+        Assert.Contains("sonarr", Assert.Single(anomalies).Message, StringComparison.Ordinal);
     }
 
     [Fact]
