@@ -7,6 +7,8 @@ namespace HomelabBot.Services;
 
 public sealed class InvestigationService
 {
+    private static readonly TimeSpan ActiveInvestigationWindow = TimeSpan.FromHours(24);
+
     private readonly IDbContextFactory<HomelabDbContext> _dbFactory;
     private readonly ILogger<InvestigationService> _logger;
     private readonly RunbookCompilerService _runbookCompiler;
@@ -45,9 +47,14 @@ public sealed class InvestigationService
     {
         await using var db = await _dbFactory.CreateDbContextAsync();
 
+        // Nothing closes an investigation except the model calling ResolveInvestigation, so
+        // without an age bound one forgotten record stays "active" for the thread forever and
+        // swallows every later investigation on it.
+        var cutoff = DateTime.UtcNow - ActiveInvestigationWindow;
+
         return await db.Investigations
             .Include(i => i.Steps)
-            .Where(i => i.ThreadId == threadId && !i.Resolved)
+            .Where(i => i.ThreadId == threadId && !i.Resolved && i.StartedAt >= cutoff)
             .OrderByDescending(i => i.StartedAt)
             .FirstOrDefaultAsync();
     }

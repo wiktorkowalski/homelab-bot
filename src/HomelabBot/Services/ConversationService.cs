@@ -14,6 +14,10 @@ public sealed class ConversationService
     private readonly ILogger<ConversationService> _logger;
     private const int MaxHistoryMessages = 20;
 
+    // Ceiling on how many keyword-matched conversations get loaded and scored in memory.
+    private const int MaxScoredConversations = 200;
+    private const string LikeEscapeChar = "\\";
+
     public ConversationService(
         IDbContextFactory<HomelabDbContext> dbFactory,
         ILogger<ConversationService> logger)
@@ -146,12 +150,34 @@ public sealed class ConversationService
             return [];
         }
 
+        // Match in SQL first. Scanning the newest N conversations and scoring them in memory made
+        // every older conversation unfindable, and one busy source (alert investigations) could
+        // fill that window on its own.
+        var matchingIds = new HashSet<int>();
+        foreach (var keyword in keywords)
+        {
+            var pattern = $"%{EscapeLike(keyword)}%";
+            var ids = await db.ConversationMessages
+                .AsNoTracking()
+                .Where(m => EF.Functions.Like(m.Content, pattern, LikeEscapeChar))
+                .Select(m => m.ConversationId)
+                .Distinct()
+                .ToListAsync(ct);
+
+            matchingIds.UnionWith(ids);
+        }
+
+        if (matchingIds.Count == 0)
+        {
+            return [];
+        }
+
         var conversations = await db.Conversations
             .AsNoTracking()
             .Include(c => c.Messages)
-            .Where(c => c.Messages.Count > 0)
+            .Where(c => matchingIds.Contains(c.Id))
             .OrderByDescending(c => c.LastMessageAt)
-            .Take(100)
+            .Take(MaxScoredConversations)
             .ToListAsync(ct);
 
         return conversations
@@ -180,6 +206,12 @@ public sealed class ConversationService
             })
             .ToList();
     }
+
+    // LIKE wildcards in a user's query would otherwise match far more than they typed.
+    internal static string EscapeLike(string value) => value
+        .Replace("\\", "\\\\", StringComparison.Ordinal)
+        .Replace("%", "\\%", StringComparison.Ordinal)
+        .Replace("_", "\\_", StringComparison.Ordinal);
 
     public void ClearHistory(ulong threadId)
     {

@@ -57,6 +57,27 @@ public class InvestigationServiceTests : IClassFixture<DatabaseFixture>
     }
 
     [Fact]
+    public async Task GetActiveInvestigation_IgnoresStaleUnresolvedInvestigation()
+    {
+        // Arrange
+        var threadId = (ulong)Random.Shared.NextInt64();
+        var created = await _service.StartInvestigationAsync(threadId, "forgotten issue");
+
+        await using (var db = await _fixture.DbContextFactory.CreateDbContextAsync())
+        {
+            var stale = await db.Investigations.FindAsync(created.Id);
+            stale!.StartedAt = DateTime.UtcNow.AddHours(-25);
+            await db.SaveChangesAsync();
+        }
+
+        // Act — an investigation nobody resolved must not swallow the next one on this thread
+        var active = await _service.GetActiveInvestigationAsync(threadId);
+
+        // Assert
+        Assert.Null(active);
+    }
+
+    [Fact]
     public async Task GetActiveInvestigation_ReturnsNullWhenNone()
     {
         // Arrange
