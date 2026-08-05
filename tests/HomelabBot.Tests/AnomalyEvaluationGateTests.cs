@@ -218,6 +218,41 @@ public class AnomalyEvaluationGateTests
             AnomalyDetectionService.BuildFingerprint([stopped, restarts]));
     }
 
+    [Fact]
+    public async Task CheckContainerHealth_SwappedContainerAtSameCount_ChangesFingerprint()
+    {
+        var before = await CreateService(CreateDockerPlugin(
+            new StoppedContainerInfo { Name = "plex", StoppedFor = TimeSpan.FromMinutes(5) }))
+            .CheckContainerHealthAsync(CancellationToken.None);
+
+        var after = await CreateService(CreateDockerPlugin(
+            new StoppedContainerInfo { Name = "sonarr", StoppedFor = TimeSpan.FromMinutes(5) }))
+            .CheckContainerHealthAsync(CancellationToken.None);
+
+        Assert.NotEqual(
+            AnomalyDetectionService.BuildFingerprint(before),
+            AnomalyDetectionService.BuildFingerprint(after));
+    }
+
+    [Fact]
+    public async Task CheckContainerHealth_SameContainersStopped_KeepsFingerprint()
+    {
+        var first = await CreateService(CreateDockerPlugin(
+            new StoppedContainerInfo { Name = "plex", StoppedFor = TimeSpan.FromMinutes(5) },
+            new StoppedContainerInfo { Name = "sonarr", StoppedFor = TimeSpan.FromMinutes(5) }))
+            .CheckContainerHealthAsync(CancellationToken.None);
+
+        // Same set, reported in a different order and an hour later.
+        var second = await CreateService(CreateDockerPlugin(
+            new StoppedContainerInfo { Name = "sonarr", StoppedFor = TimeSpan.FromMinutes(65) },
+            new StoppedContainerInfo { Name = "plex", StoppedFor = TimeSpan.FromMinutes(65) }))
+            .CheckContainerHealthAsync(CancellationToken.None);
+
+        Assert.Equal(
+            AnomalyDetectionService.BuildFingerprint(first),
+            AnomalyDetectionService.BuildFingerprint(second));
+    }
+
     [Theory]
     [InlineData(9, 20)]      // real jump in stopped containers
     [InlineData(87.3, 150)]  // CPU warning escalating into a spike

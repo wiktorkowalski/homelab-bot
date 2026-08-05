@@ -362,8 +362,10 @@ public class DockerPlugin
             var elapsed = DateTimeOffset.UtcNow - finishedAt;
             return elapsed > TimeSpan.Zero ? elapsed : TimeSpan.Zero;
         }
-        catch (DockerApiException ex)
+        catch (Exception ex) when (ex is DockerApiException or HttpRequestException or TimeoutException)
         {
+            // Transport failures must not take down the whole sweep — losing one container's exit
+            // time is recoverable, losing the check for a whole tick is not.
             _logger.LogWarning(ex, "Failed to inspect stopped container {Container}", name);
             return null;
         }

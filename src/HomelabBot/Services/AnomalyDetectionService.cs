@@ -276,10 +276,14 @@ public sealed class AnomalyDetectionService : BackgroundService
 
             if (downTargets.Count > 0)
             {
+                // The full sorted set, not the truncated message text: swapping one down target
+                // for another must change the fingerprint even though the count is unchanged.
+                var downJobs = string.Join(",", downTargets.Order(StringComparer.Ordinal));
+
                 anomalies.Add(new Anomaly
                 {
                     Type = "Monitoring",
-                    Key = "targets-down",
+                    Key = $"targets-down:{downJobs}",
                     Message = $"{downTargets.Count} targets down: {string.Join(", ", downTargets.Take(5))}",
                     Severity = downTargets.Count > 2 ? AnomalySeverity.Critical : AnomalySeverity.Warning,
                     Value = downTargets.Count,
@@ -322,10 +326,13 @@ public sealed class AnomalyDetectionService : BackgroundService
             if (recentlyStopped.Count > 0)
             {
                 var names = string.Join(", ", recentlyStopped.Select(c => c.Name).Order(StringComparer.Ordinal));
+
+                // Key carries which containers, not how many: one crashing while another is fixed
+                // keeps the count identical but is a different failure.
                 anomalies.Add(new Anomaly
                 {
                     Type = "Container",
-                    Key = "stopped",
+                    Key = $"stopped:{names}",
                     Message = $"{recentlyStopped.Count} container(s) stopped: {names}",
                     Severity = recentlyStopped.Count > 3 ? AnomalySeverity.Critical : AnomalySeverity.Warning,
                     Value = recentlyStopped.Count,
@@ -666,7 +673,10 @@ public sealed class AnomalyDetectionService : BackgroundService
     private async Task EvaluateIfChangedAsync(List<Anomaly> anomalies, CancellationToken ct)
     {
         var fingerprint = BuildFingerprint(anomalies);
-        var repeatAfter = TimeSpan.FromHours(Math.Max(1, _config.CurrentValue.RepeatEvaluationHours));
+        var repeatHours = _config.CurrentValue.RepeatEvaluationHours;
+
+        // Non-positive means no time gate — an unchanged set is still gated by its fingerprint.
+        var repeatAfter = repeatHours > 0 ? TimeSpan.FromHours(repeatHours) : TimeSpan.Zero;
 
         if (!ShouldEvaluate(fingerprint, _lastEvaluatedFingerprint, _lastEvaluatedAt, DateTime.UtcNow, repeatAfter))
         {
