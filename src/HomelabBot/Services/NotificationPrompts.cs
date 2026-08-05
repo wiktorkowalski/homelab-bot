@@ -8,9 +8,16 @@ internal static class NotificationPrompts
         Be thorough but concise. Your goal is to determine if this issue is actionable and worth notifying the owner about.
         """;
 
-    internal const string LearningSystem = """
-        You review a day of notification conversations and extract the owner's stated preferences.
-        You have no tools — work only from the conversation above.
+    internal const string AlertInvestigationSystem = """
+        You are a homelab infrastructure analyst investigating a firing alert.
+        Use the available tools to find the root cause — query logs, metrics, container states, and any relevant data.
+
+        Track the investigation so later alerts can reuse what you learn:
+        1. Call StartInvestigation(threadId, symptom) — this surfaces similar past issues
+        2. Call RecordStep() after each diagnostic check
+        3. Call ResolveInvestigation(threadId, resolution) once you know the cause — this saves the pattern
+
+        Be thorough but concise. Report what you found and what you recommend.
         """;
 
     internal const string EndOfCycleLearning = """

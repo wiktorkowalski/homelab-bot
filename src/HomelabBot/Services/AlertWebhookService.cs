@@ -206,14 +206,15 @@ public sealed class AlertWebhookService
             """;
 
         // The default system prompt instructs the model to call Knowledge, HomeAssistant and Ntfy
-        // functions, none of which survive the allow-list; the analyst prompt matches the tools
-        // this path actually has.
+        // functions, none of which survive the allow-list. This one matches the available tools
+        // and keeps the StartInvestigation/RecordStep workflow that feeds MatchedRunbooks and the
+        // déjà-vu context above.
         return await _kernelService.ProcessMessageAsync(
             conversationId,
             prompt,
             HomelabOwner.DiscordUserId,
             TraceType.Scheduled,
-            systemPromptOverride: NotificationPrompts.InvestigationSystem,
+            systemPromptOverride: NotificationPrompts.AlertInvestigationSystem,
             pluginAllowList: NotificationPrompts.InvestigationPlugins,
             ct: ct);
     }
