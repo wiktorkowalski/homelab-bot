@@ -200,6 +200,7 @@ public sealed class AlertWebhookService
             Instance: {alert.Instance ?? "unknown"}
             Description: {alert.Description ?? alert.Summary ?? "none"}
             Started: {alert.StartsAt:u}
+            Investigation thread id: {conversationId}
             {patternContext}{dejaVuPrompt}{blastRadiusPrompt}
             Use your tools to investigate what's happening. Check relevant logs, metrics, container status, etc.
             Provide a brief summary of what you found and any recommended actions.
