@@ -38,8 +38,8 @@ public sealed class InvestigationPlugin
     {
         _logger.LogInformation("Starting investigation for '{Symptom}' in thread {ThreadId}", symptom, threadId);
 
-        // Check for existing active investigation
-        var existing = await _memoryService.GetActiveInvestigationAsync(threadId);
+        // Recent only: an investigation nobody resolved must not block a new one days later.
+        var existing = await _memoryService.GetRecentActiveInvestigationAsync(threadId);
         if (existing != null)
         {
             _activeInvestigations[threadId] = existing.Id;

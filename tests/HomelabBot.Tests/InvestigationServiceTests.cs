@@ -57,24 +57,43 @@ public class InvestigationServiceTests : IClassFixture<DatabaseFixture>
     }
 
     [Fact]
-    public async Task GetActiveInvestigation_IgnoresStaleUnresolvedInvestigation()
+    public async Task GetRecentActiveInvestigation_IgnoresStaleUnresolvedInvestigation()
     {
         // Arrange
-        var threadId = (ulong)Random.Shared.NextInt64();
-        var created = await _service.StartInvestigationAsync(threadId, "forgotten issue");
+        var threadId = await SeedStaleInvestigationAsync();
 
-        await using (var db = await _fixture.DbContextFactory.CreateDbContextAsync())
-        {
-            var stale = await db.Investigations.FindAsync(created.Id);
-            stale!.StartedAt = DateTime.UtcNow.AddHours(-25);
-            await db.SaveChangesAsync();
-        }
+        // Act — an investigation nobody resolved must not block a new one days later
+        var recent = await _service.GetRecentActiveInvestigationAsync(threadId);
 
-        // Act — an investigation nobody resolved must not swallow the next one on this thread
+        // Assert
+        Assert.Null(recent);
+    }
+
+    [Fact]
+    public async Task GetActiveInvestigation_StillFindsStaleInvestigation()
+    {
+        // Arrange
+        var threadId = await SeedStaleInvestigationAsync();
+
+        // Act — RecordStep and ResolveInvestigation fall back to this after a restart, so an
+        // investigation started before the weekend must still be resolvable
         var active = await _service.GetActiveInvestigationAsync(threadId);
 
         // Assert
-        Assert.Null(active);
+        Assert.NotNull(active);
+    }
+
+    private async Task<ulong> SeedStaleInvestigationAsync()
+    {
+        var threadId = (ulong)Random.Shared.NextInt64();
+        var created = await _service.StartInvestigationAsync(threadId, "forgotten issue");
+
+        await using var db = await _fixture.DbContextFactory.CreateDbContextAsync();
+        var stale = await db.Investigations.FindAsync(created.Id);
+        stale!.StartedAt = DateTime.UtcNow.AddHours(-25);
+        await db.SaveChangesAsync();
+
+        return threadId;
     }
 
     [Fact]

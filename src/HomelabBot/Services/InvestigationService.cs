@@ -47,9 +47,20 @@ public sealed class InvestigationService
     {
         await using var db = await _dbFactory.CreateDbContextAsync();
 
-        // Nothing closes an investigation except the model calling ResolveInvestigation, so
-        // without an age bound one forgotten record stays "active" for the thread forever and
-        // swallows every later investigation on it.
+        return await db.Investigations
+            .Include(i => i.Steps)
+            .Where(i => i.ThreadId == threadId && !i.Resolved)
+            .OrderByDescending(i => i.StartedAt)
+            .FirstOrDefaultAsync();
+    }
+
+    // Active investigation started within the last day. Only the "should I start a new one?" path
+    // wants this — recording a step or resolving must still reach an older investigation, which is
+    // the normal case after a redeploy clears the in-process lookup.
+    public async Task<Investigation?> GetRecentActiveInvestigationAsync(ulong threadId)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync();
+
         var cutoff = DateTime.UtcNow - ActiveInvestigationWindow;
 
         return await db.Investigations

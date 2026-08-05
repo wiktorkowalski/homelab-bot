@@ -153,7 +153,7 @@ public sealed class ConversationService
         // Match in SQL first. Scanning the newest N conversations and scoring them in memory made
         // every older conversation unfindable, and one busy source (alert investigations) could
         // fill that window on its own.
-        var matchingIds = new HashSet<int>();
+        var hitsPerConversation = new Dictionary<int, int>();
         foreach (var keyword in keywords)
         {
             var pattern = $"%{EscapeLike(keyword)}%";
@@ -164,20 +164,30 @@ public sealed class ConversationService
                 .Distinct()
                 .ToListAsync(ct);
 
-            matchingIds.UnionWith(ids);
+            foreach (var id in ids)
+            {
+                hitsPerConversation[id] = hitsPerConversation.GetValueOrDefault(id) + 1;
+            }
         }
 
-        if (matchingIds.Count == 0)
+        if (hitsPerConversation.Count == 0)
         {
             return [];
         }
 
+        // Cap by how many keywords each conversation matched, not by recency. One common word
+        // ("on", "docker") matches most of the table, and a recency cap would then serve the
+        // newest rows regardless of relevance — the very failure this replaces.
+        var candidateIds = hitsPerConversation
+            .OrderByDescending(kv => kv.Value)
+            .Take(MaxScoredConversations)
+            .Select(kv => kv.Key)
+            .ToList();
+
         var conversations = await db.Conversations
             .AsNoTracking()
             .Include(c => c.Messages)
-            .Where(c => matchingIds.Contains(c.Id))
-            .OrderByDescending(c => c.LastMessageAt)
-            .Take(MaxScoredConversations)
+            .Where(c => candidateIds.Contains(c.Id))
             .ToListAsync(ct);
 
         return conversations
