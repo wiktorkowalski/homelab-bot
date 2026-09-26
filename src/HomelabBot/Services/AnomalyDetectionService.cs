@@ -17,6 +17,7 @@ public sealed class AnomalyDetectionService : BackgroundService
 {
     private const double BucketRatio = 1.25;
     private const double BucketFloor = 1;
+    private const int BridgedCheckFailures = 1;
 
     private readonly IOptionsMonitor<AnomalyDetectionConfiguration> _config;
     private readonly PrometheusQueryService _prometheus;
@@ -35,6 +36,8 @@ public sealed class AnomalyDetectionService : BackgroundService
     // In-memory baselines for rate-of-change detection
     private readonly Dictionary<string, double> _lastMetricValues = new();
     private readonly Dictionary<string, long> _lastKnownErrorCounts = new();
+    private readonly Dictionary<string, List<Anomaly>> _lastCheckResults = new();
+    private readonly Dictionary<string, int> _consecutiveCheckFailures = new();
     private bool _logAnomalyBaselineEstablished;
     private int _heuristicTick;
     private string? _lastEvaluatedFingerprint;
@@ -122,30 +125,30 @@ public sealed class AnomalyDetectionService : BackgroundService
         var anomalies = new List<Anomaly>();
 
         // Run all checks in parallel
-        var tasks = new List<Task<List<Anomaly>>>
+        var checks = new List<(string Name, Task<List<Anomaly>?> Task)>
         {
-            CheckCpuAsync(ct),
-            CheckMemoryAsync(ct),
-            CheckDiskAsync(ct),
-            CheckTargetsAsync(ct),
-            CheckContainerHealthAsync(ct),
-            CheckContainerRestartsAsync(ct),
-            CheckRouterHealthAsync(ct),
-            CheckNetworkTrafficAsync(ct),
-            CheckStoragePoolHealthAsync(ct),
-            CheckTraefik5xxAsync(ct),
-            CheckCertExpiryAsync(ct),
-            CheckPrometheusCardinalityAsync(ct),
-            CheckLokiHealthAsync(ct),
-            CheckLogErrorSpikesAsync(ct),
-            CheckCriticalLogPatternsAsync(ct),
+            ("cpu", CheckCpuAsync(ct)),
+            ("memory", CheckMemoryAsync(ct)),
+            ("disk", CheckDiskAsync(ct)),
+            ("targets", CheckTargetsAsync(ct)),
+            ("container-health", CheckContainerHealthAsync(ct)),
+            ("container-restarts", CheckContainerRestartsAsync(ct)),
+            ("router", CheckRouterHealthAsync(ct)),
+            ("network", CheckNetworkTrafficAsync(ct)),
+            ("storage-pools", CheckStoragePoolHealthAsync(ct)),
+            ("traefik-5xx", CheckTraefik5xxAsync(ct)),
+            ("cert-expiry", CheckCertExpiryAsync(ct)),
+            ("cardinality", CheckPrometheusCardinalityAsync(ct)),
+            ("loki", CheckLokiHealthAsync(ct)),
+            ("log-error-spikes", CheckLogErrorSpikesAsync(ct)),
+            ("critical-log-patterns", CheckCriticalLogPatternsAsync(ct)),
         };
 
-        await Task.WhenAll(tasks);
+        await Task.WhenAll(checks.Select(c => c.Task));
 
-        foreach (var task in tasks)
+        foreach (var (name, task) in checks)
         {
-            anomalies.AddRange(await task);
+            anomalies.AddRange(ResolveCheckResult(name, await task));
         }
 
         if (anomalies.Count > 0)
@@ -156,7 +159,39 @@ public sealed class AnomalyDetectionService : BackgroundService
         return anomalies;
     }
 
-    private async Task<List<Anomaly>> CheckCpuAsync(CancellationToken ct)
+    // A failed read is not "no findings": dropping a standing anomaly for one tick changes the
+    // fingerprint twice (gone, then back) and buys two LLM evaluations. The last good result
+    // bridges a single failure; a second one in a row counts as real and clears it.
+    internal List<Anomaly> ResolveCheckResult(string check, List<Anomaly>? result)
+    {
+        if (result != null)
+        {
+            _lastCheckResults[check] = result;
+            _consecutiveCheckFailures.Remove(check);
+            return result;
+        }
+
+        var failures = _consecutiveCheckFailures.GetValueOrDefault(check) + 1;
+        _consecutiveCheckFailures[check] = failures;
+
+        if (failures <= BridgedCheckFailures && _lastCheckResults.TryGetValue(check, out var last))
+        {
+            _logger.LogInformation(
+                "Check {Check} returned no data, keeping last result ({Count} anomalies)",
+                check, last.Count);
+            return last;
+        }
+
+        if (failures == BridgedCheckFailures + 1)
+        {
+            _logger.LogWarning("Check {Check} returned no data {Failures} ticks in a row, reporting no findings", check, failures);
+        }
+
+        _lastCheckResults.Remove(check);
+        return [];
+    }
+
+    private async Task<List<Anomaly>?> CheckCpuAsync(CancellationToken ct)
     {
         var anomalies = new List<Anomaly>();
 
@@ -165,7 +200,7 @@ public sealed class AnomalyDetectionService : BackgroundService
 
         if (cpuUsage == null)
         {
-            return anomalies;
+            return null;
         }
 
         var previous = _lastMetricValues.GetValueOrDefault("cpu", cpuUsage.Value);
@@ -197,7 +232,7 @@ public sealed class AnomalyDetectionService : BackgroundService
         return anomalies;
     }
 
-    private async Task<List<Anomaly>> CheckMemoryAsync(CancellationToken ct)
+    private async Task<List<Anomaly>?> CheckMemoryAsync(CancellationToken ct)
     {
         var anomalies = new List<Anomaly>();
 
@@ -206,7 +241,7 @@ public sealed class AnomalyDetectionService : BackgroundService
 
         if (memUsage == null)
         {
-            return anomalies;
+            return null;
         }
 
         if (memUsage > 90)
@@ -223,7 +258,7 @@ public sealed class AnomalyDetectionService : BackgroundService
         return anomalies;
     }
 
-    private async Task<List<Anomaly>> CheckDiskAsync(CancellationToken ct)
+    private async Task<List<Anomaly>?> CheckDiskAsync(CancellationToken ct)
     {
         var anomalies = new List<Anomaly>();
 
@@ -232,7 +267,7 @@ public sealed class AnomalyDetectionService : BackgroundService
 
         if (diskUsage == null)
         {
-            return anomalies;
+            return null;
         }
 
         if (diskUsage > 85)
@@ -276,7 +311,7 @@ public sealed class AnomalyDetectionService : BackgroundService
             .Order(StringComparer.Ordinal)
             .ToList();
 
-    private async Task<List<Anomaly>> CheckTargetsAsync(CancellationToken ct)
+    private async Task<List<Anomaly>?> CheckTargetsAsync(CancellationToken ct)
     {
         var anomalies = new List<Anomaly>();
 
@@ -300,12 +335,13 @@ public sealed class AnomalyDetectionService : BackgroundService
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to check Prometheus targets");
+            return null;
         }
 
         return anomalies;
     }
 
-    internal async Task<List<Anomaly>> CheckContainerHealthAsync(CancellationToken ct)
+    internal async Task<List<Anomaly>?> CheckContainerHealthAsync(CancellationToken ct)
     {
         var anomalies = new List<Anomaly>();
         try
@@ -349,18 +385,24 @@ public sealed class AnomalyDetectionService : BackgroundService
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to check container health");
+            return null;
         }
 
         return anomalies;
     }
 
-    private async Task<List<Anomaly>> CheckContainerRestartsAsync(CancellationToken ct)
+    private async Task<List<Anomaly>?> CheckContainerRestartsAsync(CancellationToken ct)
     {
         var anomalies = new List<Anomaly>();
         try
         {
             var restartRate = await _prometheus.QueryScalarAsync(
                 "sum(increase(container_restart_count{name!=\"\"}[5m]))", ct);
+            if (restartRate == null)
+            {
+                return null;
+            }
+
             if (restartRate is > 0)
             {
                 anomalies.Add(new Anomaly
@@ -376,12 +418,13 @@ public sealed class AnomalyDetectionService : BackgroundService
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to check container restarts");
+            return null;
         }
 
         return anomalies;
     }
 
-    private async Task<List<Anomaly>> CheckRouterHealthAsync(CancellationToken ct)
+    private async Task<List<Anomaly>?> CheckRouterHealthAsync(CancellationToken ct)
     {
         var anomalies = new List<Anomaly>();
         try
@@ -433,12 +476,13 @@ public sealed class AnomalyDetectionService : BackgroundService
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to check router health");
+            return null;
         }
 
         return anomalies;
     }
 
-    private async Task<List<Anomaly>> CheckNetworkTrafficAsync(CancellationToken ct)
+    private async Task<List<Anomaly>?> CheckNetworkTrafficAsync(CancellationToken ct)
     {
         var anomalies = new List<Anomaly>();
         try
@@ -447,7 +491,7 @@ public sealed class AnomalyDetectionService : BackgroundService
                 "sum(rate(mktxp_interface_rx_byte[5m]))", ct);
             if (rxRate == null)
             {
-                return anomalies;
+                return null;
             }
 
             var key = "network_rx";
@@ -468,12 +512,13 @@ public sealed class AnomalyDetectionService : BackgroundService
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to check network traffic");
+            return null;
         }
 
         return anomalies;
     }
 
-    private async Task<List<Anomaly>> CheckStoragePoolHealthAsync(CancellationToken ct)
+    private async Task<List<Anomaly>?> CheckStoragePoolHealthAsync(CancellationToken ct)
     {
         var anomalies = new List<Anomaly>();
         try
@@ -498,18 +543,23 @@ public sealed class AnomalyDetectionService : BackgroundService
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to check storage pools");
+            return null;
         }
 
         return anomalies;
     }
 
-    private async Task<List<Anomaly>> CheckTraefik5xxAsync(CancellationToken ct)
+    private async Task<List<Anomaly>?> CheckTraefik5xxAsync(CancellationToken ct)
     {
         var anomalies = new List<Anomaly>();
         try
         {
             var errorRate = await _prometheus.QueryScalarAsync(
                 "sum(rate(traefik_service_requests_total{code=~\"5..\"}[5m])) / sum(rate(traefik_service_requests_total[5m])) * 100", ct);
+            if (errorRate == null)
+            {
+                return null;
+            }
 
             if (errorRate is > 5)
             {
@@ -525,12 +575,13 @@ public sealed class AnomalyDetectionService : BackgroundService
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to check Traefik 5xx rate");
+            return null;
         }
 
         return anomalies;
     }
 
-    private async Task<List<Anomaly>> CheckCertExpiryAsync(CancellationToken ct)
+    private async Task<List<Anomaly>?> CheckCertExpiryAsync(CancellationToken ct)
     {
         var anomalies = new List<Anomaly>();
         try
@@ -540,7 +591,7 @@ public sealed class AnomalyDetectionService : BackgroundService
 
             if (minExpiry == null)
             {
-                return anomalies;
+                return null;
             }
 
             var daysLeft = minExpiry.Value / 86400;
@@ -558,17 +609,23 @@ public sealed class AnomalyDetectionService : BackgroundService
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to check cert expiry");
+            return null;
         }
 
         return anomalies;
     }
 
-    private async Task<List<Anomaly>> CheckPrometheusCardinalityAsync(CancellationToken ct)
+    private async Task<List<Anomaly>?> CheckPrometheusCardinalityAsync(CancellationToken ct)
     {
         var anomalies = new List<Anomaly>();
         try
         {
             var headSeries = await _prometheus.QueryScalarAsync("prometheus_tsdb_head_series", ct);
+            if (headSeries == null)
+            {
+                return null;
+            }
+
             if (headSeries is > 500_000)
             {
                 anomalies.Add(new Anomaly
@@ -584,12 +641,13 @@ public sealed class AnomalyDetectionService : BackgroundService
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to check Prometheus cardinality");
+            return null;
         }
 
         return anomalies;
     }
 
-    private async Task<List<Anomaly>> CheckLokiHealthAsync(CancellationToken ct)
+    private async Task<List<Anomaly>?> CheckLokiHealthAsync(CancellationToken ct)
     {
         var anomalies = new List<Anomaly>();
         try
@@ -622,7 +680,7 @@ public sealed class AnomalyDetectionService : BackgroundService
         return anomalies;
     }
 
-    private async Task<List<Anomaly>> CheckLogErrorSpikesAsync(CancellationToken ct)
+    private async Task<List<Anomaly>?> CheckLogErrorSpikesAsync(CancellationToken ct)
     {
         var anomalies = new List<Anomaly>();
         try
@@ -645,12 +703,13 @@ public sealed class AnomalyDetectionService : BackgroundService
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to check log error spikes");
+            return null;
         }
 
         return anomalies;
     }
 
-    private async Task<List<Anomaly>> CheckCriticalLogPatternsAsync(CancellationToken ct)
+    private async Task<List<Anomaly>?> CheckCriticalLogPatternsAsync(CancellationToken ct)
     {
         var anomalies = new List<Anomaly>();
         try
@@ -670,6 +729,7 @@ public sealed class AnomalyDetectionService : BackgroundService
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to check critical log patterns");
+            return null;
         }
 
         return anomalies;

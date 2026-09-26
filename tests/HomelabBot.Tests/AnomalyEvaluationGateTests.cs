@@ -258,11 +258,11 @@ public class AnomalyEvaluationGateTests
     {
         var before = await CreateService(CreateDockerPlugin(
             new StoppedContainerInfo { Name = "plex", StoppedFor = TimeSpan.FromMinutes(5) }))
-            .CheckContainerHealthAsync(CancellationToken.None);
+            .CheckContainerHealthAsync(CancellationToken.None) ?? throw new InvalidOperationException("check failed to read");
 
         var after = await CreateService(CreateDockerPlugin(
             new StoppedContainerInfo { Name = "sonarr", StoppedFor = TimeSpan.FromMinutes(5) }))
-            .CheckContainerHealthAsync(CancellationToken.None);
+            .CheckContainerHealthAsync(CancellationToken.None) ?? throw new InvalidOperationException("check failed to read");
 
         Assert.NotEqual(
             AnomalyDetectionService.BuildFingerprint(before),
@@ -275,13 +275,13 @@ public class AnomalyEvaluationGateTests
         var first = await CreateService(CreateDockerPlugin(
             new StoppedContainerInfo { Name = "plex", StoppedFor = TimeSpan.FromMinutes(5) },
             new StoppedContainerInfo { Name = "sonarr", StoppedFor = TimeSpan.FromMinutes(5) }))
-            .CheckContainerHealthAsync(CancellationToken.None);
+            .CheckContainerHealthAsync(CancellationToken.None) ?? throw new InvalidOperationException("check failed to read");
 
         // Same set, reported in a different order and an hour later.
         var second = await CreateService(CreateDockerPlugin(
             new StoppedContainerInfo { Name = "sonarr", StoppedFor = TimeSpan.FromMinutes(65) },
             new StoppedContainerInfo { Name = "plex", StoppedFor = TimeSpan.FromMinutes(65) }))
-            .CheckContainerHealthAsync(CancellationToken.None);
+            .CheckContainerHealthAsync(CancellationToken.None) ?? throw new InvalidOperationException("check failed to read");
 
         Assert.Equal(
             AnomalyDetectionService.BuildFingerprint(first),
@@ -306,7 +306,7 @@ public class AnomalyEvaluationGateTests
             new StoppedContainerInfo { Name = "radarr", StoppedFor = TimeSpan.FromDays(10) });
         var service = CreateService(docker);
 
-        var anomalies = await service.CheckContainerHealthAsync(CancellationToken.None);
+        var anomalies = await service.CheckContainerHealthAsync(CancellationToken.None) ?? throw new InvalidOperationException("check failed to read");
 
         Assert.Empty(anomalies);
     }
@@ -319,7 +319,7 @@ public class AnomalyEvaluationGateTests
             new StoppedContainerInfo { Name = "grafana", StoppedFor = TimeSpan.FromMinutes(5) });
         var service = CreateService(docker);
 
-        var anomalies = await service.CheckContainerHealthAsync(CancellationToken.None);
+        var anomalies = await service.CheckContainerHealthAsync(CancellationToken.None) ?? throw new InvalidOperationException("check failed to read");
 
         var anomaly = Assert.Single(anomalies);
         Assert.Equal("Container", anomaly.Type);
@@ -334,7 +334,7 @@ public class AnomalyEvaluationGateTests
         var docker = CreateDockerPlugin(new StoppedContainerInfo { Name = "mystery", StoppedFor = null });
         var service = CreateService(docker);
 
-        var anomalies = await service.CheckContainerHealthAsync(CancellationToken.None);
+        var anomalies = await service.CheckContainerHealthAsync(CancellationToken.None) ?? throw new InvalidOperationException("check failed to read");
 
         Assert.Single(anomalies);
     }
@@ -346,7 +346,7 @@ public class AnomalyEvaluationGateTests
             new StoppedContainerInfo { Name = "sonarr", StoppedFor = TimeSpan.FromDays(10) });
         var service = CreateService(docker, stoppedContainerGraceHours: 0);
 
-        var anomalies = await service.CheckContainerHealthAsync(CancellationToken.None);
+        var anomalies = await service.CheckContainerHealthAsync(CancellationToken.None) ?? throw new InvalidOperationException("check failed to read");
 
         Assert.Contains("sonarr", Assert.Single(anomalies).Message, StringComparison.Ordinal);
     }
@@ -361,8 +361,61 @@ public class AnomalyEvaluationGateTests
             new StoppedContainerInfo { Name = "d", StoppedFor = TimeSpan.FromMinutes(4) });
         var service = CreateService(docker);
 
-        var anomalies = await service.CheckContainerHealthAsync(CancellationToken.None);
+        var anomalies = await service.CheckContainerHealthAsync(CancellationToken.None) ?? throw new InvalidOperationException("check failed to read");
 
         Assert.Equal(AnomalyDetectionService.AnomalySeverity.Critical, Assert.Single(anomalies).Severity);
+    }
+
+    private static readonly AnomalyDetectionService.Anomaly StandingAnomaly = new()
+    {
+        Type = "Disk",
+        Key = "usage",
+        Message = "Disk usage at 90.0%",
+        Severity = AnomalyDetectionService.AnomalySeverity.Warning,
+        Value = 90,
+    };
+
+    [Fact]
+    public void ResolveCheckResult_SingleFailedRead_KeepsLastResult()
+    {
+        var service = CreateService();
+        service.ResolveCheckResult("disk", [StandingAnomaly]);
+
+        var resolved = service.ResolveCheckResult("disk", null);
+
+        Assert.Same(StandingAnomaly, Assert.Single(resolved));
+    }
+
+    [Fact]
+    public void ResolveCheckResult_TwoFailedReadsInARow_ReportsNoFindings()
+    {
+        var service = CreateService();
+        service.ResolveCheckResult("disk", [StandingAnomaly]);
+        service.ResolveCheckResult("disk", null);
+
+        var resolved = service.ResolveCheckResult("disk", null);
+
+        Assert.Empty(resolved);
+    }
+
+    [Fact]
+    public void ResolveCheckResult_RecoveryBetweenFailures_ResetsFailureCount()
+    {
+        var service = CreateService();
+        service.ResolveCheckResult("disk", [StandingAnomaly]);
+        service.ResolveCheckResult("disk", null);
+        service.ResolveCheckResult("disk", [StandingAnomaly]);
+
+        var resolved = service.ResolveCheckResult("disk", null);
+
+        Assert.Single(resolved);
+    }
+
+    [Fact]
+    public void ResolveCheckResult_FirstReadFails_ReportsNoFindings()
+    {
+        var service = CreateService();
+
+        Assert.Empty(service.ResolveCheckResult("disk", null));
     }
 }

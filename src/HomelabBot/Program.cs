@@ -208,7 +208,8 @@ try
     builder.Services.AddControllers();
 
     // Health checks
-    builder.Services.AddHealthChecks();
+    builder.Services.AddHealthChecks()
+        .AddCheck<DiscordHealthCheck>("discord");
 
     var app = builder.Build();
 
