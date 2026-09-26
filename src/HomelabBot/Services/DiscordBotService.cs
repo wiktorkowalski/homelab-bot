@@ -111,7 +111,8 @@ public sealed class DiscordBotService : BackgroundService
         _client.SocketClosed += OnSocketClosed;
         _client.Zombied += OnZombied;
 
-        Interlocked.Exchange(ref _disconnectedSinceTicks, 0);
+        // Down until Ready proves otherwise, so a handshake that never completes still trips the watchdog
+        Interlocked.Exchange(ref _disconnectedSinceTicks, DateTime.UtcNow.Ticks);
         await _client.ConnectAsync();
         _reconnectAttempts = 0; // Reset on successful connect
 
