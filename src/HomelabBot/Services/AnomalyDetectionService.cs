@@ -177,14 +177,14 @@ public sealed class AnomalyDetectionService : BackgroundService
         if (failures <= BridgedCheckFailures && _lastCheckResults.TryGetValue(check, out var last))
         {
             _logger.LogInformation(
-                "Check {Check} could not read, keeping last result ({Count} anomalies)",
+                "Check {Check} returned no data, keeping last result ({Count} anomalies)",
                 check, last.Count);
             return last;
         }
 
         if (failures == BridgedCheckFailures + 1)
         {
-            _logger.LogWarning("Check {Check} could not read {Failures} ticks in a row, reporting no findings", check, failures);
+            _logger.LogWarning("Check {Check} returned no data {Failures} ticks in a row, reporting no findings", check, failures);
         }
 
         _lastCheckResults.Remove(check);
