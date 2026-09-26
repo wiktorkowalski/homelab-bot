@@ -23,7 +23,9 @@ public sealed class DiscordBotService : BackgroundService
     private DiscordClient? _client;
     private SlashCommandsExtension? _slashCommands;
     private int _reconnectAttempts;
-    private const int MaxReconnectAttempts = 10;
+    private long _disconnectedSinceTicks;
+    private static readonly TimeSpan WatchdogInterval = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan MaxDisconnectedDuration = TimeSpan.FromMinutes(5);
     private readonly TaskCompletionSource _readyTcs = new();
 
     public DiscordBotService(
@@ -70,15 +72,10 @@ public sealed class DiscordBotService : BackgroundService
                 _reconnectAttempts++;
                 var delay = GetBackoffDelay(_reconnectAttempts);
 
-                _logger.LogError(ex, "Discord connection failed (attempt {Attempt}/{Max}). Retrying in {Delay}s...",
-                    _reconnectAttempts, MaxReconnectAttempts, delay.TotalSeconds);
+                _logger.LogError(ex, "Discord connection failed (attempt {Attempt}). Retrying in {Delay}s...",
+                    _reconnectAttempts, delay.TotalSeconds);
 
-                if (_reconnectAttempts >= MaxReconnectAttempts)
-                {
-                    _logger.LogCritical("Max reconnect attempts reached. Giving up.");
-                    throw;
-                }
-
+                await DisposeClientAsync();
                 await Task.Delay(delay, stoppingToken);
             }
         }
@@ -111,18 +108,69 @@ public sealed class DiscordBotService : BackgroundService
         _client.ComponentInteractionCreated += OnComponentInteraction;
         _client.SocketErrored += OnSocketError;
         _client.Resumed += OnResumed;
+        _client.SocketClosed += OnSocketClosed;
+        _client.Zombied += OnZombied;
 
+        Interlocked.Exchange(ref _disconnectedSinceTicks, 0);
         await _client.ConnectAsync();
         _reconnectAttempts = 0; // Reset on successful connect
 
-        // Keep running until cancellation
-        await Task.Delay(Timeout.Infinite, stoppingToken);
+        // DSharpPlus AutoReconnect gives up silently after its own retries; rebuild the client if it stays down
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            await Task.Delay(WatchdogInterval, stoppingToken);
+
+            var since = Interlocked.Read(ref _disconnectedSinceTicks);
+            if (since == 0)
+            {
+                continue;
+            }
+
+            var downFor = DateTime.UtcNow - new DateTime(since, DateTimeKind.Utc);
+            if (downFor < MaxDisconnectedDuration)
+            {
+                continue;
+            }
+
+            _logger.LogWarning("Discord gateway down for {Minutes:F1} min without recovery. Rebuilding client",
+                downFor.TotalMinutes);
+            await DisposeClientAsync();
+            return;
+        }
     }
+
+    private async Task DisposeClientAsync()
+    {
+        var client = _client;
+        if (client == null)
+        {
+            return;
+        }
+
+        _client = null;
+
+        try
+        {
+            await client.DisconnectAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Disconnect of stale Discord client failed");
+        }
+
+        client.Dispose();
+    }
+
+    private void MarkDisconnected() =>
+        Interlocked.CompareExchange(ref _disconnectedSinceTicks, DateTime.UtcNow.Ticks, 0);
+
+    private void MarkConnected() => Interlocked.Exchange(ref _disconnectedSinceTicks, 0);
 
     private Task OnReady(DiscordClient client, ReadyEventArgs e)
     {
         _logger.LogInformation("Discord bot connected as {Username}#{Discriminator}",
             client.CurrentUser.Username, client.CurrentUser.Discriminator);
+        MarkConnected();
         _readyTcs.TrySetResult();
         return Task.CompletedTask;
     }
@@ -130,6 +178,20 @@ public sealed class DiscordBotService : BackgroundService
     private Task OnResumed(DiscordClient client, ReadyEventArgs e)
     {
         _logger.LogInformation("Discord connection resumed");
+        MarkConnected();
+        return Task.CompletedTask;
+    }
+
+    private Task OnSocketClosed(DiscordClient client, SocketCloseEventArgs e)
+    {
+        MarkDisconnected();
+        return Task.CompletedTask;
+    }
+
+    private Task OnZombied(DiscordClient client, ZombiedEventArgs e)
+    {
+        _logger.LogWarning("Discord connection zombied after {Failures} missed heartbeats", e.Failures);
+        MarkDisconnected();
         return Task.CompletedTask;
     }
 
@@ -570,14 +632,15 @@ public sealed class DiscordBotService : BackgroundService
     public async Task<(ulong ThreadId, ulong MessageId)?> CreateThreadInChannelAsync(
         ulong channelId, string name, string initialMessage)
     {
-        if (_client == null)
+        var client = _client;
+        if (client == null)
         {
             return null;
         }
 
         try
         {
-            var channel = await _client.GetChannelAsync(channelId);
+            var channel = await client.GetChannelAsync(channelId);
             var message = await channel.SendMessageAsync(initialMessage);
             var thread = await message.CreateThreadAsync(name, DSharpPlus.AutoArchiveDuration.Day);
             return (thread.Id, message.Id);
@@ -591,14 +654,15 @@ public sealed class DiscordBotService : BackgroundService
 
     public async Task SendToThreadAsync(ulong threadId, string message)
     {
-        if (_client == null)
+        var client = _client;
+        if (client == null)
         {
             return;
         }
 
         try
         {
-            var thread = await _client.GetChannelAsync(threadId);
+            var thread = await client.GetChannelAsync(threadId);
             await thread.SendMessageAsync(message);
         }
         catch (Exception ex)
@@ -609,14 +673,15 @@ public sealed class DiscordBotService : BackgroundService
 
     public async Task SendToThreadAsync(ulong threadId, DiscordEmbed embed)
     {
-        if (_client == null)
+        var client = _client;
+        if (client == null)
         {
             return;
         }
 
         try
         {
-            var thread = await _client.GetChannelAsync(threadId);
+            var thread = await client.GetChannelAsync(threadId);
             await thread.SendMessageAsync(embed: embed);
         }
         catch (Exception ex)
@@ -641,7 +706,8 @@ public sealed class DiscordBotService : BackgroundService
 
     private async Task<DiscordDmChannel?> GetDmChannelAsync(ulong userId)
     {
-        if (_client == null)
+        var client = _client;
+        if (client == null)
         {
             _logger.LogWarning("Cannot send DM: Discord client not connected");
             return null;
@@ -649,7 +715,7 @@ public sealed class DiscordBotService : BackgroundService
 
         try
         {
-            foreach (var guild in _client.Guilds.Values)
+            foreach (var guild in client.Guilds.Values)
             {
                 try
                 {
@@ -678,11 +744,7 @@ public sealed class DiscordBotService : BackgroundService
     {
         _logger.LogInformation("Stopping Discord bot service...");
 
-        if (_client != null)
-        {
-            await _client.DisconnectAsync();
-            _client.Dispose();
-        }
+        await DisposeClientAsync();
 
         await base.StopAsync(cancellationToken);
     }
