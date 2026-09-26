@@ -117,6 +117,11 @@ public sealed class DiscordBotService : BackgroundService
         _reconnectAttempts = 0; // Reset on successful connect
 
         // DSharpPlus AutoReconnect gives up silently after its own retries; rebuild the client if it stays down
+        await WatchGatewayAsync(stoppingToken);
+    }
+
+    private async Task WatchGatewayAsync(CancellationToken stoppingToken)
+    {
         while (!stoppingToken.IsCancellationRequested)
         {
             await Task.Delay(WatchdogInterval, stoppingToken);
@@ -127,14 +132,14 @@ public sealed class DiscordBotService : BackgroundService
                 continue;
             }
 
-            var downFor = DateTime.UtcNow - new DateTime(since, DateTimeKind.Utc);
-            if (downFor < MaxDisconnectedDuration)
+            var downDuration = DateTime.UtcNow - new DateTime(since, DateTimeKind.Utc);
+            if (downDuration < MaxDisconnectedDuration)
             {
                 continue;
             }
 
-            _logger.LogWarning("Discord gateway down for {Minutes:F1} min without recovery. Rebuilding client",
-                downFor.TotalMinutes);
+            _logger.LogWarning("Discord gateway down for {DownDuration} without recovery. Rebuilding client",
+                downDuration);
             await DisposeClientAsync();
             return;
         }
@@ -160,6 +165,8 @@ public sealed class DiscordBotService : BackgroundService
         client.Dispose();
     }
 
+    private bool IsCurrent(DiscordClient client) => ReferenceEquals(client, _client);
+
     private void MarkDisconnected() =>
         Interlocked.CompareExchange(ref _disconnectedSinceTicks, DateTime.UtcNow.Ticks, 0);
 
@@ -168,7 +175,7 @@ public sealed class DiscordBotService : BackgroundService
     private Task OnReady(DiscordClient client, ReadyEventArgs e)
     {
         // Late events from a disposed client must not touch the watchdog state of the current one
-        if (!ReferenceEquals(client, _client))
+        if (!IsCurrent(client))
         {
             return Task.CompletedTask;
         }
@@ -182,7 +189,7 @@ public sealed class DiscordBotService : BackgroundService
 
     private Task OnResumed(DiscordClient client, ReadyEventArgs e)
     {
-        if (!ReferenceEquals(client, _client))
+        if (!IsCurrent(client))
         {
             return Task.CompletedTask;
         }
@@ -194,7 +201,7 @@ public sealed class DiscordBotService : BackgroundService
 
     private Task OnSocketClosed(DiscordClient client, SocketCloseEventArgs e)
     {
-        if (!ReferenceEquals(client, _client))
+        if (!IsCurrent(client))
         {
             return Task.CompletedTask;
         }
@@ -205,12 +212,12 @@ public sealed class DiscordBotService : BackgroundService
 
     private Task OnZombied(DiscordClient client, ZombiedEventArgs e)
     {
-        if (!ReferenceEquals(client, _client))
+        if (!IsCurrent(client))
         {
             return Task.CompletedTask;
         }
 
-        _logger.LogWarning("Discord connection zombied after {Failures} missed heartbeats", e.Failures);
+        _logger.LogWarning("Discord connection zombied after {MissedHeartbeatCount} missed heartbeats", e.Failures);
         MarkDisconnected();
         return Task.CompletedTask;
     }
@@ -764,8 +771,8 @@ public sealed class DiscordBotService : BackgroundService
     {
         _logger.LogInformation("Stopping Discord bot service...");
 
-        await DisposeClientAsync();
-
+        // Cancel and drain ExecuteAsync first, otherwise it can log a spurious failure or build a client nobody disposes
         await base.StopAsync(cancellationToken);
+        await DisposeClientAsync();
     }
 }
