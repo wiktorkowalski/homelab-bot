@@ -52,6 +52,20 @@ public sealed class DiscordBotService : BackgroundService
 
     private SmartNotificationService SmartNotification => _smartNotification.Value;
 
+    // A routine close → resume flags the gateway down for about a second; Docker's health
+    // retries absorb that, so no grace period here.
+    public bool IsReady =>
+        _readyTcs.Task.IsCompletedSuccessfully && Interlocked.Read(ref _disconnectedSinceTicks) == 0;
+
+    public TimeSpan? DisconnectedFor
+    {
+        get
+        {
+            var since = Interlocked.Read(ref _disconnectedSinceTicks);
+            return since == 0 ? null : DateTime.UtcNow - new DateTime(since, DateTimeKind.Utc);
+        }
+    }
+
     public Task WaitForReadyAsync(CancellationToken ct = default)
     {
         return _readyTcs.Task.WaitAsync(ct);
