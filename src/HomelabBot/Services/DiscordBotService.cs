@@ -141,13 +141,11 @@ public sealed class DiscordBotService : BackgroundService
 
     private async Task DisposeClientAsync()
     {
-        var client = _client;
+        var client = Interlocked.Exchange(ref _client, null);
         if (client == null)
         {
             return;
         }
-
-        _client = null;
 
         try
         {
@@ -168,6 +166,12 @@ public sealed class DiscordBotService : BackgroundService
 
     private Task OnReady(DiscordClient client, ReadyEventArgs e)
     {
+        // Late events from a disposed client must not touch the watchdog state of the current one
+        if (!ReferenceEquals(client, _client))
+        {
+            return Task.CompletedTask;
+        }
+
         _logger.LogInformation("Discord bot connected as {Username}#{Discriminator}",
             client.CurrentUser.Username, client.CurrentUser.Discriminator);
         MarkConnected();
@@ -177,6 +181,11 @@ public sealed class DiscordBotService : BackgroundService
 
     private Task OnResumed(DiscordClient client, ReadyEventArgs e)
     {
+        if (!ReferenceEquals(client, _client))
+        {
+            return Task.CompletedTask;
+        }
+
         _logger.LogInformation("Discord connection resumed");
         MarkConnected();
         return Task.CompletedTask;
@@ -184,12 +193,22 @@ public sealed class DiscordBotService : BackgroundService
 
     private Task OnSocketClosed(DiscordClient client, SocketCloseEventArgs e)
     {
+        if (!ReferenceEquals(client, _client))
+        {
+            return Task.CompletedTask;
+        }
+
         MarkDisconnected();
         return Task.CompletedTask;
     }
 
     private Task OnZombied(DiscordClient client, ZombiedEventArgs e)
     {
+        if (!ReferenceEquals(client, _client))
+        {
+            return Task.CompletedTask;
+        }
+
         _logger.LogWarning("Discord connection zombied after {Failures} missed heartbeats", e.Failures);
         MarkDisconnected();
         return Task.CompletedTask;
