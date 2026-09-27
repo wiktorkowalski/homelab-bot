@@ -44,7 +44,6 @@ public sealed class SecurityAuditService : ScheduledBackgroundService
                 threadId: threadId,
                 userMessage: SecurityAuditPrompts.Investigation,
                 traceType: TraceType.Scheduled,
-                maxTokens: SecurityAuditPrompts.MaxTokens,
                 systemPromptOverride: SecurityAuditPrompts.System,
                 ct: ct);
 

@@ -79,6 +79,4 @@ internal static class SecurityAuditPrompts
         - Keep the report under 1800 characters for Discord
         - If a check can't be performed, note it as a monitoring gap
         """;
-
-    internal const int MaxTokens = 2048;
 }

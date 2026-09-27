@@ -132,7 +132,6 @@ public sealed class AnomalyDetectionService : BackgroundService
             ("disk", CheckDiskAsync(ct)),
             ("targets", CheckTargetsAsync(ct)),
             ("container-health", CheckContainerHealthAsync(ct)),
-            ("container-restarts", CheckContainerRestartsAsync(ct)),
             ("router", CheckRouterHealthAsync(ct)),
             ("network", CheckNetworkTrafficAsync(ct)),
             ("storage-pools", CheckStoragePoolHealthAsync(ct)),
@@ -391,39 +390,6 @@ public sealed class AnomalyDetectionService : BackgroundService
         return anomalies;
     }
 
-    private async Task<List<Anomaly>?> CheckContainerRestartsAsync(CancellationToken ct)
-    {
-        var anomalies = new List<Anomaly>();
-        try
-        {
-            var restartRate = await _prometheus.QueryScalarAsync(
-                "sum(increase(container_restart_count{name!=\"\"}[5m]))", ct);
-            if (restartRate == null)
-            {
-                return null;
-            }
-
-            if (restartRate is > 0)
-            {
-                anomalies.Add(new Anomaly
-                {
-                    Type = "Container",
-                    Key = "restarts",
-                    Message = $"Container restarts detected in last 5m (rate: {restartRate:F1})",
-                    Severity = restartRate > 3 ? AnomalySeverity.Critical : AnomalySeverity.Warning,
-                    Value = restartRate.Value,
-                });
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to check container restarts");
-            return null;
-        }
-
-        return anomalies;
-    }
-
     private async Task<List<Anomaly>?> CheckRouterHealthAsync(CancellationToken ct)
     {
         var anomalies = new List<Anomaly>();
@@ -488,7 +454,7 @@ public sealed class AnomalyDetectionService : BackgroundService
         try
         {
             var rxRate = await _prometheus.QueryScalarAsync(
-                "sum(rate(mktxp_interface_rx_byte[5m]))", ct);
+                "sum(rate(mktxp_interface_rx_byte_total[5m]))", ct);
             if (rxRate == null)
             {
                 return null;
