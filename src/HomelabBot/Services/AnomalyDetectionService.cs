@@ -19,6 +19,9 @@ public sealed class AnomalyDetectionService : BackgroundService
     private const double BucketFloor = 1;
     private const int BridgedCheckFailures = 1;
 
+    // Home traffic idles near 50 KB/s, so a 3x jump alone is noise; p95 is ~1.6 MB/s, max ~16 MB/s.
+    private const double RxSpikeFloorBytesPerSecond = 10_000_000;
+
     private readonly IOptionsMonitor<AnomalyDetectionConfiguration> _config;
     private readonly PrometheusQueryService _prometheus;
     private readonly HttpClient _httpClient;
@@ -464,11 +467,12 @@ public sealed class AnomalyDetectionService : BackgroundService
             var previous = _lastMetricValues.GetValueOrDefault(key, rxRate.Value);
             _lastMetricValues[key] = rxRate.Value;
 
-            if (previous > 0 && rxRate > previous * 3)
+            if (previous > 0 && rxRate > previous * 3 && rxRate > RxSpikeFloorBytesPerSecond)
             {
                 anomalies.Add(new Anomaly
                 {
                     Type = "Network",
+                    Key = "rx-spike",
                     Message = $"Network RX spike: {FormattingHelpers.FormatBytes(previous)}/s -> {FormattingHelpers.FormatBytes(rxRate.Value)}/s",
                     Severity = AnomalySeverity.Warning,
                     Value = rxRate.Value,
