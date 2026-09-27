@@ -76,8 +76,8 @@ public sealed class MikroTikPlugin
 
         try
         {
-            var txResults = await _prometheus.QueryMultipleAsync("rate(mktxp_interface_tx_byte[5m])");
-            var rxResults = await _prometheus.QueryMultipleAsync("rate(mktxp_interface_rx_byte[5m])");
+            var txResults = await _prometheus.QueryMultipleAsync("rate(mktxp_interface_tx_byte_total[5m])");
+            var rxResults = await _prometheus.QueryMultipleAsync("rate(mktxp_interface_rx_byte_total[5m])");
 
             if (txResults.Count == 0)
             {
@@ -131,7 +131,7 @@ public sealed class MikroTikPlugin
 
         try
         {
-            var results = await _prometheus.QueryMultipleAsync("mktxp_wifi_client_signal");
+            var results = await _prometheus.QueryMultipleAsync("mktxp_wlan_clients_signal_strength");
 
             if (results.Count == 0)
             {

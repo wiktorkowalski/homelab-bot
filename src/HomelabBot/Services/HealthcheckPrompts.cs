@@ -121,6 +121,4 @@ internal static class HealthcheckPrompts
         - STAY UNDER 1800 CHARACTERS — count carefully
         - If everything looks healthy with no actionable findings, you can produce a minimal report
         """;
-
-    internal const int MaxTokens = 2048;
 }

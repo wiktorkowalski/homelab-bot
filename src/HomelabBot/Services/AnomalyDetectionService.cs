@@ -19,6 +19,9 @@ public sealed class AnomalyDetectionService : BackgroundService
     private const double BucketFloor = 1;
     private const int BridgedCheckFailures = 1;
 
+    // Home traffic idles near 50 KB/s, so a 3x jump alone is noise; p95 is ~1.6 MB/s, max ~16 MB/s.
+    private const double RxSpikeFloorBytesPerSecond = 10_000_000;
+
     private readonly IOptionsMonitor<AnomalyDetectionConfiguration> _config;
     private readonly PrometheusQueryService _prometheus;
     private readonly HttpClient _httpClient;
@@ -132,7 +135,6 @@ public sealed class AnomalyDetectionService : BackgroundService
             ("disk", CheckDiskAsync(ct)),
             ("targets", CheckTargetsAsync(ct)),
             ("container-health", CheckContainerHealthAsync(ct)),
-            ("container-restarts", CheckContainerRestartsAsync(ct)),
             ("router", CheckRouterHealthAsync(ct)),
             ("network", CheckNetworkTrafficAsync(ct)),
             ("storage-pools", CheckStoragePoolHealthAsync(ct)),
@@ -391,39 +393,6 @@ public sealed class AnomalyDetectionService : BackgroundService
         return anomalies;
     }
 
-    private async Task<List<Anomaly>?> CheckContainerRestartsAsync(CancellationToken ct)
-    {
-        var anomalies = new List<Anomaly>();
-        try
-        {
-            var restartRate = await _prometheus.QueryScalarAsync(
-                "sum(increase(container_restart_count{name!=\"\"}[5m]))", ct);
-            if (restartRate == null)
-            {
-                return null;
-            }
-
-            if (restartRate is > 0)
-            {
-                anomalies.Add(new Anomaly
-                {
-                    Type = "Container",
-                    Key = "restarts",
-                    Message = $"Container restarts detected in last 5m (rate: {restartRate:F1})",
-                    Severity = restartRate > 3 ? AnomalySeverity.Critical : AnomalySeverity.Warning,
-                    Value = restartRate.Value,
-                });
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to check container restarts");
-            return null;
-        }
-
-        return anomalies;
-    }
-
     private async Task<List<Anomaly>?> CheckRouterHealthAsync(CancellationToken ct)
     {
         var anomalies = new List<Anomaly>();
@@ -488,7 +457,7 @@ public sealed class AnomalyDetectionService : BackgroundService
         try
         {
             var rxRate = await _prometheus.QueryScalarAsync(
-                "sum(rate(mktxp_interface_rx_byte[5m]))", ct);
+                "sum(rate(mktxp_interface_rx_byte_total[5m]))", ct);
             if (rxRate == null)
             {
                 return null;
@@ -498,11 +467,12 @@ public sealed class AnomalyDetectionService : BackgroundService
             var previous = _lastMetricValues.GetValueOrDefault(key, rxRate.Value);
             _lastMetricValues[key] = rxRate.Value;
 
-            if (previous > 0 && rxRate > previous * 3)
+            if (previous > 0 && rxRate > previous * 3 && rxRate > RxSpikeFloorBytesPerSecond)
             {
                 anomalies.Add(new Anomaly
                 {
                     Type = "Network",
+                    Key = "rx-spike",
                     Message = $"Network RX spike: {FormattingHelpers.FormatBytes(previous)}/s -> {FormattingHelpers.FormatBytes(rxRate.Value)}/s",
                     Severity = AnomalySeverity.Warning,
                     Value = rxRate.Value,

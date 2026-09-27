@@ -461,7 +461,6 @@ public class HomeLabCommands : ApplicationCommandModule
                 HealthcheckPrompts.Investigation,
                 ctx.User.Id,
                 TraceType.Scheduled,
-                maxTokens: HealthcheckPrompts.MaxTokens,
                 systemPromptOverride: HealthcheckPrompts.System);
 
             await EditResponseWithContentOrSplitAsync(ctx, response,

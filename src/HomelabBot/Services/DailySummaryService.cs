@@ -48,7 +48,6 @@ public sealed class DailySummaryService : ScheduledBackgroundService
                 threadId: threadId,
                 userMessage: HealthcheckPrompts.Investigation,
                 traceType: TraceType.Scheduled,
-                maxTokens: HealthcheckPrompts.MaxTokens,
                 systemPromptOverride: HealthcheckPrompts.System,
                 ct: ct);
 
