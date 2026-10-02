@@ -351,15 +351,12 @@ public sealed class AnomalyDetectionService : BackgroundService
         try
         {
             var graceHours = _config.CurrentValue.StoppedContainerGraceHours;
-
-            // Non-positive means "no grace at all" — report every stopped container.
-            var grace = graceHours > 0 ? TimeSpan.FromHours(graceHours) : TimeSpan.MaxValue;
             var stopped = await _dockerPlugin.GetStoppedContainersAsync(ct);
 
             // Containers parked for longer than the grace window are a deliberate state, not an
             // anomaly. Reporting them keeps a permanent "critical" finding alive forever.
             var recentlyStopped = stopped
-                .Where(c => c.StoppedFor is null || c.StoppedFor < grace)
+                .Where(c => !StoppedContainerGrace.IsParked(c.StoppedFor, graceHours))
                 .ToList();
 
             var parkedCount = stopped.Count - recentlyStopped.Count;
@@ -367,7 +364,7 @@ public sealed class AnomalyDetectionService : BackgroundService
             {
                 _logger.LogDebug(
                     "Ignoring {Count} container(s) stopped longer than {GraceHours}h",
-                    parkedCount, grace.TotalHours);
+                    parkedCount, graceHours);
             }
 
             if (recentlyStopped.Count > 0)

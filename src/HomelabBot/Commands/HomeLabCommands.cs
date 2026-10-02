@@ -821,8 +821,8 @@ public class HomeLabCommands : ApplicationCommandModule
                 - Health Score: {data.HealthScore}/100
                 - Alerts (last 24h): {data.Alerts.Count} ({data.Alerts.Count(a => a.Severity == "critical")} critical, {data.Alerts.Count(a => a.Severity == "warning")} warning)
                 {(data.Alerts.Count > 0 ? "  Names: " + string.Join(", ", data.Alerts.Take(5).Select(a => a.Name)) : "")}
-                - Containers: {data.Containers.Count(c => c.State == "running")} running, {data.Containers.Count(c => c.State != "running")} stopped
-                {(data.Containers.Any(c => c.State != "running") ? "  Stopped: " + string.Join(", ", data.Containers.Where(c => c.State != "running").Take(5).Select(c => c.Name)) : "")}
+                - Containers: {data.Containers.Count(c => c.State == "running")} running, {data.Containers.Count(c => c.CountsAsDown)} stopped, {data.Containers.Count(c => c.IsParked)} parked (stopped on purpose for a long time, not an issue)
+                {(data.Containers.Any(c => c.CountsAsDown) ? "  Stopped: " + string.Join(", ", data.Containers.Where(c => c.CountsAsDown).Take(5).Select(c => c.Name)) : "")}
                 - Storage Pools: {string.Join(", ", data.Pools.Select(p => $"{p.Name}: {p.Health} ({p.UsedPercent:F0}%)"))}
                 - Router: {(data.Router != null ? $"CPU {data.Router.CpuPercent:F0}%, Mem {data.Router.MemoryPercent:F0}%, Up {data.Router.Uptime.Days}d" : "unavailable")}
                 - Monitoring: {(data.Monitoring != null ? $"{data.Monitoring.UpTargets}/{data.Monitoring.TotalTargets} targets up" : "unavailable")}

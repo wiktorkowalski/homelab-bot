@@ -26,13 +26,19 @@ public sealed class AlertSummary
     public string? Instance { get; init; }
 }
 
-public sealed class ContainerStatus
+public sealed record ContainerStatus
 {
     public required string Name { get; init; }
 
     public required string State { get; init; }
 
     public string? Health { get; init; }
+
+    // Stopped longer than the grace window: a deliberate state, not a failure.
+    public bool IsParked { get; init; }
+
+    // Derived from State and IsParked; internal so serializers skip it.
+    internal bool CountsAsDown => State != "running" && !IsParked;
 }
 
 public sealed class PoolStatus

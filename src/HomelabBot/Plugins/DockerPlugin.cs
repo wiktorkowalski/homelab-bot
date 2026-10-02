@@ -342,7 +342,7 @@ public class DockerPlugin
         return stopped;
     }
 
-    private async Task<TimeSpan?> GetStoppedDurationAsync(string containerId, string name, CancellationToken ct)
+    internal virtual async Task<TimeSpan?> GetStoppedDurationAsync(string containerId, string name, CancellationToken ct)
     {
         try
         {
