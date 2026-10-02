@@ -199,7 +199,8 @@ public sealed class RunbookCompilerService
         if (parenIndex > 0)
         {
             var funcName = actionTrimmed[..parenIndex].Trim();
-            var argsStr = actionTrimmed[(parenIndex + 1) ..].TrimEnd(')').Trim();
+            var argsStart = parenIndex + 1;
+            var argsStr = actionTrimmed[argsStart..].TrimEnd(')').Trim();
             var parameters = new Dictionary<string, string>();
             if (!string.IsNullOrEmpty(argsStr))
             {

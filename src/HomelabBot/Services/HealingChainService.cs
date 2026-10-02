@@ -351,7 +351,8 @@ public sealed class HealingChainService
             var firstNewline = json.IndexOf('\n');
             if (firstNewline > 0)
             {
-                json = json[(firstNewline + 1) ..];
+                var contentStart = firstNewline + 1;
+                json = json[contentStart..];
             }
 
             var lastFence = json.LastIndexOf("```");

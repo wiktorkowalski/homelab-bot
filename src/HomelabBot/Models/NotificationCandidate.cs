@@ -10,16 +10,12 @@ public sealed class NotificationCandidate
 
     public string? IssueType { get; init; }
 
-    /// <summary>
-    /// If true, RawData already contains a fully investigated report.
-    /// The LLM will only decide whether to notify, not re-investigate.
-    /// </summary>
+    // If true, RawData already contains a fully investigated report.
+    // The LLM will only decide whether to notify, not re-investigate.
     public bool AlreadyInvestigated { get; init; }
 
-    /// <summary>
-    /// If true, this candidate cannot be hard-suppressed by notification preferences.
-    /// It will always reach the LLM for evaluation (preferences are still in the prompt).
-    /// Use for critical issues that should never be silently dropped.
-    /// </summary>
+    // If true, this candidate cannot be hard-suppressed by notification preferences.
+    // It will always reach the LLM for evaluation (preferences are still in the prompt).
+    // Use for critical issues that should never be silently dropped.
     public bool NeverSuppress { get; init; }
 }
