@@ -19,6 +19,9 @@ public sealed class AnomalyDetectionService : BackgroundService
     private const double BucketFloor = 1;
     private const int BridgedCheckFailures = 1;
 
+    // Enough to cover a set flickering between a few states (A→B→A) without the ring growing unbounded.
+    private const int RecentEvaluationCapacity = 5;
+
     // Home traffic idles near 50 KB/s, so a 3x jump alone is noise; p95 is ~1.6 MB/s, max ~16 MB/s.
     private const double RxSpikeFloorBytesPerSecond = 10_000_000;
 
@@ -43,8 +46,7 @@ public sealed class AnomalyDetectionService : BackgroundService
     private readonly Dictionary<string, int> _consecutiveCheckFailures = new();
     private bool _logAnomalyBaselineEstablished;
     private int _heuristicTick;
-    private string? _lastEvaluatedFingerprint;
-    private DateTime? _lastEvaluatedAt;
+    private List<EvaluatedFingerprint> _recentEvaluations = [];
 
     public AnomalyDetectionService(
         IOptionsMonitor<AnomalyDetectionConfiguration> config,
@@ -712,21 +714,23 @@ public sealed class AnomalyDetectionService : BackgroundService
         // Non-positive turns the gate off entirely: every tick with anomalies reaches the LLM.
         var repeatAfter = repeatHours > 0 ? TimeSpan.FromHours(repeatHours) : TimeSpan.Zero;
 
-        if (!ShouldEvaluate(fingerprint, _lastEvaluatedFingerprint, _lastEvaluatedAt, DateTime.UtcNow, repeatAfter))
+        var hasCritical = anomalies.Any(a => a.Severity == AnomalySeverity.Critical);
+        var gateCheckedAt = DateTime.UtcNow;
+        var suppressedBy = FindSuppressingEvaluation(fingerprint, hasCritical, _recentEvaluations, gateCheckedAt, repeatAfter);
+        if (suppressedBy != null)
         {
             _logger.LogInformation(
-                "Anomaly set unchanged since {LastEvaluatedAt:u}, skipping LLM evaluation (fingerprint {Fingerprint})",
-                _lastEvaluatedAt, fingerprint);
+                "Anomaly set already evaluated at {EvaluatedAt:u}, skipping LLM evaluation (fingerprint {Fingerprint})",
+                suppressedBy.EvaluatedAt, fingerprint);
 
             // Still record the event so the anomaly history keeps showing how long it has stood.
-            await RecordAnomalyEventAsync(anomalies, "Skipped LLM evaluation — anomaly set unchanged", ct);
+            await RecordAnomalyEventAsync(anomalies, "Skipped LLM evaluation — anomaly set already evaluated", ct);
             return;
         }
 
         await NotifyAnomaliesAsync(anomalies, ct);
 
-        _lastEvaluatedFingerprint = fingerprint;
-        _lastEvaluatedAt = DateTime.UtcNow;
+        _recentEvaluations = RecordEvaluation(_recentEvaluations, fingerprint, gateCheckedAt, RecentEvaluationCapacity);
         await PersistEvaluationStateAsync();
     }
 
@@ -750,26 +754,120 @@ public sealed class AnomalyDetectionService : BackgroundService
 
     internal static bool ShouldEvaluate(
         string fingerprint,
-        string? lastFingerprint,
-        DateTime? lastEvaluatedAt,
+        bool hasCritical,
+        IReadOnlyList<EvaluatedFingerprint> recentEvaluations,
+        DateTime now,
+        TimeSpan repeatAfter) =>
+        FindSuppressingEvaluation(fingerprint, hasCritical, recentEvaluations, now, repeatAfter) is null;
+
+    // Matching against several recent sets (not only the last one) stops an A→B→A flicker
+    // from buying a fresh LLM evaluation on every swing. A returning Critical must still alert,
+    // so a set with a Critical only matches the newest entry — the old single-fingerprint gate.
+    internal static EvaluatedFingerprint? FindSuppressingEvaluation(
+        string fingerprint,
+        bool hasCritical,
+        IReadOnlyList<EvaluatedFingerprint> recentEvaluations,
         DateTime now,
         TimeSpan repeatAfter)
     {
-        if (!string.Equals(fingerprint, lastFingerprint, StringComparison.Ordinal))
+        var candidates = hasCritical ? recentEvaluations.TakeLast(1) : recentEvaluations;
+        var match = candidates.FirstOrDefault(e => string.Equals(e.Fingerprint, fingerprint, StringComparison.Ordinal));
+        return match != null && now - match.EvaluatedAt < repeatAfter ? match : null;
+    }
+
+    // Oldest first. A re-evaluated fingerprint moves to the end, so it never holds two slots.
+    internal static List<EvaluatedFingerprint> RecordEvaluation(
+        IReadOnlyList<EvaluatedFingerprint> recentEvaluations,
+        string fingerprint,
+        DateTime evaluatedAt,
+        int capacity)
+    {
+        var updated = recentEvaluations
+            .Where(e => !string.Equals(e.Fingerprint, fingerprint, StringComparison.Ordinal))
+            .ToList();
+        updated.Add(new EvaluatedFingerprint { Fingerprint = fingerprint, EvaluatedAt = evaluatedAt });
+
+        if (updated.Count > capacity)
         {
-            return true;
+            updated.RemoveRange(0, updated.Count - capacity);
         }
 
-        return lastEvaluatedAt is null || now - lastEvaluatedAt.Value >= repeatAfter;
+        return updated;
+    }
+
+    // The ring key is new; the legacy single-fingerprint keys seed it so the first tick
+    // after deploy does not re-evaluate a set that was already evaluated.
+    internal static List<EvaluatedFingerprint> ParseRecentEvaluations(
+        string? ringJson,
+        string? legacyFingerprint,
+        string? legacyEvaluatedAt,
+        int capacity,
+        ILogger logger)
+    {
+        var ring = DeserializeRing(ringJson, capacity, logger);
+
+        // Legacy state wrote "" when nothing was evaluated yet, and a missing timestamp used to
+        // mean "evaluate" — skipping the seed keeps both behaviours.
+        if (string.IsNullOrEmpty(legacyFingerprint)
+            || legacyEvaluatedAt == null
+            || !DateTime.TryParse(legacyEvaluatedAt, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var parsed))
+        {
+            return ring;
+        }
+
+        // A legacy entry newer than the ring means an older build ran in between (rollback, then forward).
+        var legacyAt = parsed.ToUniversalTime();
+        if (ring.Count > 0 && legacyAt <= ring[^1].EvaluatedAt)
+        {
+            return ring;
+        }
+
+        logger.LogInformation(
+            "Seeded recent anomaly evaluations from legacy fingerprint {Fingerprint} evaluated at {EvaluatedAt:u}",
+            legacyFingerprint, legacyAt);
+        return RecordEvaluation(ring, legacyFingerprint, legacyAt, capacity);
+    }
+
+    private static List<EvaluatedFingerprint> DeserializeRing(string? ringJson, int capacity, ILogger logger)
+    {
+        if (string.IsNullOrEmpty(ringJson))
+        {
+            return [];
+        }
+
+        try
+        {
+            var raw = JsonSerializer.Deserialize<List<EvaluatedFingerprint?>>(ringJson) ?? [];
+
+            // Stored state is untrusted: drop broken entries, keep the newest per fingerprint, oldest first.
+            return raw
+                .Where(e => e != null && !string.IsNullOrEmpty(e.Fingerprint))
+                .Select(e => new EvaluatedFingerprint { Fingerprint = e!.Fingerprint, EvaluatedAt = e.EvaluatedAt.ToUniversalTime() })
+                .GroupBy(e => e.Fingerprint, StringComparer.Ordinal)
+                .Select(g => g.OrderBy(e => e.EvaluatedAt).Last())
+                .OrderBy(e => e.EvaluatedAt)
+                .TakeLast(capacity)
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to parse recent anomaly evaluations, falling back to legacy state");
+            return [];
+        }
     }
 
     private async Task PersistEvaluationStateAsync()
     {
         try
         {
-            await _stateStore.SetAsync("AnomalyDetection", "lastEvaluatedFingerprint", _lastEvaluatedFingerprint ?? "");
+            await _stateStore.SetAsync("AnomalyDetection", "recentEvaluatedFingerprints",
+                JsonSerializer.Serialize(_recentEvaluations));
+
+            // Legacy keys keep the newest entry so a rollback to the single-fingerprint gate still works.
+            var newest = _recentEvaluations.LastOrDefault();
+            await _stateStore.SetAsync("AnomalyDetection", "lastEvaluatedFingerprint", newest?.Fingerprint ?? "");
             await _stateStore.SetAsync("AnomalyDetection", "lastEvaluatedAt",
-                (_lastEvaluatedAt ?? DateTime.UtcNow).ToString("O", CultureInfo.InvariantCulture));
+                (newest?.EvaluatedAt ?? DateTime.UtcNow).ToString("O", CultureInfo.InvariantCulture));
         }
         catch (Exception ex)
         {
@@ -889,6 +987,13 @@ public sealed class AnomalyDetectionService : BackgroundService
         public required double Value { get; init; }
     }
 
+    internal sealed class EvaluatedFingerprint
+    {
+        public required string Fingerprint { get; init; }
+
+        public required DateTime EvaluatedAt { get; init; }
+    }
+
     private async Task LoadBaselineAsync()
     {
         try
@@ -930,14 +1035,15 @@ public sealed class AnomalyDetectionService : BackgroundService
 
         try
         {
-            _lastEvaluatedFingerprint = await _stateStore.GetAsync("AnomalyDetection", "lastEvaluatedFingerprint");
+            var ringJson = await _stateStore.GetAsync("AnomalyDetection", "recentEvaluatedFingerprints");
 
-            var evaluatedAt = await _stateStore.GetAsync("AnomalyDetection", "lastEvaluatedAt");
-            if (evaluatedAt != null
-                && DateTime.TryParse(evaluatedAt, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var parsed))
-            {
-                _lastEvaluatedAt = parsed.ToUniversalTime();
-            }
+            // Legacy keys seed the ring when it is absent (first start after deploy) or unreadable,
+            // and catch up on an evaluation made by an older build after a rollback.
+            var legacyFingerprint = await _stateStore.GetAsync("AnomalyDetection", "lastEvaluatedFingerprint");
+            var legacyEvaluatedAt = await _stateStore.GetAsync("AnomalyDetection", "lastEvaluatedAt");
+
+            _recentEvaluations = ParseRecentEvaluations(
+                ringJson, legacyFingerprint, legacyEvaluatedAt, RecentEvaluationCapacity, _logger);
         }
         catch (Exception ex)
         {
