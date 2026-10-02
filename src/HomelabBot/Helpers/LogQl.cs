@@ -1,22 +1,46 @@
 using System.Globalization;
 using System.Text;
-using System.Text.RegularExpressions;
 
 namespace HomelabBot.Helpers;
 
 internal static class LogQl
 {
-    private static readonly Regex LookbackPattern = new(@"^(\d{1,6})([mhd])$", RegexOptions.Compiled);
+    // The "Default" HttpClient has a 10s per-attempt timeout; wider scans time out and retry.
+    internal static readonly TimeSpan MaxLookback = TimeSpan.FromDays(7);
 
-    // Loki's default max_query_length is 721h; 30d stays inside it.
-    internal static readonly TimeSpan MaxLookback = TimeSpan.FromDays(30);
-
-    // Level tokens only (Serilog [ERR], *arr [Error], JSON "level", logfmt level=), so error words in INF text don't count.
+    // Matches level tokens, not error words in message text. Bare-word formats are uppercase-only and
+    // anchored to the first 40 chars; JSON and logfmt keys cannot be anchored (key order varies).
     internal const string ErrorLevelRegex =
-        "(?i)(\\[(err|eror|error|ftl|fatal|crit|critical|panic)\\]"
-        + "|\\b(err|ftl)\\]"
-        + "|\"(level|lvl|severity)\"\\s*:\\s*\"(err|eror|error|fatal|crit|critical|panic)\""
-        + "|\\b(level|lvl|severity)=\"?(err|eror|error|fatal|crit|critical|panic)\\b)";
+        "(?:"
+
+        // Serilog "[ERR]", *arr "[Error]", "[2026-10-02 13:33:01.412 ERR]".
+        + @"^.{0,40}\[(?i:err|eror|error|ftl|fatal|crit|critical|panic)\]"
+        + @"|^.{0,40}\b(?:ERR|FTL)\]"
+
+        // *arr / NLog pipe layout "date|Error|Component|msg".
+        + @"|^.{0,40}\|(?i:error|fatal)\|"
+
+        // Python / Home Assistant "... ERROR (MainThread)", Postgres "ERROR:" / "FATAL:" / "PANIC:".
+        + @"|^.{0,40}\b(?:ERROR|CRITICAL|FATAL|PANIC)\b"
+
+        // .NET console logger "fail: " / "crit: ".
+        + @"|^(?:fail|crit): "
+
+        // zigbee2mqtt / winston "[date] error: " and legacy "Zigbee2MQTT:error ".
+        + @"|^(?:\[[^\]]{1,40}\] )?error: "
+        + @"|^Zigbee2MQTT:error "
+
+        // JSON level fields: string levels, Pino numeric 50/60, Serilog CLEF "@l".
+        + @"|""(?:level|lvl|severity)""\s*:\s*""(?i:err|eror|error|fatal|crit|critical|panic)"""
+        + @"|""level""\s*:\s*(?:50|60)\b"
+        + @"|""@l""\s*:\s*""(?:Error|Fatal)"""
+
+        // logfmt "level=error".
+        + @"|(?:^|\s)(?:level|lvl|severity)=""?(?i:err|eror|error|fatal|crit|critical|panic)\b"
+        + ")";
+
+    // Loki's default max_entries_limit_per_query.
+    internal const int MaxQueryLimit = 5000;
 
     // Mirrors Go's regexp.QuoteMeta so the escape set matches Loki's RE2 engine, not .NET's.
     internal static string EscapeRegex(string text)
@@ -79,45 +103,5 @@ internal static class LogQl
     internal static string ContainsIgnoreCaseFilter(string text) =>
         $"|~ {QuoteString("(?i)" + EscapeRegex(text))}";
 
-    internal static bool TryParseLookback(string? input, out TimeSpan lookback, out string error)
-    {
-        lookback = default;
-        error = string.Empty;
-
-        if (string.IsNullOrWhiteSpace(input))
-        {
-            lookback = TimeSpan.FromHours(1);
-            return true;
-        }
-
-        var match = LookbackPattern.Match(input.Trim());
-        if (!match.Success
-            || !int.TryParse(match.Groups[1].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var value)
-            || value <= 0)
-        {
-            error = $"Invalid time range '{input}'. Use a positive number with m, h or d (e.g. '30m', '24h', '7d').";
-            return false;
-        }
-
-        var maxValue = match.Groups[2].Value switch
-        {
-            "m" => MaxLookback.TotalMinutes,
-            "h" => MaxLookback.TotalHours,
-            _ => MaxLookback.TotalDays,
-        };
-
-        if (value > maxValue)
-        {
-            error = $"Time range '{input}' exceeds the maximum of {(int)MaxLookback.TotalDays}d.";
-            return false;
-        }
-
-        lookback = match.Groups[2].Value switch
-        {
-            "m" => TimeSpan.FromMinutes(value),
-            "h" => TimeSpan.FromHours(value),
-            _ => TimeSpan.FromDays(value),
-        };
-        return true;
-    }
+    internal static int ClampLimit(int limit) => Math.Clamp(limit, 1, MaxQueryLimit);
 }
