@@ -16,7 +16,10 @@ public sealed class ConversationHistoryBudgetTests
     private static void AddToolTurn(ChatHistory history, string callId, string result)
     {
         history.Add(new ChatMessageContent(AuthorRole.Assistant, [new FunctionCallContent("Recall", "Knowledge", callId)]));
-        history.Add(new ChatMessageContent(AuthorRole.Tool, [new FunctionResultContent("Recall", "Knowledge", callId, result)]));
+        // Same shape SK's FunctionCallsProcessor builds: text content plus FunctionResultContent.
+        var toolMessage = new ChatMessageContent(AuthorRole.Tool, result);
+        toolMessage.Items.Add(new FunctionResultContent("Recall", "Knowledge", callId, result));
+        history.Add(toolMessage);
     }
 
     [Fact]
@@ -28,7 +31,11 @@ public sealed class ConversationHistoryBudgetTests
         var count = ConversationService.TruncateToolResults(history, 1_000);
 
         Assert.Equal(1, count);
-        var result = Assert.IsType<FunctionResultContent>(history[2].Items[0]);
+        var tool = history[2];
+        Assert.StartsWith(new string('a', 1_000), tool.Content);
+        Assert.Contains("[truncated: kept 1000 of 10000 chars]", tool.Content);
+        Assert.True(ConversationService.EstimateTokens(tool) < 300);
+        var result = Assert.IsType<FunctionResultContent>(tool.Items[1]);
         Assert.Equal("call-1", result.CallId);
         var text = Assert.IsType<string>(result.Result);
         Assert.StartsWith(new string('a', 1_000), text);
@@ -44,7 +51,8 @@ public sealed class ConversationHistoryBudgetTests
         var count = ConversationService.TruncateToolResults(history, 1_000);
 
         Assert.Equal(0, count);
-        Assert.Equal("small", ((FunctionResultContent)history[2].Items[0]).Result);
+        Assert.Equal("small", history[2].Content);
+        Assert.Equal("small", ((FunctionResultContent)history[2].Items[1]).Result);
     }
 
     [Fact]
@@ -106,11 +114,60 @@ public sealed class ConversationHistoryBudgetTests
         ConversationService.TrimHistory(history, maxMessages: 20, maxTokens: 500);
 
         Assert.DoesNotContain(history, m => m.Role == AuthorRole.Tool);
+        Assert.Equal(2, history.Count);
         Assert.Equal("next question", history[^1].Content);
     }
 
     [Fact]
-    public void EstimateTokens_CountsToolResultText()
+    public void TrimHistory_DropsWholeTurnsAndKeepsCurrentTurn()
+    {
+        var history = NewHistory();
+        history.AddUserMessage("q1");
+        history.AddAssistantMessage(new string('a', 4_000));
+        history.AddUserMessage("q2");
+        AddToolTurn(history, "call-2", new string('r', 40_000));
+        history.AddAssistantMessage("a2");
+
+        // The current turn alone is ~10k tokens; it stays whole even though it exceeds the budget.
+        ConversationService.TrimHistory(history, maxMessages: 20, maxTokens: 500);
+
+        Assert.Equal(AuthorRole.System, history[0].Role);
+        Assert.Equal(AuthorRole.User, history[1].Role);
+        Assert.Equal("q2", history[1].Content);
+        Assert.Equal(5, history.Count);
+        Assert.Equal("a2", history[^1].Content);
+    }
+
+    [Fact]
+    public void TrimHistory_CountCapCutsAtTurnBoundary()
+    {
+        var history = NewHistory();
+        for (var i = 0; i < 4; i++)
+        {
+            history.AddUserMessage($"q{i}");
+            history.AddAssistantMessage($"a{i}");
+        }
+
+        // 8 messages, cap 5: dropping only 3 would start history with an assistant reply.
+        ConversationService.TrimHistory(history, maxMessages: 5, maxTokens: 100_000);
+
+        Assert.Equal(AuthorRole.User, history[1].Role);
+        Assert.Equal("q2", history[1].Content);
+        Assert.Equal(5, history.Count);
+    }
+
+    [Fact]
+    public void EstimateTokens_CountsToolResultOnce()
+    {
+        var text = new string('z', 4_000);
+        var message = new ChatMessageContent(AuthorRole.Tool, text);
+        message.Items.Add(new FunctionResultContent("Recall", "Knowledge", "c", text));
+
+        Assert.Equal(1_000, ConversationService.EstimateTokens(message));
+    }
+
+    [Fact]
+    public void EstimateTokens_CountsBareToolResult()
     {
         var message = new ChatMessageContent(
             AuthorRole.Tool, [new FunctionResultContent("Recall", "Knowledge", "c", new string('z', 4_000))]);

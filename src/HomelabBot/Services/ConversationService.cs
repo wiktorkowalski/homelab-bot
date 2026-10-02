@@ -308,6 +308,8 @@ public sealed class ConversationService
 
     // SK auto function invocation (KernelService) appends tool results straight into the cached
     // history, so they are capped here, at the next Add* call, before any later request re-sends them.
+    // SK builds each tool message with the result twice: a TextContent (message.Content, also
+    // serialized into telemetry) and a FunctionResultContent (sent to the model). Both get capped.
     internal static int TruncateToolResults(ChatHistory history, int maxChars)
     {
         var truncated = 0;
@@ -319,24 +321,28 @@ public sealed class ConversationService
                 continue;
             }
 
+            var changed = false;
             for (var i = 0; i < message.Items.Count; i++)
             {
-                if (message.Items[i] is not FunctionResultContent result)
+                switch (message.Items[i])
                 {
-                    continue;
-                }
+                    case TextContent text when text.Text is { } body && body.Length > maxChars:
+                        text.Text = Truncate(body, maxChars);
+                        changed = true;
+                        break;
 
-                var text = ResultText(result);
-                if (text is null || text.Length <= maxChars)
-                {
-                    continue;
+                    // Result is get-only, so swap in a new item with the same call id; the id pairs
+                    // it with the assistant's tool call and must survive.
+                    case FunctionResultContent result when ResultText(result) is { } body && body.Length > maxChars:
+                        message.Items[i] = new FunctionResultContent(
+                            result.FunctionName, result.PluginName, result.CallId, Truncate(body, maxChars));
+                        changed = true;
+                        break;
                 }
+            }
 
-                // Result is get-only, so swap in a new item with the same call id; the id pairs it
-                // with the assistant's tool call and must survive.
-                var marker = $"\n[truncated: kept {maxChars} of {text.Length} chars]";
-                message.Items[i] = new FunctionResultContent(
-                    result.FunctionName, result.PluginName, result.CallId, text[..maxChars] + marker);
+            if (changed)
+            {
                 truncated++;
             }
         }
@@ -344,31 +350,36 @@ public sealed class ConversationService
         return truncated;
     }
 
-    // Drops the oldest messages (never the system prompt at index 0, never the newest message)
-    // until both the message-count and the approximate token limits hold.
+    // Drops whole turns from the front (never the system prompt at index 0) until the message-count
+    // and approximate token limits hold. A turn starts at a user message; cutting mid-turn would
+    // leave history opening with an assistant or an orphaned tool result, which the API rejects.
+    // The current turn (from the last user message on) is never dropped, even when it alone
+    // exceeds the budget.
     internal static int TrimHistory(ChatHistory history, int maxMessages, int maxTokens)
     {
-        var removed = 0;
         var tokens = 0;
         for (var i = 1; i < history.Count; i++)
         {
             tokens += EstimateTokens(history[i]);
         }
 
-        while (history.Count > 2 && (history.Count - 1 > maxMessages || tokens > maxTokens))
+        var protectedFrom = LastUserIndex(history);
+        if (protectedFrom < 1)
         {
-            tokens -= EstimateTokens(history[1]);
-            history.RemoveAt(1);
-            removed++;
+            protectedFrom = history.Count - 1;
+        }
 
-            // A tool result whose assistant tool call was just dropped is an orphan, and the API
-            // rejects a request that contains one.
-            while (history.Count > 2 && history[1].Role == AuthorRole.Tool)
+        var removed = 0;
+        while (protectedFrom > 1 && (history.Count - 1 > maxMessages || tokens > maxTokens))
+        {
+            do
             {
                 tokens -= EstimateTokens(history[1]);
                 history.RemoveAt(1);
+                protectedFrom--;
                 removed++;
             }
+            while (protectedFrom > 1 && history[1].Role != AuthorRole.User);
         }
 
         return removed;
@@ -376,7 +387,9 @@ public sealed class ConversationService
 
     internal static int EstimateTokens(ChatMessageContent message)
     {
-        var chars = 0;
+        var textChars = 0;
+        var resultChars = 0;
+        var callChars = 0;
         var hasText = false;
 
         foreach (var item in message.Items)
@@ -384,19 +397,19 @@ public sealed class ConversationService
             switch (item)
             {
                 case TextContent text:
-                    chars += text.Text?.Length ?? 0;
+                    textChars += text.Text?.Length ?? 0;
                     hasText = true;
                     break;
                 case FunctionResultContent result:
-                    chars += ResultText(result)?.Length ?? 0;
+                    resultChars += ResultText(result)?.Length ?? 0;
                     break;
                 case FunctionCallContent call:
-                    chars += call.FunctionName.Length;
+                    callChars += call.FunctionName.Length;
                     if (call.Arguments is not null)
                     {
                         foreach (var arg in call.Arguments)
                         {
-                            chars += arg.Key.Length + (arg.Value?.ToString()?.Length ?? 0);
+                            callChars += arg.Key.Length + (arg.Value?.ToString()?.Length ?? 0);
                         }
                     }
 
@@ -404,14 +417,25 @@ public sealed class ConversationService
             }
         }
 
-        // Content mirrors the first TextContent item; count it only when no item covered it.
-        if (!hasText)
+        // An SK tool message carries the same result as text and as FunctionResultContent; count it once.
+        return (callChars + (hasText ? textChars : resultChars)) / 4;
+    }
+
+    private static int LastUserIndex(ChatHistory history)
+    {
+        for (var i = history.Count - 1; i >= 1; i--)
         {
-            chars += message.Content?.Length ?? 0;
+            if (history[i].Role == AuthorRole.User)
+            {
+                return i;
+            }
         }
 
-        return chars / 4;
+        return -1;
     }
+
+    private static string Truncate(string text, int maxChars) =>
+        $"{text[..maxChars]}\n[truncated: kept {maxChars} of {text.Length} chars]";
 
     // SK stores auto-invoked results as strings already; ToString covers anything else without
     // the serializer throwing on an odd object graph.

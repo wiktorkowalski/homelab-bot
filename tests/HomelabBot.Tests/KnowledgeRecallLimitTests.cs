@@ -1,3 +1,4 @@
+using HomelabBot.Data.Entities;
 using HomelabBot.Plugins;
 using HomelabBot.Services;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -91,7 +92,7 @@ public sealed class KnowledgeRecallLimitTests : IClassFixture<DatabaseFixture>
     }
 
     [Fact]
-    public async Task RecallAsync_LimitMarksOnlyReturnedFactsAsUsed()
+    public async Task RecallAsync_LimitStillRefreshesLastUsedOnCappedFacts()
     {
         var topic = $"used-{Guid.NewGuid():N}";
         await _service.RememberFactAsync(topic, "high", confidence: 0.9);
@@ -103,7 +104,63 @@ public sealed class KnowledgeRecallLimitTests : IClassFixture<DatabaseFixture>
         Assert.Equal("high", results[0].Fact);
 
         await using var db = await _fixture.DbContextFactory.CreateDbContextAsync();
-        var untouched = await db.Knowledge.FindAsync(low.Id);
-        Assert.Null(untouched!.LastUsed);
+        var capped = await db.Knowledge.FindAsync(low.Id);
+        Assert.NotNull(capped!.LastUsed);
+    }
+
+    [Fact]
+    public async Task RecallAsync_NewerFactWinsConfidenceTie()
+    {
+        var topic = $"tie-{Guid.NewGuid():N}";
+        await _service.RememberFactAsync(topic, "older");
+        await _service.RememberFactAsync(topic, "newer");
+
+        var results = await _service.RecallAsync(topic, limit: 1);
+
+        Assert.Equal("newer", Assert.Single(results).Fact);
+    }
+
+    [Fact]
+    public async Task RecallKnowledge_WhitespaceTopicTreatedAsEmpty()
+    {
+        var result = await _plugin.RecallKnowledge("   ");
+
+        Assert.Contains("What I know about the homelab", result);
+        Assert.True(FactLines(result) <= KnowledgePlugin.MaxFactsWithoutTopic);
+    }
+
+    [Fact]
+    public void FormatKnowledgeFacts_CountCapStillPrintsEveryTopic()
+    {
+        List<Knowledge> facts =
+        [
+            new() { Topic = "a", Fact = "fact a" },
+            new() { Topic = "b", Fact = "fact b" },
+            new() { Topic = "c", Fact = "fact c" },
+        ];
+
+        var result = KnowledgePlugin.FormatKnowledgeFacts(facts, "heading", moreFacts: true);
+
+        Assert.Contains("fact a", result);
+        Assert.Contains("fact b", result);
+        Assert.Contains("fact c", result);
+        Assert.Contains(KnowledgePlugin.TruncationNote, result);
+    }
+
+    [Fact]
+    public void FormatKnowledgeFacts_ShortensFactThatCrossesBudget()
+    {
+        List<Knowledge> facts =
+        [
+            new() { Topic = "a", Fact = "short" },
+            new() { Topic = "a", Fact = new string('y', 10_000) },
+        ];
+
+        var result = KnowledgePlugin.FormatKnowledgeFacts(facts, "heading", moreFacts: false);
+
+        Assert.Contains("- yyyy", result);
+        Assert.Contains("…", result);
+        Assert.True(result.Length < 4096);
+        Assert.Contains(KnowledgePlugin.TruncationNote, result);
     }
 }

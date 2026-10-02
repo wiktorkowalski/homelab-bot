@@ -15,6 +15,7 @@ public sealed class KnowledgePlugin
     internal const int MaxFactsPerTopic = 30;
     internal const int MaxFactsWithoutTopic = 15;
     internal const int MaxRecallChars = 3_500;
+    internal const int MinFactLineChars = 40;
     internal const string TruncationNote =
         "_More facts exist. Use SmartRecallKnowledge with a specific question, or recall a narrower topic._";
 
@@ -46,9 +47,10 @@ public sealed class KnowledgePlugin
     public async Task<string> RecallKnowledge(
         [Description("Topic to recall (e.g., 'docker', 'loki', 'network', 'alias'). Required in practice: an empty topic returns only the top facts, not the whole knowledge base.")] string? topic = null)
     {
+        topic = string.IsNullOrWhiteSpace(topic) ? null : topic.Trim();
         _logger.LogInformation("Recalling knowledge for topic: {Topic}", topic ?? "all");
 
-        var limit = string.IsNullOrWhiteSpace(topic) ? MaxFactsWithoutTopic : MaxFactsPerTopic;
+        var limit = topic is null ? MaxFactsWithoutTopic : MaxFactsPerTopic;
 
         // One extra row tells us whether the cap cut anything off without a separate count query.
         var facts = await _knowledgeService.RecallAsync(topic, includeStale: false, limit: limit + 1);
@@ -60,14 +62,14 @@ public sealed class KnowledgePlugin
                 : "I don't have any knowledge stored yet. Use /discover to learn about the homelab.";
         }
 
-        var truncated = facts.Count > limit;
-        if (truncated)
+        var moreFacts = facts.Count > limit;
+        if (moreFacts)
         {
             facts = facts.Take(limit).ToList();
             _logger.LogDebug("Knowledge recall for {Topic} capped at {Limit} facts", topic ?? "all", limit);
         }
 
-        return FormatKnowledgeFacts(facts, $"What I know about {topic ?? "the homelab"}", truncated);
+        return FormatKnowledgeFacts(facts, $"What I know about {topic ?? "the homelab"}", moreFacts);
     }
 
     [KernelFunction]
@@ -86,7 +88,7 @@ public sealed class KnowledgePlugin
             return $"No relevant knowledge found for: {query}";
         }
 
-        return FormatKnowledgeFacts(facts, $"Relevant knowledge for \"{query}\"", truncated: false);
+        return FormatKnowledgeFacts(facts, $"Relevant knowledge for \"{query}\"", moreFacts: false);
     }
 
     [KernelFunction]
@@ -150,18 +152,18 @@ public sealed class KnowledgePlugin
 
     // Caps the text as well as the fact count: a few long facts can still flood the chat history,
     // and /knowledge puts this string into a Discord embed description (4096-char limit).
-    internal static string FormatKnowledgeFacts(List<Data.Entities.Knowledge> facts, string heading, bool truncated)
+    internal static string FormatKnowledgeFacts(List<Data.Entities.Knowledge> facts, string heading, bool moreFacts)
     {
         var sb = new StringBuilder();
         sb.AppendLine($"**{heading}:**\n");
 
-        var byTopic = facts.GroupBy(f => f.Topic);
-        foreach (var group in byTopic)
+        var budgetHit = false;
+        foreach (var group in facts.GroupBy(f => f.Topic))
         {
             var topicHeader = $"**{group.Key}**";
-            if (sb.Length + topicHeader.Length > MaxRecallChars)
+            if (sb.Length + topicHeader.Length + MinFactLineChars > MaxRecallChars)
             {
-                truncated = true;
+                budgetHit = true;
                 break;
             }
 
@@ -173,16 +175,25 @@ public sealed class KnowledgePlugin
                 var confidence = fact.Confidence < 0.5 ? " (uncertain)" : "";
                 var warning = stale ? " ⚠️" : "";
                 var line = $"- {fact.Fact}{confidence}{warning}";
-                if (sb.Length + line.Length > MaxRecallChars)
+
+                var room = MaxRecallChars - sb.Length;
+                if (line.Length > room)
                 {
-                    truncated = true;
+                    // Shorten the fact that crosses the budget instead of dropping it, unless too
+                    // little room is left for the fragment to carry meaning.
+                    if (room >= MinFactLineChars)
+                    {
+                        sb.AppendLine(line[..(room - 2)] + "…");
+                    }
+
+                    budgetHit = true;
                     break;
                 }
 
                 sb.AppendLine(line);
             }
 
-            if (truncated)
+            if (budgetHit)
             {
                 break;
             }
@@ -190,7 +201,7 @@ public sealed class KnowledgePlugin
             sb.AppendLine();
         }
 
-        if (truncated)
+        if (moreFacts || budgetHit)
         {
             sb.AppendLine();
             sb.AppendLine(TruncationNote);
