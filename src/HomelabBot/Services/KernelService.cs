@@ -1,3 +1,5 @@
+using System.ClientModel;
+using System.ClientModel.Primitives;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text.Json;
@@ -7,6 +9,7 @@ using HomelabBot.Plugins;
 using Microsoft.Extensions.Options;
 using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.ChatCompletion;
+using OpenAI;
 
 namespace HomelabBot.Services;
 
@@ -119,10 +122,11 @@ public sealed class KernelService
 
         var builder = Kernel.CreateBuilder();
 
-        builder.AddOpenAIChatCompletion(
-            modelId: config.Value.OpenRouterModel,
-            apiKey: config.Value.OpenRouterApiKey,
-            endpoint: new Uri(config.Value.OpenRouterEndpoint));
+        var clientOptions = new OpenAIClientOptions { Endpoint = new Uri(config.Value.OpenRouterEndpoint) };
+        clientOptions.AddPolicy(new OpenRouterAttributionPolicy(), PipelinePosition.PerCall);
+        var openAIClient = new OpenAIClient(new ApiKeyCredential(config.Value.OpenRouterApiKey), clientOptions);
+
+        builder.AddOpenAIChatCompletion(config.Value.OpenRouterModel, openAIClient);
 
         builder.Plugins.AddFromObject(dockerPlugin, "Docker");
         builder.Plugins.AddFromObject(prometheusPlugin, "Prometheus");
