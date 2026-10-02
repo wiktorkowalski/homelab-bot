@@ -13,6 +13,6 @@ public sealed record LlmTokenUsage
 
     public int? CacheWriteTokens { get; init; }
 
-    // Billed requests summed; 0 means no per-round usage was captured.
+    // Billed LLM requests during the interaction; 0 means no per-round usage was captured.
     public int Rounds { get; init; }
 }

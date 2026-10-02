@@ -76,10 +76,18 @@ internal sealed class OpenRouterUsagePolicy : PipelinePolicy
         var scope = TokenUsageScope.Current;
         var response = message.Response;
 
-        // Outside a scope (title generation) nobody consumes the numbers. Unbuffered (streaming)
-        // bodies cannot be read here without consuming the stream the caller needs.
-        if (scope is null || response is null || response.IsError || !message.BufferResponse)
+        // Outside a scope (title generation) nobody consumes the numbers, so skip parsing. Error
+        // responses are not billed.
+        if (scope is null || response is null || response.IsError)
         {
+            return;
+        }
+
+        // Unbuffered (streaming) bodies cannot be read without consuming the caller's stream.
+        if (!message.BufferResponse)
+        {
+            scope.AddMissedRound();
+            _logger.LogDebug("OpenRouter response is streamed; usage for this round not recorded");
             return;
         }
 
@@ -90,12 +98,14 @@ internal sealed class OpenRouterUsagePolicy : PipelinePolicy
         }
         catch (InvalidOperationException ex)
         {
+            scope.AddMissedRound();
             _logger.LogDebug(ex, "OpenRouter response body not buffered; usage for this round not recorded");
             return;
         }
 
         if (!TryParseUsage(body, out var prompt, out var completion, out var cached, out var cacheWrite))
         {
+            scope.AddMissedRound();
             _logger.LogDebug("OpenRouter response had no readable usage; round not recorded");
             return;
         }

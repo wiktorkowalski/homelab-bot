@@ -1,5 +1,6 @@
 using System.ClientModel;
 using System.ClientModel.Primitives;
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
@@ -10,13 +11,18 @@ namespace HomelabBot.Services;
 // https://openrouter.ai/docs/features/prompt-caching
 internal sealed class OpenRouterPromptCachePolicy : PipelinePolicy
 {
-    private const string AnthropicModelPrefix = "anthropic/";
+    internal const string AnthropicModelPrefix = "anthropic/";
+
+    // SK sends this placeholder when the history holds tool calls but no tools are offered.
+    private const string PlaceholderToolName = "NonInvocableTool";
 
     private readonly ILogger _logger;
+    private readonly bool _enabled;
 
-    public OpenRouterPromptCachePolicy(ILogger logger)
+    public OpenRouterPromptCachePolicy(string modelId, ILogger logger)
     {
         _logger = logger;
+        _enabled = IsAnthropic(modelId);
     }
 
     public override void Process(PipelineMessage message, IReadOnlyList<PipelinePolicy> pipeline, int currentIndex)
@@ -31,72 +37,106 @@ internal sealed class OpenRouterPromptCachePolicy : PipelinePolicy
         return ProcessNextAsync(message, pipeline, currentIndex);
     }
 
-    // Returns null when the body must pass through unchanged. Two breakpoints:
-    // - the system message: tools render before system, so this caches tools + system prompt;
-    // - top-level automatic caching: moves with the growing tool-round history, so each round
-    //   reads the previous round's prefix.
+    // Returns null when the body must pass through unchanged (skipReason says why, if unexpected).
+    // Explicit breakpoints, not top-level automatic caching: OpenRouter documents automatic caching
+    // for a named provider list only, but explicit blocks for all Anthropic-compatible providers.
+    // - system message: tools render before system, so this caches tools + system prompt, reused
+    //   by every round and by other interactions within the TTL;
+    // - last message: only when real tools are offered, so the next tool round reads this round's
+    //   prefix. A single-round request would pay the 1.25x write for nothing.
     internal static BinaryData? TryAddCacheControl(BinaryData body, out string? skipReason)
     {
         skipReason = null;
 
-        JsonNode? root;
-        try
+        if (!TryParseObject(body, out var request, out skipReason))
         {
-            root = JsonNode.Parse(body);
-        }
-        catch (JsonException)
-        {
-            skipReason = "body is not JSON";
-            return null;
-        }
-
-        if (root is not JsonObject request)
-        {
-            skipReason = "body is not a JSON object";
             return null;
         }
 
         // Non-Anthropic models ignore or reject cache_control; not an unexpected shape.
-        if (!IsAnthropicModel(request))
+        if (request["model"] is not JsonValue modelValue
+            || !modelValue.TryGetValue<string>(out var model)
+            || !IsAnthropic(model))
         {
             return null;
         }
 
-        if (request["messages"] is not JsonArray messages)
+        if (request["messages"] is not JsonArray messages || messages.Count == 0)
         {
-            skipReason = "no messages array";
+            skipReason = "no messages";
             return null;
         }
 
-        if (messages.Count > 0
-            && messages[0] is JsonObject first
-            && first["role"] is JsonValue role
-            && role.TryGetValue<string>(out var roleName)
-            && roleName == "system")
+        var systemMarked = HasRole(messages[0], "system") && TryMark(messages[0]!.AsObject());
+        if (HasRole(messages[0], "system") && !systemMarked)
         {
-            if (!TryMarkSystemMessage(first))
-            {
-                skipReason = "system message content has an unexpected shape";
-                return null;
-            }
+            skipReason = "system message content has an unexpected shape";
+            return null;
         }
 
-        request["cache_control"] ??= Ephemeral();
+        var lastIndex = messages.Count - 1;
+        var tailMarked = lastIndex > 0
+            && OffersRealTools(request)
+            && messages[lastIndex] is JsonObject last
+            && (HasRole(last, "user") || HasRole(last, "tool"))
+            && TryMark(last);
 
-        return BinaryData.FromString(request.ToJsonString());
+        return systemMarked || tailMarked ? BinaryData.FromString(request.ToJsonString()) : null;
     }
 
-    private static bool IsAnthropicModel(JsonObject request) =>
-        request["model"] is JsonValue modelValue
-        && modelValue.TryGetValue<string>(out var model)
-        && model.StartsWith(AnthropicModelPrefix, StringComparison.OrdinalIgnoreCase);
+    private static bool IsAnthropic(string model) =>
+        model.StartsWith(AnthropicModelPrefix, StringComparison.OrdinalIgnoreCase);
 
-    private static bool TryMarkSystemMessage(JsonObject systemMessage)
+    private static bool TryParseObject(
+        BinaryData body, [NotNullWhen(true)] out JsonObject? request, out string? skipReason)
     {
-        switch (systemMessage["content"])
+        request = null;
+        skipReason = null;
+        try
+        {
+            if (JsonNode.Parse(body) is JsonObject parsed)
+            {
+                request = parsed;
+                return true;
+            }
+
+            skipReason = "body is not a JSON object";
+            return false;
+        }
+        catch (JsonException)
+        {
+            skipReason = "body is not JSON";
+            return false;
+        }
+    }
+
+    private static bool HasRole(JsonNode? message, string role) =>
+        message is JsonObject obj
+        && obj["role"] is JsonValue value
+        && value.TryGetValue<string>(out var name)
+        && name == role;
+
+    private static bool OffersRealTools(JsonObject request)
+    {
+        if (request["tool_choice"] is JsonValue choice
+            && choice.TryGetValue<string>(out var choiceName)
+            && choiceName == "none")
+        {
+            return false;
+        }
+
+        return request["tools"] is JsonArray tools
+            && tools.Any(t => t?["function"]?["name"] is JsonValue name
+                && name.TryGetValue<string>(out var toolName)
+                && toolName != PlaceholderToolName);
+    }
+
+    private static bool TryMark(JsonObject message)
+    {
+        switch (message["content"])
         {
             case JsonValue text when text.TryGetValue<string>(out var value):
-                systemMessage["content"] = new JsonArray(
+                message["content"] = new JsonArray(
                     new JsonObject
                     {
                         ["type"] = "text",
@@ -120,8 +160,11 @@ internal sealed class OpenRouterPromptCachePolicy : PipelinePolicy
 
     private void Apply(PipelineMessage message)
     {
+        // Configured model decides before the body is buffered and parsed.
         var content = message.Request.Content;
-        if (content is null || !string.Equals(message.Request.Method, "POST", StringComparison.OrdinalIgnoreCase))
+        if (!_enabled
+            || content is null
+            || !string.Equals(message.Request.Method, "POST", StringComparison.OrdinalIgnoreCase))
         {
             return;
         }

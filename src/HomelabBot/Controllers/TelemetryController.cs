@@ -57,6 +57,9 @@ public class TelemetryController : ControllerBase
                 Success = i.Success,
                 PromptTokens = i.PromptTokens,
                 CompletionTokens = i.CompletionTokens,
+                CachedPromptTokens = i.CachedPromptTokens,
+                CacheWriteTokens = i.CacheWriteTokens,
+                LlmRounds = i.LlmRounds,
                 LatencyMs = i.LatencyMs,
                 Timestamp = i.Timestamp,
                 ToolCallCount = i.ToolCalls.Count
@@ -180,6 +183,9 @@ public record LlmInteractionDto
     public bool Success { get; init; }
     public int? PromptTokens { get; init; }
     public int? CompletionTokens { get; init; }
+    public int? CachedPromptTokens { get; init; }
+    public int? CacheWriteTokens { get; init; }
+    public int? LlmRounds { get; init; }
     public long LatencyMs { get; init; }
     public DateTime Timestamp { get; init; }
     public int ToolCallCount { get; init; }

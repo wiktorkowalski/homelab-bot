@@ -100,13 +100,49 @@ public sealed class TelemetryService
         LlmTokenUsage? usage = null,
         CancellationToken ct = default)
     {
+        if (!await SaveFailureAsync(interactionId, errorMessage, latencyMs, usage, ct))
+        {
+            return;
+        }
+
+        _logger.LogError(
+            "LLM interaction failed: {InteractionId}, error: {Error}, latency: {LatencyMs}ms",
+            interactionId, errorMessage, latencyMs);
+    }
+
+    // Best effort on purpose: runs after the caller's token is cancelled, so it uses its own
+    // token and must never replace the OperationCanceledException the caller rethrows.
+    public async Task TryLogInteractionCancelledAsync(int interactionId, long latencyMs, LlmTokenUsage usage)
+    {
+        try
+        {
+            if (await SaveFailureAsync(interactionId, "Cancelled", latencyMs, usage, CancellationToken.None))
+            {
+                _logger.LogInformation(
+                    "LLM interaction cancelled: {InteractionId}, tokens: {PromptTokens}+{CompletionTokens} over {LlmRounds} rounds, latency: {LatencyMs}ms",
+                    interactionId, usage.PromptTokens, usage.CompletionTokens, usage.Rounds, latencyMs);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to record cancelled LLM interaction {InteractionId}", interactionId);
+        }
+    }
+
+    private async Task<bool> SaveFailureAsync(
+        int interactionId,
+        string errorMessage,
+        long latencyMs,
+        LlmTokenUsage? usage,
+        CancellationToken ct)
+    {
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
 
         var interaction = await db.LlmInteractions.FindAsync([interactionId], ct);
         if (interaction is null)
         {
             _logger.LogWarning("Interaction {InteractionId} not found for error logging", interactionId);
-            return;
+            return false;
         }
 
         interaction.Success = false;
@@ -124,10 +160,7 @@ public sealed class TelemetryService
         }
 
         await db.SaveChangesAsync(ct);
-
-        _logger.LogError(
-            "LLM interaction failed: {InteractionId}, error: {Error}, latency: {LatencyMs}ms",
-            interactionId, errorMessage, latencyMs);
+        return true;
     }
 
     public async Task LogToolCallAsync(

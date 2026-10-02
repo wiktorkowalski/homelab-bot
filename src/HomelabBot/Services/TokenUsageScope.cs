@@ -1,13 +1,14 @@
 namespace HomelabBot.Services;
 
-// Collects usage of every HTTP round of one interaction. SK auto function invocation sends one
-// billed request per tool round but only surfaces the last response's usage to the caller.
+// Collects usage of every billed LLM request during one interaction. SK auto function invocation
+// sends one request per tool round but only surfaces the last response's usage to the caller.
 internal sealed class TokenUsageScope : IDisposable
 {
     private static readonly AsyncLocal<TokenUsageScope?> CurrentScope = new();
 
     private readonly TokenUsageScope? _parent;
     private int _rounds;
+    private int _missedRounds;
     private int _promptTokens;
     private int _completionTokens;
     private int _cachedPromptTokens;
@@ -16,6 +17,7 @@ internal sealed class TokenUsageScope : IDisposable
     // Cache fields are only meaningful when the provider reported them at least once; null keeps
     // "not reported" distinct from "reported zero".
     private int _cacheDetailsReported;
+    private int _disposed;
 
     private TokenUsageScope(TokenUsageScope? parent)
     {
@@ -23,6 +25,9 @@ internal sealed class TokenUsageScope : IDisposable
     }
 
     public static TokenUsageScope? Current => CurrentScope.Value;
+
+    // Rounds whose response carried no readable usage; the sum undercounts when this is > 0.
+    public int MissedRounds => Volatile.Read(ref _missedRounds);
 
     // Synchronous on purpose: an AsyncLocal set inside an async method does not flow back to
     // the caller, so the caller's flow must set it.
@@ -47,6 +52,8 @@ internal sealed class TokenUsageScope : IDisposable
         }
     }
 
+    public void AddMissedRound() => Interlocked.Increment(ref _missedRounds);
+
     public LlmTokenUsage Snapshot()
     {
         var rounds = Volatile.Read(ref _rounds);
@@ -66,5 +73,29 @@ internal sealed class TokenUsageScope : IDisposable
         };
     }
 
-    public void Dispose() => CurrentScope.Value = _parent;
+    // A nested scope's requests were billed inside the outer interaction too, so roll them up.
+    public void Dispose()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) == 1)
+        {
+            return;
+        }
+
+        CurrentScope.Value = _parent;
+        _parent?.Merge(this);
+    }
+
+    private void Merge(TokenUsageScope child)
+    {
+        Interlocked.Add(ref _rounds, Volatile.Read(ref child._rounds));
+        Interlocked.Add(ref _missedRounds, Volatile.Read(ref child._missedRounds));
+        Interlocked.Add(ref _promptTokens, Volatile.Read(ref child._promptTokens));
+        Interlocked.Add(ref _completionTokens, Volatile.Read(ref child._completionTokens));
+        Interlocked.Add(ref _cachedPromptTokens, Volatile.Read(ref child._cachedPromptTokens));
+        Interlocked.Add(ref _cacheWriteTokens, Volatile.Read(ref child._cacheWriteTokens));
+        if (Volatile.Read(ref child._cacheDetailsReported) == 1)
+        {
+            Interlocked.Exchange(ref _cacheDetailsReported, 1);
+        }
+    }
 }

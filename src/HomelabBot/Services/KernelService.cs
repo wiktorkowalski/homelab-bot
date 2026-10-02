@@ -124,7 +124,8 @@ public sealed class KernelService
 
         var clientOptions = new OpenAIClientOptions { Endpoint = new Uri(config.Value.OpenRouterEndpoint) };
         clientOptions.AddPolicy(new OpenRouterAttributionPolicy(), PipelinePosition.PerCall);
-        clientOptions.AddPolicy(new OpenRouterPromptCachePolicy(logger), PipelinePosition.PerCall);
+        clientOptions.AddPolicy(
+            new OpenRouterPromptCachePolicy(config.Value.OpenRouterModel, logger), PipelinePosition.PerCall);
         clientOptions.AddPolicy(new OpenRouterUsagePolicy(logger), PipelinePosition.PerCall);
         var openAIClient = new OpenAIClient(new ApiKeyCredential(config.Value.OpenRouterApiKey), clientOptions);
 
@@ -257,7 +258,7 @@ public sealed class KernelService
             },
         };
 
-        // Sums usage over every tool round (and every retry attempt): each is a separately billed request.
+        // Sums usage of every billed LLM request in this interaction: tool rounds, retries, nested tool calls.
         using var usageScope = TokenUsageScope.Begin();
 
         try
@@ -304,13 +305,18 @@ public sealed class KernelService
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
+            sw.Stop();
+
+            // Rounds before the cancel were billed; record them even though the caller's token is dead.
+            await _telemetryService.TryLogInteractionCancelledAsync(
+                interaction.Id, sw.ElapsedMilliseconds, ResolveUsage(usageScope, null));
             throw;
         }
         catch (Exception ex)
         {
             sw.Stop();
             await _telemetryService.LogInteractionErrorAsync(
-                interaction.Id, ex.Message, sw.ElapsedMilliseconds, usageScope.Snapshot(), ct);
+                interaction.Id, ex.Message, sw.ElapsedMilliseconds, ResolveUsage(usageScope, null), ct);
             _logger.LogError(ex, "Error processing message for thread {ThreadId}", threadId);
             activity?.SetTag("langfuse.observation.level", "ERROR");
             activity?.SetTag("langfuse.observation.status_message", ex.Message);
@@ -579,20 +585,40 @@ public sealed class KernelService
         return (null, null);
     }
 
-    // Per-round totals when the pipeline policy captured them; otherwise the final response's
-    // usage, which undercounts tool rounds but beats recording nothing.
-    private LlmTokenUsage ResolveUsage(TokenUsageScope scope, ChatMessageContent? response)
+    // Per-round totals when the pipeline policy captured every round. When some round had no
+    // readable usage the sum undercounts, so never store less than the final response reports.
+    internal static LlmTokenUsage ResolveUsage(
+        LlmTokenUsage scopeUsage, int missedRounds, ChatMessageContent? response, ILogger logger)
     {
-        var usage = scope.Snapshot();
-        if (usage.Rounds > 0)
+        if (scopeUsage.Rounds > 0 && missedRounds == 0)
         {
-            return usage;
+            return scopeUsage;
         }
 
-        _logger.LogDebug("No per-round usage captured; falling back to final response usage");
-        var (promptTokens, completionTokens) = ExtractTokenUsage(response);
-        return new LlmTokenUsage { PromptTokens = promptTokens, CompletionTokens = completionTokens };
+        var (finalPrompt, finalCompletion) = ExtractTokenUsage(response);
+
+        if (missedRounds == 0)
+        {
+            logger.LogDebug("No per-round usage captured; falling back to final response usage");
+            return new LlmTokenUsage { PromptTokens = finalPrompt, CompletionTokens = finalCompletion };
+        }
+
+        logger.LogDebug(
+            "{MissedRounds} of {TotalRounds} LLM rounds had no readable usage; storing the larger of round sum and final response usage",
+            missedRounds, scopeUsage.Rounds + missedRounds);
+
+        return scopeUsage with
+        {
+            PromptTokens = Max(scopeUsage.PromptTokens, finalPrompt),
+            CompletionTokens = Max(scopeUsage.CompletionTokens, finalCompletion),
+            Rounds = scopeUsage.Rounds + missedRounds,
+        };
     }
+
+    private static int? Max(int? a, int? b) => a is null ? b : b is null ? a : Math.Max(a.Value, b.Value);
+
+    private LlmTokenUsage ResolveUsage(TokenUsageScope scope, ChatMessageContent? response) =>
+        ResolveUsage(scope.Snapshot(), scope.MissedRounds, response, _logger);
 
     internal static string StripThinkingBlocks(string text)
     {

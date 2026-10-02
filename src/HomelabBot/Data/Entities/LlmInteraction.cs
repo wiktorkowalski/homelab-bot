@@ -32,8 +32,8 @@ public sealed class LlmInteraction
     // Subset of PromptTokens written to the provider's prompt cache (billed at a premium).
     public int? CacheWriteTokens { get; set; }
 
-    // Billed requests behind this interaction (tool rounds + retries); 0 means usage came from
-    // the final response only.
+    // Billed LLM requests during the interaction (tool rounds, retries, nested tool LLM calls).
+    // 0 means usage came from the final response only; null means not recorded.
     public int? LlmRounds { get; set; }
 
     public long LatencyMs { get; set; }
