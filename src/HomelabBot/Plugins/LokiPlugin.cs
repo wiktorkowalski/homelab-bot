@@ -106,20 +106,30 @@ public sealed class LokiPlugin
 
     [KernelFunction]
     [McpServerTool(Name = "QueryLoki")]
-    [Description("Executes a LogQL query against Loki. Returns matching log entries. Use ListLabels first to discover available labels.")]
+    [Description("Executes a LogQL query against Loki over a time range (default last hour, max 30d). Returns matching log entries. Use ListLabels first to discover available labels.")]
     public async Task<string> QueryLogs(
         [Description("LogQL query expression (e.g., '{compose_service=\"traefik\"}' or '{container_name=~\".*traefik.*\"}')")] string query,
-        [Description("Maximum number of log entries to return (default 100)")] int limit = 100)
+        [Description("Maximum number of log entries to return (default 100)")] int limit = 100,
+        [Description("Time range to look back, like '30m', '1h', '24h', '7d' (default 1h, max 30d)")] string since = "1h")
     {
-        _logger.LogInformation("Executing LogQL query: {Query}", query);
+        if (!LogQl.TryParseLookback(since, out var lookback, out var sinceError))
+        {
+            _logger.LogWarning("Rejected LogQL query with invalid time range {Since}", since);
+            return sinceError;
+        }
+
+        // Query text stays at Debug: at Information it lands in Loki and matches later log searches.
+        _logger.LogInformation("Executing LogQL query since {Since} with limit {Limit}", since, limit);
+        _logger.LogDebug("LogQL query text: {Query}", query);
 
         try
         {
             var encodedQuery = Uri.EscapeDataString(query);
-            var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() * 1_000_000;
-            var oneHourAgo = DateTimeOffset.UtcNow.AddHours(-1).ToUnixTimeMilliseconds() * 1_000_000;
+            var nowUtc = DateTimeOffset.UtcNow;
+            var now = nowUtc.ToUnixTimeMilliseconds() * 1_000_000;
+            var start = nowUtc.Subtract(lookback).ToUnixTimeMilliseconds() * 1_000_000;
 
-            var url = $"{_baseUrl}/loki/api/v1/query_range?query={encodedQuery}&start={oneHourAgo}&end={now}&limit={limit}";
+            var url = $"{_baseUrl}/loki/api/v1/query_range?query={encodedQuery}&start={start}&end={now}&limit={limit}";
             var response = await _httpClient.GetAsync(url);
             response.EnsureSuccessStatusCode();
 
@@ -131,7 +141,7 @@ public sealed class LokiPlugin
             }
 
             var sb = new StringBuilder();
-            sb.AppendLine($"Query: `{query}` (last hour, limit {limit})\n");
+            sb.AppendLine($"Query: `{query}` (last {since}, limit {limit})\n");
 
             var allLogs = new List<(DateTime Timestamp, string Stream, string Message)>();
 
@@ -177,7 +187,7 @@ public sealed class LokiPlugin
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error executing LogQL query: {Query}", query);
+            _logger.LogError(ex, "Error executing LogQL query since {Since}: {Query}", since, query);
             return $"Error executing query: {ex.Message}";
         }
     }
@@ -281,14 +291,35 @@ public sealed class LokiPlugin
         return $"No logs found for container '{containerName}' in the last {since}. Try using ListLabels and ListLabelValues to discover available labels.";
     }
 
-    public async Task<Dictionary<string, long>> GetErrorCountsByContainerAsync(string since = "1h", string? containerName = null)
-    {
-        var normalizedSince = NormalizeDuration(since);
-        var selector = string.IsNullOrWhiteSpace(containerName)
-            ? "{compose_service=~\".+\"}"
-            : $"{{compose_service=\"{containerName}\"}}";
-        var query = $"sum by (compose_service) (count_over_time({selector} |~ \"(?i)(\\\\berror\\\\b|\\\\bexception\\\\b|\\\\bfailed\\\\b|\\\\bfailure\\\\b)\" [{normalizedSince}]))";
+    // Keyword match kept for AnomalyDetectionService: switching it to levels would shift its thresholds.
+    public Task<Dictionary<string, long>> GetErrorCountsByContainerAsync(string since = "1h", string? containerName = null) =>
+        GetLineCountsByContainerAsync(
+            "|~ \"(?i)(\\\\berror\\\\b|\\\\bexception\\\\b|\\\\bfailed\\\\b|\\\\bfailure\\\\b)\"",
+            since,
+            containerName);
 
+    internal static string BuildServiceSelector(string? containerName) =>
+        string.IsNullOrWhiteSpace(containerName)
+            ? "{compose_service=~\".+\"}"
+            : $"{{compose_service={LogQl.QuoteString(containerName)}}}";
+
+    internal static string BuildErrorLevelCountQuery(string normalizedSince, string? containerName) =>
+        BuildCountQuery($"|~ {LogQl.QuoteString(LogQl.ErrorLevelRegex)}", normalizedSince, containerName);
+
+    internal static string BuildSearchQuery(string searchText, string? containerName) =>
+        $"{BuildServiceSelector(containerName)} {LogQl.ContainsIgnoreCaseFilter(searchText)}";
+
+    private static string BuildCountQuery(string lineFilter, string normalizedSince, string? containerName) =>
+        $"sum by (compose_service) (count_over_time({BuildServiceSelector(containerName)} {lineFilter} [{normalizedSince}]))";
+
+    private Task<Dictionary<string, long>> GetErrorLevelCountsByContainerAsync(string since, string? containerName) =>
+        QueryCountsByContainerAsync(BuildErrorLevelCountQuery(NormalizeDuration(since), containerName));
+
+    private Task<Dictionary<string, long>> GetLineCountsByContainerAsync(string lineFilter, string since, string? containerName) =>
+        QueryCountsByContainerAsync(BuildCountQuery(lineFilter, NormalizeDuration(since), containerName));
+
+    private async Task<Dictionary<string, long>> QueryCountsByContainerAsync(string query)
+    {
         var encodedQuery = Uri.EscapeDataString(query);
         var url = $"{_baseUrl}/loki/api/v1/query?query={encodedQuery}";
         var response = await _httpClient.GetAsync(url);
@@ -327,7 +358,7 @@ public sealed class LokiPlugin
 
     [KernelFunction]
     [McpServerTool(Name = "CountErrors")]
-    [Description("Counts error/exception log lines per container over a time window. Returns container name and error count.")]
+    [Description("Counts log lines at error level or above (ERR/FTL, error/fatal/critical/panic level token) per container over a time window. Returns container name and error count.")]
     public async Task<string> CountErrorsByContainer(
         [Description("Time range like '1h', '6h', '24h' (default 1h)")] string since = "1h",
         string? containerName = null)
@@ -336,7 +367,7 @@ public sealed class LokiPlugin
 
         try
         {
-            var entries = await GetErrorCountsByContainerAsync(since, containerName);
+            var entries = await GetErrorLevelCountsByContainerAsync(since, containerName);
 
             if (entries.Count == 0)
             {
@@ -467,13 +498,11 @@ public sealed class LokiPlugin
         [Description("Time range like '1h', '30m', '15m' (default 1h)")] string since = "1h",
         string? containerName = null)
     {
-        _logger.LogInformation("Searching logs for '{SearchText}' since {Since}", searchText, since);
+        // Search text stays at Debug: at Information it lands in Loki and matches the next search.
+        _logger.LogInformation("Searching logs since {Since}", since);
+        _logger.LogDebug("Log search text: {SearchText}", searchText);
 
-        var escapedText = searchText.Replace("\"", "\\\"");
-        var selector = string.IsNullOrWhiteSpace(containerName)
-            ? "{compose_service=~\".+\"}"
-            : $"{{compose_service=\"{containerName}\"}}";
-        var query = $"{selector} |~ \"(?i){escapedText}\"";
+        var query = BuildSearchQuery(searchText, containerName);
         var duration = FormattingHelpers.ParseDuration(since);
 
         try
