@@ -24,6 +24,9 @@ public sealed class DiscordBotService : BackgroundService
     private SlashCommandsExtension? _slashCommands;
     private int _reconnectAttempts;
     private long _disconnectedSinceTicks;
+
+    // Unlike _disconnectedSinceTicks, reconnect attempts and watchdog rebuilds don't re-stamp this, so a lasting outage stays visible to /health
+    private long _outageSinceTicks;
     private static readonly TimeSpan WatchdogInterval = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan MaxDisconnectedDuration = TimeSpan.FromMinutes(5);
     private readonly TaskCompletionSource _readyTcs = new();
@@ -52,8 +55,7 @@ public sealed class DiscordBotService : BackgroundService
 
     private SmartNotificationService SmartNotification => _smartNotification.Value;
 
-    // A routine close → resume flags the gateway down for about a second; Docker's health
-    // retries absorb that, so no grace period here.
+    // A routine close → resume flags the gateway down for about a second; DiscordHealthCheck applies the grace period.
     public bool IsReady =>
         _readyTcs.Task.IsCompletedSuccessfully && Interlocked.Read(ref _disconnectedSinceTicks) == 0;
 
@@ -61,7 +63,7 @@ public sealed class DiscordBotService : BackgroundService
     {
         get
         {
-            var since = Interlocked.Read(ref _disconnectedSinceTicks);
+            var since = Interlocked.Read(ref _outageSinceTicks);
             return since == 0 ? null : DateTime.UtcNow - new DateTime(since, DateTimeKind.Utc);
         }
     }
@@ -127,6 +129,7 @@ public sealed class DiscordBotService : BackgroundService
 
         // Down until Ready proves otherwise, so a handshake that never completes still trips the watchdog
         Interlocked.Exchange(ref _disconnectedSinceTicks, DateTime.UtcNow.Ticks);
+        Interlocked.CompareExchange(ref _outageSinceTicks, DateTime.UtcNow.Ticks, 0);
         await _client.ConnectAsync();
         _reconnectAttempts = 0; // Reset on successful connect
 
@@ -181,10 +184,18 @@ public sealed class DiscordBotService : BackgroundService
 
     private bool IsCurrent(DiscordClient client) => ReferenceEquals(client, _client);
 
-    private void MarkDisconnected() =>
-        Interlocked.CompareExchange(ref _disconnectedSinceTicks, DateTime.UtcNow.Ticks, 0);
+    private void MarkDisconnected()
+    {
+        var now = DateTime.UtcNow.Ticks;
+        Interlocked.CompareExchange(ref _disconnectedSinceTicks, now, 0);
+        Interlocked.CompareExchange(ref _outageSinceTicks, now, 0);
+    }
 
-    private void MarkConnected() => Interlocked.Exchange(ref _disconnectedSinceTicks, 0);
+    private void MarkConnected()
+    {
+        Interlocked.Exchange(ref _disconnectedSinceTicks, 0);
+        Interlocked.Exchange(ref _outageSinceTicks, 0);
+    }
 
     private Task OnReady(DiscordClient client, ReadyEventArgs e)
     {
