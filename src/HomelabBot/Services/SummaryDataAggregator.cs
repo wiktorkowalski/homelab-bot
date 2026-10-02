@@ -22,6 +22,9 @@ public sealed class SummaryDataAggregator
     private DailySummaryData? _cachedData;
     private DateTime _cacheExpiry = DateTime.MinValue;
 
+    // Guarded by _cacheLock: aggregation only runs while it is held.
+    private IReadOnlySet<string> _confirmedParked = new HashSet<string>(StringComparer.Ordinal);
+
     public SummaryDataAggregator(
         PrometheusQueryService prometheus,
         MikroTikPlugin mikrotikPlugin,
@@ -145,12 +148,12 @@ public sealed class SummaryDataAggregator
 
             var statuses = containers.Select(c => new Models.ContainerStatus
             {
-                Name = c.Names.FirstOrDefault()?.TrimStart('/') ?? c.ID[..12],
+                Name = GetContainerName(c),
                 State = c.State,
                 Health = c.Status
             }).ToList();
 
-            return await MarkParkedContainersAsync(statuses, ct);
+            return await MarkParkedContainersAsync(statuses, containers, ct);
         }
         catch (Exception ex)
         {
@@ -160,58 +163,65 @@ public sealed class SummaryDataAggregator
     }
 
     internal static List<Models.ContainerStatus> MarkParked(
-        List<Models.ContainerStatus> containers,
-        IReadOnlyList<StoppedContainerInfo> stopped,
-        int graceHours)
-    {
-        var stoppedFor = stopped
-            .GroupBy(s => s.Name, StringComparer.Ordinal)
-            .ToDictionary(g => g.Key, g => g.First().StoppedFor, StringComparer.Ordinal);
-
-        return containers
-            .Select(c => stoppedFor.TryGetValue(c.Name, out var duration)
-                && StoppedContainerGrace.IsParked(duration, graceHours)
-                    ? new Models.ContainerStatus
-                    {
-                        Name = c.Name,
-                        State = c.State,
-                        Health = c.Health,
-                        IsParked = true,
-                    }
-                    : c)
+        List<Models.ContainerStatus> containers, IReadOnlySet<string> parkedNames) =>
+        containers
+            .Select(c => parkedNames.Contains(c.Name) ? c with { IsParked = true } : c)
             .ToList();
-    }
+
+    private static string GetContainerName(ContainerListResponse container) =>
+        container.Names.FirstOrDefault()?.TrimStart('/') ?? container.ID[..12];
 
     private async Task<List<Models.ContainerStatus>> MarkParkedContainersAsync(
-        List<Models.ContainerStatus> containers, CancellationToken ct)
+        List<Models.ContainerStatus> statuses, IList<ContainerListResponse> containers, CancellationToken ct)
     {
-        if (!containers.Any(c => c.State is "exited" or "dead"))
+        var stoppedContainers = containers.Where(c => c.State is "exited" or "dead").ToList();
+        if (stoppedContainers.Count == 0)
         {
-            return containers;
+            _confirmedParked = new HashSet<string>(StringComparer.Ordinal);
+            return statuses;
         }
 
+        // Inspect the containers already listed — a second list call could see a different set.
+        var stopped = await Task.WhenAll(stoppedContainers.Select(c => ReadStoppedInfoAsync(c, ct)));
+        var graceHours = _anomalyConfig.CurrentValue.StoppedContainerGraceHours;
+        var resolution = StoppedContainerGrace.Resolve(stopped, _confirmedParked, graceHours);
+        _confirmedParked = resolution.Confirmed;
+
+        var bridgedCount = resolution.Parked.Count - resolution.Confirmed.Count;
+        if (bridgedCount > 0)
+        {
+            _logger.LogWarning(
+                "Exit time unavailable for {Count} previously parked container(s), keeping them parked for one cycle",
+                bridgedCount);
+        }
+
+        if (resolution.Parked.Count > 0)
+        {
+            _logger.LogDebug(
+                "Treating {Count} container(s) stopped longer than {GraceHours}h as parked",
+                resolution.Parked.Count, graceHours);
+        }
+
+        return MarkParked(statuses, resolution.Parked);
+    }
+
+    private async Task<StoppedContainerInfo> ReadStoppedInfoAsync(ContainerListResponse container, CancellationToken ct)
+    {
+        var name = GetContainerName(container);
         try
         {
-            // Same stopped-duration source as the anomaly check, so all three agree on "parked".
-            var stopped = await _dockerPlugin.GetStoppedContainersAsync(ct);
-            var graceHours = _anomalyConfig.CurrentValue.StoppedContainerGraceHours;
-            var marked = MarkParked(containers, stopped, graceHours);
-
-            var parkedCount = marked.Count(c => c.IsParked);
-            if (parkedCount > 0)
+            // Same exit-time source as the anomaly check, so both agree on "parked".
+            return new StoppedContainerInfo
             {
-                _logger.LogDebug(
-                    "Treating {Count} container(s) stopped longer than {GraceHours}h as parked",
-                    parkedCount, graceHours);
-            }
-
-            return marked;
+                Name = name,
+                StoppedFor = await _dockerPlugin.GetStoppedDurationAsync(container.ID, name, ct),
+            };
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex) when (!ct.IsCancellationRequested)
         {
-            // Fail toward counting: a lost exit time must not hide a real outage from the score.
-            _logger.LogWarning(ex, "Failed to read stopped container durations, counting all stopped containers");
-            return containers;
+            // Unknown exit time is resolved by the one-cycle bridge, then counts as down.
+            _logger.LogWarning(ex, "Failed to read exit time for stopped container {Container}", name);
+            return new StoppedContainerInfo { Name = name };
         }
     }
 
