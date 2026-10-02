@@ -52,8 +52,7 @@ public sealed class DiscordBotService : BackgroundService
 
     private SmartNotificationService SmartNotification => _smartNotification.Value;
 
-    // A routine close → resume flags the gateway down for about a second; Docker's health
-    // retries absorb that, so no grace period here.
+    // A routine close → resume flags the gateway down for about a second; DiscordHealthCheck applies the grace period.
     public bool IsReady =>
         _readyTcs.Task.IsCompletedSuccessfully && Interlocked.Read(ref _disconnectedSinceTicks) == 0;
 
