@@ -1,29 +1,28 @@
-﻿using Microsoft.EntityFrameworkCore.Migrations;
+using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
 
-namespace HomelabBot.Data.Migrations
+namespace HomelabBot.Data.Migrations;
+
+/// <inheritdoc />
+public partial class AddBlastRadiusToHealthScore : Migration
 {
     /// <inheritdoc />
-    public partial class AddBlastRadiusToHealthScore : Migration
+    protected override void Up(MigrationBuilder migrationBuilder)
     {
-        /// <inheritdoc />
-        protected override void Up(MigrationBuilder migrationBuilder)
-        {
-            migrationBuilder.AddColumn<int>(
-                name: "BlastRadiusDeductions",
-                table: "HealthScoreHistory",
-                type: "INTEGER",
-                nullable: false,
-                defaultValue: 0);
-        }
+        migrationBuilder.AddColumn<int>(
+            name: "BlastRadiusDeductions",
+            table: "HealthScoreHistory",
+            type: "INTEGER",
+            nullable: false,
+            defaultValue: 0);
+    }
 
-        /// <inheritdoc />
-        protected override void Down(MigrationBuilder migrationBuilder)
-        {
-            migrationBuilder.DropColumn(
-                name: "BlastRadiusDeductions",
-                table: "HealthScoreHistory");
-        }
+    /// <inheritdoc />
+    protected override void Down(MigrationBuilder migrationBuilder)
+    {
+        migrationBuilder.DropColumn(
+            name: "BlastRadiusDeductions",
+            table: "HealthScoreHistory");
     }
 }

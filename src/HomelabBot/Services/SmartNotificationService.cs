@@ -56,10 +56,8 @@ public sealed class SmartNotificationService
         }
     }
 
-    /// <summary>
-    /// Start a new daily cycle. Runs end-of-cycle learning on the previous conversation,
-    /// then resets context for the new day.
-    /// </summary>
+    // Start a new daily cycle. Runs end-of-cycle learning on the previous conversation,
+    // then resets context for the new day.
     public async Task StartNewCycleAsync(CancellationToken ct)
     {
         string previousDate;
@@ -95,10 +93,8 @@ public sealed class SmartNotificationService
         _logger.LogInformation("Started new notification cycle {Date}", _currentCycleDate);
     }
 
-    /// <summary>
-    /// Evaluate a finding: investigate via LLM, decide if it's worth notifying the owner.
-    /// Returns true if a notification was actually sent.
-    /// </summary>
+    // Evaluate a finding: investigate via LLM, decide if it's worth notifying the owner.
+    // Returns true if a notification was actually sent.
     public async Task<bool> EvaluateAndNotifyAsync(NotificationCandidate candidate, CancellationToken ct)
     {
         _logger.LogInformation("Evaluating notification candidate from {Source}: {Summary}",
@@ -162,9 +158,7 @@ public sealed class SmartNotificationService
         return await SendNotificationAsync(report, candidate);
     }
 
-    /// <summary>
-    /// Handle "Normal, ignore in future" button press.
-    /// </summary>
+    // Handle "Normal, ignore in future" button press.
     public async Task HandleSuppressFeedbackAsync(string issueType, string description)
     {
         await _knowledgeService.RememberFactAsync(
