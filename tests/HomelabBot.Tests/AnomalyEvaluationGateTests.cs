@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Text.Json;
 using HomelabBot.Configuration;
 using HomelabBot.Models;
 using HomelabBot.Models.Prometheus;
@@ -49,48 +51,144 @@ public class AnomalyEvaluationGateTests
         return plugin;
     }
 
+    private static readonly DateTime Now = new(2026, 8, 5, 12, 0, 0, DateTimeKind.Utc);
+
+    private static readonly TimeSpan RepeatAfter = TimeSpan.FromHours(6);
+
+    private static AnomalyDetectionService.EvaluatedFingerprint Evaluated(string fingerprint, DateTime at) =>
+        new() { Fingerprint = fingerprint, EvaluatedAt = at };
+
     [Fact]
     public void ShouldEvaluate_FingerprintChanged_ReturnsTrue()
     {
-        var now = new DateTime(2026, 8, 5, 12, 0, 0, DateTimeKind.Utc);
+        var recent = new[] { Evaluated("Container:Critical:14", Now.AddMinutes(-5)) };
 
-        var result = AnomalyDetectionService.ShouldEvaluate(
-            "Container:Critical:10", "Container:Critical:14", now.AddMinutes(-5), now, TimeSpan.FromHours(6));
-
-        Assert.True(result);
+        Assert.True(AnomalyDetectionService.ShouldEvaluate("Container:Critical:10", recent, Now, RepeatAfter));
     }
 
     [Fact]
     public void ShouldEvaluate_SameFingerprintInsideWindow_ReturnsFalse()
     {
-        var now = new DateTime(2026, 8, 5, 12, 0, 0, DateTimeKind.Utc);
+        var recent = new[] { Evaluated("Container:Critical:10", Now.AddHours(-1)) };
 
-        var result = AnomalyDetectionService.ShouldEvaluate(
-            "Container:Critical:10", "Container:Critical:10", now.AddHours(-1), now, TimeSpan.FromHours(6));
-
-        Assert.False(result);
+        Assert.False(AnomalyDetectionService.ShouldEvaluate("Container:Critical:10", recent, Now, RepeatAfter));
     }
 
     [Fact]
     public void ShouldEvaluate_SameFingerprintAfterWindow_ReturnsTrue()
     {
-        var now = new DateTime(2026, 8, 5, 12, 0, 0, DateTimeKind.Utc);
+        var recent = new[] { Evaluated("Container:Critical:10", Now.AddHours(-6)) };
 
-        var result = AnomalyDetectionService.ShouldEvaluate(
-            "Container:Critical:10", "Container:Critical:10", now.AddHours(-6), now, TimeSpan.FromHours(6));
-
-        Assert.True(result);
+        Assert.True(AnomalyDetectionService.ShouldEvaluate("Container:Critical:10", recent, Now, RepeatAfter));
     }
 
     [Fact]
     public void ShouldEvaluate_NoPreviousEvaluation_ReturnsTrue()
     {
-        var now = new DateTime(2026, 8, 5, 12, 0, 0, DateTimeKind.Utc);
+        Assert.True(AnomalyDetectionService.ShouldEvaluate("Container:Critical:10", [], Now, RepeatAfter));
+    }
 
-        var result = AnomalyDetectionService.ShouldEvaluate(
-            "Container:Critical:10", null, null, now, TimeSpan.FromHours(6));
+    [Fact]
+    public void ShouldEvaluate_ZeroRepeatWindow_AlwaysReturnsTrue()
+    {
+        var recent = new[] { Evaluated("A", Now) };
 
-        Assert.True(result);
+        Assert.True(AnomalyDetectionService.ShouldEvaluate("A", recent, Now, TimeSpan.Zero));
+    }
+
+    [Fact]
+    public void ShouldEvaluate_FlickerBackToEarlierSet_SkipsThirdEvaluation()
+    {
+        List<AnomalyDetectionService.EvaluatedFingerprint> recent = [];
+
+        Assert.True(AnomalyDetectionService.ShouldEvaluate("A", recent, Now, RepeatAfter));
+        recent = AnomalyDetectionService.RecordEvaluation(recent, "A", Now, 5);
+
+        Assert.True(AnomalyDetectionService.ShouldEvaluate("B", recent, Now.AddMinutes(5), RepeatAfter));
+        recent = AnomalyDetectionService.RecordEvaluation(recent, "B", Now.AddMinutes(5), 5);
+
+        Assert.False(AnomalyDetectionService.ShouldEvaluate("A", recent, Now.AddMinutes(10), RepeatAfter));
+        Assert.False(AnomalyDetectionService.ShouldEvaluate("B", recent, Now.AddMinutes(15), RepeatAfter));
+    }
+
+    [Fact]
+    public void ShouldEvaluate_EarlierSetExpired_ReturnsTrue()
+    {
+        var recent = new[]
+        {
+            Evaluated("A", Now.AddHours(-7)),
+            Evaluated("B", Now.AddMinutes(-5)),
+        };
+
+        Assert.True(AnomalyDetectionService.ShouldEvaluate("A", recent, Now, RepeatAfter));
+    }
+
+    [Fact]
+    public void RecordEvaluation_OverCapacity_EvictsOldest()
+    {
+        List<AnomalyDetectionService.EvaluatedFingerprint> recent = [];
+        foreach (var (fingerprint, i) in new[] { "A", "B", "C", "D", "E", "F" }.Select((f, i) => (f, i)))
+        {
+            recent = AnomalyDetectionService.RecordEvaluation(recent, fingerprint, Now.AddMinutes(i), 5);
+        }
+
+        Assert.Equal(["B", "C", "D", "E", "F"], recent.Select(e => e.Fingerprint));
+        Assert.True(AnomalyDetectionService.ShouldEvaluate("A", recent, Now.AddMinutes(10), RepeatAfter));
+    }
+
+    [Fact]
+    public void RecordEvaluation_SameFingerprintAgain_MovesToNewestWithoutDuplicate()
+    {
+        var recent = new[] { Evaluated("A", Now.AddHours(-7)), Evaluated("B", Now.AddHours(-1)) };
+
+        var updated = AnomalyDetectionService.RecordEvaluation(recent, "A", Now, 5);
+
+        Assert.Equal(["B", "A"], updated.Select(e => e.Fingerprint));
+        Assert.Equal(Now, updated[^1].EvaluatedAt);
+    }
+
+    [Fact]
+    public void ParseRecentEvaluations_OnlyLegacyKeys_SeedsRing()
+    {
+        var evaluatedAt = Now.AddHours(-1);
+
+        var recent = AnomalyDetectionService.ParseRecentEvaluations(
+            null, "A", evaluatedAt.ToString("O", CultureInfo.InvariantCulture), NullLogger.Instance);
+
+        var entry = Assert.Single(recent);
+        Assert.Equal("A", entry.Fingerprint);
+        Assert.Equal(evaluatedAt, entry.EvaluatedAt);
+        Assert.False(AnomalyDetectionService.ShouldEvaluate("A", recent, Now, RepeatAfter));
+    }
+
+    [Theory]
+    [InlineData("", "2026-08-05T11:00:00.0000000Z")]  // legacy persist wrote "" before any evaluation
+    [InlineData("A", null)]                            // no timestamp used to mean "evaluate"
+    [InlineData(null, null)]                           // fresh install
+    public void ParseRecentEvaluations_IncompleteLegacyKeys_ReturnsEmpty(string? fingerprint, string? evaluatedAt)
+    {
+        Assert.Empty(AnomalyDetectionService.ParseRecentEvaluations(null, fingerprint, evaluatedAt, NullLogger.Instance));
+    }
+
+    [Fact]
+    public void ParseRecentEvaluations_RingPresent_IgnoresLegacyKeys()
+    {
+        var ringJson = JsonSerializer.Serialize(new[] { Evaluated("A", Now.AddHours(-2)), Evaluated("B", Now.AddHours(-1)) });
+
+        var recent = AnomalyDetectionService.ParseRecentEvaluations(
+            ringJson, "C", Now.ToString("O", CultureInfo.InvariantCulture), NullLogger.Instance);
+
+        Assert.Equal(["A", "B"], recent.Select(e => e.Fingerprint));
+        Assert.Equal(Now.AddHours(-1), recent[1].EvaluatedAt);
+    }
+
+    [Fact]
+    public void ParseRecentEvaluations_CorruptRing_FallsBackToLegacyKeys()
+    {
+        var recent = AnomalyDetectionService.ParseRecentEvaluations(
+            "{not json", "A", Now.ToString("O", CultureInfo.InvariantCulture), NullLogger.Instance);
+
+        Assert.Equal("A", Assert.Single(recent).Fingerprint);
     }
 
     [Fact]
