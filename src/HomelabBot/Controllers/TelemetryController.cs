@@ -57,6 +57,9 @@ public class TelemetryController : ControllerBase
                 Success = i.Success,
                 PromptTokens = i.PromptTokens,
                 CompletionTokens = i.CompletionTokens,
+                CachedPromptTokens = i.CachedPromptTokens,
+                CacheWriteTokens = i.CacheWriteTokens,
+                LlmRounds = i.LlmRounds,
                 LatencyMs = i.LatencyMs,
                 Timestamp = i.Timestamp,
                 ToolCallCount = i.ToolCalls.Count
@@ -102,6 +105,9 @@ public class TelemetryController : ControllerBase
             Success = item.Success,
             PromptTokens = item.PromptTokens,
             CompletionTokens = item.CompletionTokens,
+            CachedPromptTokens = item.CachedPromptTokens,
+            CacheWriteTokens = item.CacheWriteTokens,
+            LlmRounds = item.LlmRounds,
             LatencyMs = item.LatencyMs,
             Timestamp = item.Timestamp,
             ToolCalls = item.ToolCalls.Select(t => new ToolCallDto
@@ -138,6 +144,8 @@ public class TelemetryController : ControllerBase
         var successfulInteractions = interactions.Count(i => i.Success);
         var totalPromptTokens = interactions.Sum(i => i.PromptTokens ?? 0);
         var totalCompletionTokens = interactions.Sum(i => i.CompletionTokens ?? 0);
+        var totalCachedPromptTokens = interactions.Sum(i => i.CachedPromptTokens ?? 0);
+        var totalCacheWriteTokens = interactions.Sum(i => i.CacheWriteTokens ?? 0);
         var avgLatency = interactions.Count > 0 ? interactions.Average(i => i.LatencyMs) : 0;
 
         var toolCalls = await db.ToolCallLogs
@@ -156,6 +164,8 @@ public class TelemetryController : ControllerBase
             TotalPromptTokens = totalPromptTokens,
             TotalCompletionTokens = totalCompletionTokens,
             TotalTokens = totalPromptTokens + totalCompletionTokens,
+            TotalCachedPromptTokens = totalCachedPromptTokens,
+            TotalCacheWriteTokens = totalCacheWriteTokens,
             AverageLatencyMs = avgLatency,
             TotalToolCalls = totalToolCalls,
             SuccessfulToolCalls = successfulToolCalls,
@@ -173,6 +183,9 @@ public record LlmInteractionDto
     public bool Success { get; init; }
     public int? PromptTokens { get; init; }
     public int? CompletionTokens { get; init; }
+    public int? CachedPromptTokens { get; init; }
+    public int? CacheWriteTokens { get; init; }
+    public int? LlmRounds { get; init; }
     public long LatencyMs { get; init; }
     public DateTime Timestamp { get; init; }
     public int ToolCallCount { get; init; }
@@ -191,6 +204,9 @@ public record LlmInteractionDetailDto
     public bool Success { get; init; }
     public int? PromptTokens { get; init; }
     public int? CompletionTokens { get; init; }
+    public int? CachedPromptTokens { get; init; }
+    public int? CacheWriteTokens { get; init; }
+    public int? LlmRounds { get; init; }
     public long LatencyMs { get; init; }
     public DateTime Timestamp { get; init; }
     public required IReadOnlyList<ToolCallDto> ToolCalls { get; init; }
@@ -218,6 +234,8 @@ public record TelemetryStatsDto
     public int TotalPromptTokens { get; init; }
     public int TotalCompletionTokens { get; init; }
     public int TotalTokens { get; init; }
+    public int TotalCachedPromptTokens { get; init; }
+    public int TotalCacheWriteTokens { get; init; }
     public double AverageLatencyMs { get; init; }
     public int TotalToolCalls { get; init; }
     public int SuccessfulToolCalls { get; init; }

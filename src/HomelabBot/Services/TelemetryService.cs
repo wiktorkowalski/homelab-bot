@@ -58,8 +58,7 @@ public sealed class TelemetryService
     public async Task LogInteractionCompleteAsync(
         int interactionId,
         string response,
-        int? promptTokens,
-        int? completionTokens,
+        LlmTokenUsage usage,
         long latencyMs,
         CancellationToken ct = default)
     {
@@ -74,22 +73,68 @@ public sealed class TelemetryService
 
         interaction.Response = response;
         interaction.Success = true;
-        interaction.PromptTokens = promptTokens;
-        interaction.CompletionTokens = completionTokens;
+        interaction.PromptTokens = usage.PromptTokens;
+        interaction.CompletionTokens = usage.CompletionTokens;
+        interaction.CachedPromptTokens = usage.CachedPromptTokens;
+        interaction.CacheWriteTokens = usage.CacheWriteTokens;
+        interaction.LlmRounds = usage.Rounds;
         interaction.LatencyMs = latencyMs;
 
         await db.SaveChangesAsync(ct);
 
         _logger.LogInformation(
-            "LLM interaction completed: {InteractionId}, tokens: {PromptTokens}+{CompletionTokens}, latency: {LatencyMs}ms",
-            interactionId, promptTokens, completionTokens, latencyMs);
+            "LLM interaction completed: {InteractionId}, tokens: {PromptTokens}+{CompletionTokens} ({CachedPromptTokens} cached, {CacheWriteTokens} cache-written) over {LlmRounds} rounds, latency: {LatencyMs}ms",
+            interactionId,
+            usage.PromptTokens,
+            usage.CompletionTokens,
+            usage.CachedPromptTokens,
+            usage.CacheWriteTokens,
+            usage.Rounds,
+            latencyMs);
     }
 
     public async Task LogInteractionErrorAsync(
         int interactionId,
         string errorMessage,
         long latencyMs,
+        LlmTokenUsage? usage = null,
         CancellationToken ct = default)
+    {
+        if (!await SaveFailureAsync(interactionId, errorMessage, latencyMs, usage, ct))
+        {
+            return;
+        }
+
+        _logger.LogError(
+            "LLM interaction failed: {InteractionId}, error: {Error}, latency: {LatencyMs}ms",
+            interactionId, errorMessage, latencyMs);
+    }
+
+    // Best effort on purpose: runs after the caller's token is cancelled, so it uses its own
+    // token and must never replace the OperationCanceledException the caller rethrows.
+    public async Task TryLogInteractionCancelledAsync(int interactionId, long latencyMs, LlmTokenUsage usage)
+    {
+        try
+        {
+            if (await SaveFailureAsync(interactionId, "Cancelled", latencyMs, usage, CancellationToken.None))
+            {
+                _logger.LogInformation(
+                    "LLM interaction cancelled: {InteractionId}, tokens: {PromptTokens}+{CompletionTokens} over {LlmRounds} rounds, latency: {LatencyMs}ms",
+                    interactionId, usage.PromptTokens, usage.CompletionTokens, usage.Rounds, latencyMs);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to record cancelled LLM interaction {InteractionId}", interactionId);
+        }
+    }
+
+    private async Task<bool> SaveFailureAsync(
+        int interactionId,
+        string errorMessage,
+        long latencyMs,
+        LlmTokenUsage? usage,
+        CancellationToken ct)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
 
@@ -97,18 +142,25 @@ public sealed class TelemetryService
         if (interaction is null)
         {
             _logger.LogWarning("Interaction {InteractionId} not found for error logging", interactionId);
-            return;
+            return false;
         }
 
         interaction.Success = false;
         interaction.ErrorMessage = errorMessage;
         interaction.LatencyMs = latencyMs;
 
-        await db.SaveChangesAsync(ct);
+        // Rounds that completed before the failure were still billed.
+        if (usage is { Rounds: > 0 })
+        {
+            interaction.PromptTokens = usage.PromptTokens;
+            interaction.CompletionTokens = usage.CompletionTokens;
+            interaction.CachedPromptTokens = usage.CachedPromptTokens;
+            interaction.CacheWriteTokens = usage.CacheWriteTokens;
+            interaction.LlmRounds = usage.Rounds;
+        }
 
-        _logger.LogError(
-            "LLM interaction failed: {InteractionId}, error: {Error}, latency: {LatencyMs}ms",
-            interactionId, errorMessage, latencyMs);
+        await db.SaveChangesAsync(ct);
+        return true;
     }
 
     public async Task LogToolCallAsync(
