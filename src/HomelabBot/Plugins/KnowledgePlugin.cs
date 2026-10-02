@@ -10,6 +10,15 @@ namespace HomelabBot.Plugins;
 [McpServerToolType]
 public sealed class KnowledgePlugin
 {
+    // Limits keep one recall from flooding the shared chat history (#119). An empty topic once
+    // returned ~130k chars, which every later call in that thread re-sent.
+    internal const int MaxFactsPerTopic = 30;
+    internal const int MaxFactsWithoutTopic = 15;
+    internal const int MaxRecallChars = 3_500;
+    internal const int MinFactLineChars = 40;
+    internal const string TruncationNote =
+        "_More facts exist. Use SmartRecallKnowledge with a specific question, or recall a narrower topic._";
+
     private readonly KnowledgeService _knowledgeService;
     private readonly ILogger<KnowledgePlugin> _logger;
 
@@ -34,13 +43,17 @@ public sealed class KnowledgePlugin
 
     [KernelFunction]
     [McpServerTool(Name = "SearchKnowledge")]
-    [Description("Recall what you know about a topic. Call this BEFORE taking actions to check existing knowledge.")]
+    [Description("Recall what you know about one specific topic. Call this BEFORE taking actions to check existing knowledge. Always pass a topic; for broad or fuzzy questions use SmartRecallKnowledge instead.")]
     public async Task<string> RecallKnowledge(
-        [Description("Topic to recall (e.g., 'docker', 'loki', 'network', 'alias'). Leave empty for all.")] string? topic = null)
+        [Description("Topic to recall (e.g., 'docker', 'loki', 'network', 'alias'). Required in practice: an empty topic returns only the top facts, not the whole knowledge base.")] string? topic = null)
     {
+        topic = string.IsNullOrWhiteSpace(topic) ? null : topic.Trim();
         _logger.LogInformation("Recalling knowledge for topic: {Topic}", topic ?? "all");
 
-        var facts = await _knowledgeService.RecallAsync(topic, includeStale: true);
+        var limit = topic is null ? MaxFactsWithoutTopic : MaxFactsPerTopic;
+
+        // One extra row tells us whether the cap cut anything off without a separate count query.
+        var facts = await _knowledgeService.RecallAsync(topic, includeStale: false, limit: limit + 1);
 
         if (facts.Count == 0)
         {
@@ -49,7 +62,14 @@ public sealed class KnowledgePlugin
                 : "I don't have any knowledge stored yet. Use /discover to learn about the homelab.";
         }
 
-        return FormatKnowledgeFacts(facts, $"What I know about {topic ?? "the homelab"}");
+        var moreFacts = facts.Count > limit;
+        if (moreFacts)
+        {
+            facts = facts.Take(limit).ToList();
+            _logger.LogDebug("Knowledge recall for {Topic} capped at {Limit} facts", topic ?? "all", limit);
+        }
+
+        return FormatKnowledgeFacts(facts, $"What I know about {topic ?? "the homelab"}", moreFacts);
     }
 
     [KernelFunction]
@@ -68,7 +88,7 @@ public sealed class KnowledgePlugin
             return $"No relevant knowledge found for: {query}";
         }
 
-        return FormatKnowledgeFacts(facts, $"Relevant knowledge for \"{query}\"");
+        return FormatKnowledgeFacts(facts, $"Relevant knowledge for \"{query}\"", moreFacts: false);
     }
 
     [KernelFunction]
@@ -130,25 +150,61 @@ public sealed class KnowledgePlugin
         return $"Marked knowledge about '{factContains}' in {topic} as outdated.";
     }
 
-    private static string FormatKnowledgeFacts(List<Data.Entities.Knowledge> facts, string heading)
+    // Caps the text as well as the fact count: a few long facts can still flood the chat history,
+    // and /knowledge puts this string into a Discord embed description (4096-char limit).
+    internal static string FormatKnowledgeFacts(List<Data.Entities.Knowledge> facts, string heading, bool moreFacts)
     {
         var sb = new StringBuilder();
         sb.AppendLine($"**{heading}:**\n");
 
-        var byTopic = facts.GroupBy(f => f.Topic);
-        foreach (var group in byTopic)
+        var budgetHit = false;
+        foreach (var group in facts.GroupBy(f => f.Topic))
         {
-            sb.AppendLine($"**{group.Key}**");
+            var topicHeader = $"**{group.Key}**";
+            if (sb.Length + topicHeader.Length + MinFactLineChars > MaxRecallChars)
+            {
+                budgetHit = true;
+                break;
+            }
+
+            sb.AppendLine(topicHeader);
             foreach (var fact in group)
             {
                 var stale = fact.LastVerified.HasValue &&
                     (DateTime.UtcNow - fact.LastVerified.Value).TotalDays > 30;
                 var confidence = fact.Confidence < 0.5 ? " (uncertain)" : "";
                 var warning = stale ? " ⚠️" : "";
-                sb.AppendLine($"- {fact.Fact}{confidence}{warning}");
+                var line = $"- {fact.Fact}{confidence}{warning}";
+
+                var room = MaxRecallChars - sb.Length;
+                if (line.Length > room)
+                {
+                    // Shorten the fact that crosses the budget instead of dropping it, unless too
+                    // little room is left for the fragment to carry meaning.
+                    if (room >= MinFactLineChars)
+                    {
+                        sb.AppendLine(line[..(room - 2)] + "…");
+                    }
+
+                    budgetHit = true;
+                    break;
+                }
+
+                sb.AppendLine(line);
+            }
+
+            if (budgetHit)
+            {
+                break;
             }
 
             sb.AppendLine();
+        }
+
+        if (moreFacts || budgetHit)
+        {
+            sb.AppendLine();
+            sb.AppendLine(TruncationNote);
         }
 
         return sb.ToString();

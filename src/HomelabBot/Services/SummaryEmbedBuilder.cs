@@ -46,13 +46,24 @@ public static class SummaryEmbedBuilder
 
         // Containers
         var runningCount = data.Containers.Count(c => c.State == "running");
-        var stoppedCount = data.Containers.Count(c => c.State != "running");
+        var stoppedCount = data.Containers.Count(c => c.CountsAsDown);
+        var parkedCount = data.Containers.Count(c => c.IsParked);
         var containerText = $"🟢 {runningCount} running";
         if (stoppedCount > 0)
         {
             containerText += $", 🔴 {stoppedCount} stopped";
+        }
+
+        // Parked shown apart from stopped so the counts agree with the health score.
+        if (parkedCount > 0)
+        {
+            containerText += $", 💤 {parkedCount} parked";
+        }
+
+        if (stoppedCount > 0)
+        {
             var stoppedNames = data.Containers
-                .Where(c => c.State != "running")
+                .Where(c => c.CountsAsDown)
                 .Take(3)
                 .Select(c => c.Name);
             containerText += "\n" + string.Join(", ", stoppedNames);
