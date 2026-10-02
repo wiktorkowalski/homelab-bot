@@ -124,8 +124,10 @@ public sealed class HealthScoreBackgroundService : ScheduledBackgroundService
 
     private async Task<int> CalculateBlastRadiusDeductionsAsync(DailySummaryData data, CancellationToken ct)
     {
+        // Parked containers are skipped: their blast radius is a known, accepted state and would
+        // otherwise be re-charged every cycle.
         var stoppedContainers = data.Containers
-            .Where(c => c.State != "running")
+            .Where(c => c.CountsAsDown)
             .ToList();
 
         if (stoppedContainers.Count == 0)

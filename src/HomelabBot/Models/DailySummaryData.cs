@@ -33,6 +33,12 @@ public sealed class ContainerStatus
     public required string State { get; init; }
 
     public string? Health { get; init; }
+
+    // Stopped longer than the grace window: a deliberate state, not a failure.
+    public bool IsParked { get; init; }
+
+    // Internal so JSON consumers of the summary do not get a new field.
+    internal bool CountsAsDown => State != "running" && !IsParked;
 }
 
 public sealed class PoolStatus

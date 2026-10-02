@@ -158,6 +158,29 @@ public class HealthScoreServiceTests : IClassFixture<DatabaseFixture>
     }
 
     [Fact]
+    public void CalculateScore_ParkedContainers_NotDeducted()
+    {
+        var data = new DailySummaryData
+        {
+            Containers =
+            [
+                new ContainerStatus { Name = "app", State = "running" },
+                new ContainerStatus { Name = "sonarr", State = "exited", IsParked = true },
+                new ContainerStatus { Name = "radarr", State = "exited", IsParked = true },
+                new ContainerStatus { Name = "db", State = "exited" },
+            ],
+            Pools = [new PoolStatus { Name = "tank", Health = "ONLINE" }],
+            Router = new RouterStatus(),
+            Monitoring = new MonitoringStatus(),
+            Alerts = [],
+        };
+
+        var result = _service.CalculateScore(data);
+
+        Assert.Equal(_config.StoppedContainerWeight, result.ContainerDeductions);
+    }
+
+    [Fact]
     public void CalculateScore_UnhealthyPools_Deducts()
     {
         var data = new DailySummaryData

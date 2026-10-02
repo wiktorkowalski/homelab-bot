@@ -1,7 +1,9 @@
 using Docker.DotNet;
 using Docker.DotNet.Models;
+using HomelabBot.Configuration;
 using HomelabBot.Models;
 using HomelabBot.Plugins;
+using Microsoft.Extensions.Options;
 
 namespace HomelabBot.Services;
 
@@ -13,6 +15,8 @@ public sealed class SummaryDataAggregator
     private readonly TrueNASPlugin _truenasPlugin;
     private readonly ILogger<SummaryDataAggregator> _logger;
     private readonly HealthScoreService _healthScoreService;
+    private readonly DockerPlugin _dockerPlugin;
+    private readonly IOptionsMonitor<AnomalyDetectionConfiguration> _anomalyConfig;
     private readonly SemaphoreSlim _cacheLock = new(1, 1);
 
     private DailySummaryData? _cachedData;
@@ -23,6 +27,8 @@ public sealed class SummaryDataAggregator
         MikroTikPlugin mikrotikPlugin,
         TrueNASPlugin truenasPlugin,
         HealthScoreService healthScoreService,
+        DockerPlugin dockerPlugin,
+        IOptionsMonitor<AnomalyDetectionConfiguration> anomalyConfig,
         ILogger<SummaryDataAggregator> logger)
     {
         _prometheus = prometheus;
@@ -30,6 +36,8 @@ public sealed class SummaryDataAggregator
         _truenasPlugin = truenasPlugin;
         _logger = logger;
         _healthScoreService = healthScoreService;
+        _dockerPlugin = dockerPlugin;
+        _anomalyConfig = anomalyConfig;
     }
 
     public async Task<DailySummaryData> AggregateAsync(CancellationToken ct = default)
@@ -135,17 +143,75 @@ public sealed class SummaryDataAggregator
             var containers = await dockerClient.Containers.ListContainersAsync(
                 new ContainersListParameters { All = true }, ct);
 
-            return containers.Select(c => new Models.ContainerStatus
+            var statuses = containers.Select(c => new Models.ContainerStatus
             {
                 Name = c.Names.FirstOrDefault()?.TrimStart('/') ?? c.ID[..12],
                 State = c.State,
                 Health = c.Status
             }).ToList();
+
+            return await MarkParkedContainersAsync(statuses, ct);
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to fetch containers");
             return [];
+        }
+    }
+
+    internal static List<Models.ContainerStatus> MarkParked(
+        List<Models.ContainerStatus> containers,
+        IReadOnlyList<StoppedContainerInfo> stopped,
+        int graceHours)
+    {
+        var stoppedFor = stopped
+            .GroupBy(s => s.Name, StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => g.First().StoppedFor, StringComparer.Ordinal);
+
+        return containers
+            .Select(c => stoppedFor.TryGetValue(c.Name, out var duration)
+                && StoppedContainerGrace.IsParked(duration, graceHours)
+                    ? new Models.ContainerStatus
+                    {
+                        Name = c.Name,
+                        State = c.State,
+                        Health = c.Health,
+                        IsParked = true,
+                    }
+                    : c)
+            .ToList();
+    }
+
+    private async Task<List<Models.ContainerStatus>> MarkParkedContainersAsync(
+        List<Models.ContainerStatus> containers, CancellationToken ct)
+    {
+        if (!containers.Any(c => c.State is "exited" or "dead"))
+        {
+            return containers;
+        }
+
+        try
+        {
+            // Same stopped-duration source as the anomaly check, so all three agree on "parked".
+            var stopped = await _dockerPlugin.GetStoppedContainersAsync(ct);
+            var graceHours = _anomalyConfig.CurrentValue.StoppedContainerGraceHours;
+            var marked = MarkParked(containers, stopped, graceHours);
+
+            var parkedCount = marked.Count(c => c.IsParked);
+            if (parkedCount > 0)
+            {
+                _logger.LogDebug(
+                    "Treating {Count} container(s) stopped longer than {GraceHours}h as parked",
+                    parkedCount, graceHours);
+            }
+
+            return marked;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Fail toward counting: a lost exit time must not hide a real outage from the score.
+            _logger.LogWarning(ex, "Failed to read stopped container durations, counting all stopped containers");
+            return containers;
         }
     }
 

@@ -56,7 +56,7 @@ public sealed class HealthScoreService
         alertDeductions += data.Alerts.Count(a => a.Severity == "warning") * cfg.WarningAlertWeight;
 
         // Container deductions
-        var containerDeductions = data.Containers.Count(c => c.State != "running") * cfg.StoppedContainerWeight;
+        var containerDeductions = data.Containers.Count(c => c.CountsAsDown) * cfg.StoppedContainerWeight;
 
         // Pool deductions
         var poolDeductions = data.Pools.Count(p => p.Health != "ONLINE") * cfg.UnhealthyPoolWeight;
