@@ -124,6 +124,8 @@ public sealed class KernelService
 
         var clientOptions = new OpenAIClientOptions { Endpoint = new Uri(config.Value.OpenRouterEndpoint) };
         clientOptions.AddPolicy(new OpenRouterAttributionPolicy(), PipelinePosition.PerCall);
+        clientOptions.AddPolicy(new OpenRouterPromptCachePolicy(logger), PipelinePosition.PerCall);
+        clientOptions.AddPolicy(new OpenRouterUsagePolicy(logger), PipelinePosition.PerCall);
         var openAIClient = new OpenAIClient(new ApiKeyCredential(config.Value.OpenRouterApiKey), clientOptions);
 
         builder.AddOpenAIChatCompletion(config.Value.OpenRouterModel, openAIClient);
@@ -255,6 +257,9 @@ public sealed class KernelService
             },
         };
 
+        // Sums usage over every tool round (and every retry attempt): each is a separately billed request.
+        using var usageScope = TokenUsageScope.Begin();
+
         try
         {
             var response = await InvokeWithRetryAsync(
@@ -279,9 +284,8 @@ public sealed class KernelService
                 // user/assistant alternation on the next request.
                 _conversationService.AddAssistantMessage(threadId, fallback);
 
-                var (emptyPromptTokens, emptyCompletionTokens) = ExtractTokenUsage(response);
                 await _telemetryService.LogInteractionCompleteAsync(
-                    interaction.Id, fallback, emptyPromptTokens, emptyCompletionTokens, sw.ElapsedMilliseconds, ct);
+                    interaction.Id, fallback, ResolveUsage(usageScope, response), sw.ElapsedMilliseconds, ct);
                 activity?.SetTag("langfuse.observation.level", "WARNING");
                 activity?.SetTag("langfuse.trace.output", fallback);
                 return fallback;
@@ -290,10 +294,8 @@ public sealed class KernelService
             var responseText = StripThinkingBlocks(response!.Content!);
             _conversationService.AddAssistantMessage(threadId, responseText);
 
-            var (promptTokens, completionTokens) = ExtractTokenUsage(response);
-
             await _telemetryService.LogInteractionCompleteAsync(
-                interaction.Id, responseText, promptTokens, completionTokens, sw.ElapsedMilliseconds, ct);
+                interaction.Id, responseText, ResolveUsage(usageScope, response), sw.ElapsedMilliseconds, ct);
 
             // Set trace output
             activity?.SetTag("langfuse.trace.output", responseText);
@@ -307,7 +309,8 @@ public sealed class KernelService
         catch (Exception ex)
         {
             sw.Stop();
-            await _telemetryService.LogInteractionErrorAsync(interaction.Id, ex.Message, sw.ElapsedMilliseconds, ct);
+            await _telemetryService.LogInteractionErrorAsync(
+                interaction.Id, ex.Message, sw.ElapsedMilliseconds, usageScope.Snapshot(), ct);
             _logger.LogError(ex, "Error processing message for thread {ThreadId}", threadId);
             activity?.SetTag("langfuse.observation.level", "ERROR");
             activity?.SetTag("langfuse.observation.status_message", ex.Message);
@@ -574,6 +577,21 @@ public sealed class KernelService
         }
 
         return (null, null);
+    }
+
+    // Per-round totals when the pipeline policy captured them; otherwise the final response's
+    // usage, which undercounts tool rounds but beats recording nothing.
+    private LlmTokenUsage ResolveUsage(TokenUsageScope scope, ChatMessageContent? response)
+    {
+        var usage = scope.Snapshot();
+        if (usage.Rounds > 0)
+        {
+            return usage;
+        }
+
+        _logger.LogDebug("No per-round usage captured; falling back to final response usage");
+        var (promptTokens, completionTokens) = ExtractTokenUsage(response);
+        return new LlmTokenUsage { PromptTokens = promptTokens, CompletionTokens = completionTokens };
     }
 
     internal static string StripThinkingBlocks(string text)

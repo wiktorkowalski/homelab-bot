@@ -58,8 +58,7 @@ public sealed class TelemetryService
     public async Task LogInteractionCompleteAsync(
         int interactionId,
         string response,
-        int? promptTokens,
-        int? completionTokens,
+        LlmTokenUsage usage,
         long latencyMs,
         CancellationToken ct = default)
     {
@@ -74,21 +73,31 @@ public sealed class TelemetryService
 
         interaction.Response = response;
         interaction.Success = true;
-        interaction.PromptTokens = promptTokens;
-        interaction.CompletionTokens = completionTokens;
+        interaction.PromptTokens = usage.PromptTokens;
+        interaction.CompletionTokens = usage.CompletionTokens;
+        interaction.CachedPromptTokens = usage.CachedPromptTokens;
+        interaction.CacheWriteTokens = usage.CacheWriteTokens;
+        interaction.LlmRounds = usage.Rounds;
         interaction.LatencyMs = latencyMs;
 
         await db.SaveChangesAsync(ct);
 
         _logger.LogInformation(
-            "LLM interaction completed: {InteractionId}, tokens: {PromptTokens}+{CompletionTokens}, latency: {LatencyMs}ms",
-            interactionId, promptTokens, completionTokens, latencyMs);
+            "LLM interaction completed: {InteractionId}, tokens: {PromptTokens}+{CompletionTokens} ({CachedPromptTokens} cached, {CacheWriteTokens} cache-written) over {LlmRounds} rounds, latency: {LatencyMs}ms",
+            interactionId,
+            usage.PromptTokens,
+            usage.CompletionTokens,
+            usage.CachedPromptTokens,
+            usage.CacheWriteTokens,
+            usage.Rounds,
+            latencyMs);
     }
 
     public async Task LogInteractionErrorAsync(
         int interactionId,
         string errorMessage,
         long latencyMs,
+        LlmTokenUsage? usage = null,
         CancellationToken ct = default)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
@@ -103,6 +112,16 @@ public sealed class TelemetryService
         interaction.Success = false;
         interaction.ErrorMessage = errorMessage;
         interaction.LatencyMs = latencyMs;
+
+        // Rounds that completed before the failure were still billed.
+        if (usage is { Rounds: > 0 })
+        {
+            interaction.PromptTokens = usage.PromptTokens;
+            interaction.CompletionTokens = usage.CompletionTokens;
+            interaction.CachedPromptTokens = usage.CachedPromptTokens;
+            interaction.CacheWriteTokens = usage.CacheWriteTokens;
+            interaction.LlmRounds = usage.Rounds;
+        }
 
         await db.SaveChangesAsync(ct);
 
