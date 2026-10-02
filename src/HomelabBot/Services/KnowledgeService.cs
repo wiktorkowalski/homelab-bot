@@ -10,6 +10,10 @@ namespace HomelabBot.Services;
 
 public sealed class KnowledgeService
 {
+    // Each matched topic contributes at most this many facts, so one big topic cannot crowd out
+    // the others; the plugin caps the formatted text on top.
+    internal const int MaxFactsPerSmartRecallTopic = 30;
+
     private static readonly ActivitySource ActivitySource = TelemetryConstants.ChatActivitySource;
 
     private readonly IDbContextFactory<HomelabDbContext> _dbFactory;
@@ -58,7 +62,7 @@ public sealed class KnowledgeService
         return knowledge;
     }
 
-    public async Task<List<Knowledge>> RecallAsync(string? topic = null, bool includeStale = false)
+    public async Task<List<Knowledge>> RecallAsync(string? topic = null, bool includeStale = false, int? limit = null)
     {
         await using var db = await _dbFactory.CreateDbContextAsync();
 
@@ -69,21 +73,28 @@ public sealed class KnowledgeService
             query = query.Where(k => k.Topic == topic || k.Topic.StartsWith(topic + ":"));
         }
 
-        var facts = await query.OrderByDescending(k => k.Confidence).ToListAsync();
-
-        foreach (var fact in facts)
-        {
-            fact.LastUsed = DateTime.UtcNow;
-        }
-
-        await db.SaveChangesAsync();
+        // LastUsed feeds confidence decay. Refresh every fact the topic matched, as before the
+        // cap existed, so facts cut off by the limit do not quietly decay away.
+        var now = DateTime.UtcNow;
+        await query.ExecuteUpdateAsync(s => s.SetProperty(k => k.LastUsed, now));
 
         if (!includeStale)
         {
-            facts = facts.Where(f => f.Confidence > 0.3).ToList();
+            query = query.Where(k => k.Confidence > 0.3);
         }
 
-        return facts;
+        // Ties on confidence are common (most facts sit at the default); newer facts win them.
+        query = query
+            .OrderByDescending(k => k.Confidence)
+            .ThenByDescending(k => k.LastVerified)
+            .ThenByDescending(k => k.Id);
+
+        if (limit.HasValue)
+        {
+            query = query.Take(limit.Value);
+        }
+
+        return await query.AsNoTracking().ToListAsync();
     }
 
     public async Task<string?> ResolveAliasAsync(string aliasType, string userInput)
@@ -375,7 +386,7 @@ public sealed class KnowledgeService
         var results = new List<Knowledge>();
         foreach (var topic in matchedTopics)
         {
-            var facts = await RecallAsync(topic);
+            var facts = await RecallAsync(topic, limit: MaxFactsPerSmartRecallTopic);
             results.AddRange(facts);
         }
 
