@@ -58,7 +58,7 @@ public sealed class KnowledgeService
         return knowledge;
     }
 
-    public async Task<List<Knowledge>> RecallAsync(string? topic = null, bool includeStale = false)
+    public async Task<List<Knowledge>> RecallAsync(string? topic = null, bool includeStale = false, int? limit = null)
     {
         await using var db = await _dbFactory.CreateDbContextAsync();
 
@@ -69,19 +69,28 @@ public sealed class KnowledgeService
             query = query.Where(k => k.Topic == topic || k.Topic.StartsWith(topic + ":"));
         }
 
-        var facts = await query.OrderByDescending(k => k.Confidence).ToListAsync();
+        if (!includeStale)
+        {
+            query = query.Where(k => k.Confidence > 0.3);
+        }
 
+        query = query.OrderByDescending(k => k.Confidence);
+
+        if (limit.HasValue)
+        {
+            query = query.Take(limit.Value);
+        }
+
+        var facts = await query.ToListAsync();
+
+        // Only facts actually returned count as used. LastUsed feeds confidence decay, so marking
+        // filtered or capped facts would shield them from decay without anyone reading them.
         foreach (var fact in facts)
         {
             fact.LastUsed = DateTime.UtcNow;
         }
 
         await db.SaveChangesAsync();
-
-        if (!includeStale)
-        {
-            facts = facts.Where(f => f.Confidence > 0.3).ToList();
-        }
 
         return facts;
     }
