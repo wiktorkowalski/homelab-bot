@@ -7,12 +7,15 @@ using HomelabBot.Helpers;
 using Microsoft.Extensions.Options;
 using Microsoft.SemanticKernel;
 using ModelContextProtocol.Server;
+using Polly.Timeout;
 
 namespace HomelabBot.Plugins;
 
 [McpServerToolType]
 public sealed class LokiPlugin
 {
+    internal const string HttpClientName = "Loki";
+
     private const string ServiceLabel = "compose_service";
     private const string ContainerLabel = "container_name";
 
@@ -25,7 +28,7 @@ public sealed class LokiPlugin
         IOptions<LokiConfiguration> config,
         ILogger<LokiPlugin> logger)
     {
-        _httpClient = httpClientFactory.CreateClient("Default");
+        _httpClient = httpClientFactory.CreateClient(HttpClientName);
         _logger = logger;
         _baseUrl = config.Value.Host.TrimEnd('/');
     }
@@ -190,6 +193,10 @@ public sealed class LokiPlugin
 
             return sb.ToString();
         }
+        catch (TimeoutRejectedException)
+        {
+            return ReportQueryTimeout(range);
+        }
         catch (Exception ex)
         {
             // Query text only at Debug, also on failure, so the bot's own logs never match it.
@@ -285,6 +292,11 @@ public sealed class LokiPlugin
 
                 return sb.ToString();
             }
+            catch (TimeoutRejectedException)
+            {
+                // The next selector would wait for the same slow Loki.
+                return ReportQueryTimeout(range);
+            }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Loki query failed for container {Container}", containerName);
@@ -371,6 +383,16 @@ public sealed class LokiPlugin
             containerName,
             FormattingHelpers.FormatCompactDuration(lookback));
         return null;
+    }
+
+    internal static string BuildTimeoutMessage(string range) =>
+        $"Loki did not answer within {LogQl.QueryTimeout.TotalSeconds:F0}s for the last {range}. Use a shorter time range.";
+
+    // The window is the caller's choice and the retry policy already logged the timeout: Warning, no stack trace.
+    private string ReportQueryTimeout(string range)
+    {
+        _logger.LogWarning("Loki query over {Range} timed out after {TimeoutSeconds}s", range, LogQl.QueryTimeout.TotalSeconds);
+        return BuildTimeoutMessage(range);
     }
 
     // Rejects invalid or too-long ranges up front; the caller returns the error text to the tool user.
@@ -473,6 +495,10 @@ public sealed class LokiPlugin
 
             return sb.ToString();
         }
+        catch (TimeoutRejectedException)
+        {
+            return ReportQueryTimeout(range);
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error counting errors by container");
@@ -552,6 +578,10 @@ public sealed class LokiPlugin
             }
 
             return sb.ToString();
+        }
+        catch (TimeoutRejectedException)
+        {
+            return ReportQueryTimeout(since);
         }
         catch (Exception ex)
         {
@@ -664,6 +694,10 @@ public sealed class LokiPlugin
             }
 
             return sb.ToString();
+        }
+        catch (TimeoutRejectedException)
+        {
+            return ReportQueryTimeout(range);
         }
         catch (Exception ex)
         {

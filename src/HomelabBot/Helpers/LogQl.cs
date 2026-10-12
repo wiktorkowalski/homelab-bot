@@ -5,8 +5,11 @@ namespace HomelabBot.Helpers;
 
 internal static class LogQl
 {
-    // The "Default" HttpClient has a 10s per-attempt timeout; wider scans time out and retry.
+    // A 7d error count takes about 20s on the busiest container and about 25s over all services (2026-10).
     internal static readonly TimeSpan MaxLookback = TimeSpan.FromDays(7);
+
+    // Attempt limit of the "Loki" HttpClient: about twice the slowest scan that MaxLookback allows.
+    internal static readonly TimeSpan QueryTimeout = TimeSpan.FromSeconds(60);
 
     // Matches level tokens, not error words in message text. Bare-word formats are uppercase-only and
     // anchored to the first 40 chars; JSON and logfmt keys cannot be anchored (key order varies).
