@@ -13,6 +13,9 @@ namespace HomelabBot.Plugins;
 [McpServerToolType]
 public sealed class LokiPlugin
 {
+    private const string ServiceLabel = "compose_service";
+    private const string ContainerLabel = "container_name";
+
     private readonly HttpClient _httpClient;
     private readonly ILogger<LokiPlugin> _logger;
     private readonly string _baseUrl;
@@ -297,7 +300,7 @@ public sealed class LokiPlugin
         QueryCountsByContainerAsync(BuildCountQuery(
             "|~ \"(?i)(\\\\berror\\\\b|\\\\bexception\\\\b|\\\\bfailed\\\\b|\\\\bfailure\\\\b)\"",
             NormalizeDuration(since),
-            containerName));
+            BuildServiceSelector(containerName)));
 
     internal static string BuildServiceSelector(string? containerName) =>
         string.IsNullOrWhiteSpace(containerName)
@@ -318,14 +321,57 @@ public sealed class LokiPlugin
         ];
     }
 
-    internal static string BuildErrorLevelCountQuery(string logQlRange, string? containerName) =>
-        BuildCountQuery($"|~ {LogQl.QuoteString(LogQl.ErrorLevelRegex)}", logQlRange, containerName);
+    internal static string BuildErrorLevelCountQuery(string logQlRange, string selector, string groupBy = ServiceLabel) =>
+        BuildCountQuery($"|~ {LogQl.QuoteString(LogQl.ErrorLevelRegex)}", logQlRange, selector, groupBy);
 
-    internal static string BuildSearchQuery(string searchText, string? containerName) =>
-        $"{BuildServiceSelector(containerName)} {LogQl.ContainsIgnoreCaseFilter(searchText)}";
+    internal static string BuildSearchQuery(string searchText, string selector) =>
+        $"{selector} {LogQl.ContainsIgnoreCaseFilter(searchText)}";
 
-    private static string BuildCountQuery(string lineFilter, string logQlRange, string? containerName) =>
-        $"sum by (compose_service) (count_over_time({BuildServiceSelector(containerName)} {lineFilter} [{logQlRange}]))";
+    internal static string BuildNoStreamMessage(string? containerName, string range) =>
+        $"No log stream has compose_service or container_name matching '{containerName}' in the last {range}. "
+        + "Use ListLabelValues with container_name or compose_service to see valid names.";
+
+    private static string BuildCountQuery(string lineFilter, string logQlRange, string selector, string groupBy = ServiceLabel) =>
+        $"sum by ({groupBy}) (count_over_time({selector} {lineFilter} [{logQlRange}]))";
+
+    // Finds the first selector of BuildContainerSelectors with a stream in the window, so the search and
+    // count tools accept the same names as GetContainerLogsFromLoki. A blank name selects every service.
+    // Null: no stream has that name.
+    private async Task<string?> ResolveContainerSelectorAsync(string? containerName, TimeSpan lookback)
+    {
+        if (string.IsNullOrWhiteSpace(containerName))
+        {
+            return BuildServiceSelector(null);
+        }
+
+        var nowUtc = DateTimeOffset.UtcNow;
+        var now = nowUtc.ToUnixTimeMilliseconds() * 1_000_000;
+        var start = nowUtc.Subtract(lookback).ToUnixTimeMilliseconds() * 1_000_000;
+
+        foreach (var selector in BuildContainerSelectors(containerName))
+        {
+            // A failed probe throws: it proves nothing about the name, and a later match would skip a better selector.
+            var encodedQuery = Uri.EscapeDataString(selector);
+            var url = $"{_baseUrl}/loki/api/v1/query_range?query={encodedQuery}&start={start}&end={now}&limit=1";
+            var response = await _httpClient.GetAsync(url);
+            response.EnsureSuccessStatusCode();
+
+            var result = await response.Content.ReadFromJsonAsync<LokiQueryResponse>();
+
+            if (result?.Data?.Result is { Count: > 0 })
+            {
+                // Selector text stays at Debug, like every other query text.
+                _logger.LogDebug("Container {Container} resolved to selector {Selector}", containerName, selector);
+                return selector;
+            }
+        }
+
+        _logger.LogInformation(
+            "No Loki stream matches container {Container} over {Range}",
+            containerName,
+            FormattingHelpers.FormatCompactDuration(lookback));
+        return null;
+    }
 
     // Rejects invalid or too-long ranges up front; the caller returns the error text to the tool user.
     private bool TryParseSince(string since, out TimeSpan lookback, out string error)
@@ -356,7 +402,10 @@ public sealed class LokiPlugin
 
         foreach (var stream in result.Data.Result)
         {
-            var container = stream.Labels?.GetValueOrDefault("compose_service") ?? "unknown";
+            // A plain docker run container has no compose_service label; container_name is there when the query groups by it.
+            var container = stream.Labels?.GetValueOrDefault(ServiceLabel)
+                ?? stream.Labels?.GetValueOrDefault(ContainerLabel)
+                ?? "unknown";
             long count = 0;
 
             if (stream.Values is { Count: > 0 } && stream.Values[0].Length >= 2)
@@ -370,7 +419,8 @@ public sealed class LokiPlugin
 
             if (count > 0)
             {
-                entries[container] = count;
+                // Replicas of one service come back as one series per container_name.
+                entries[container] = entries.GetValueOrDefault(container) + count;
             }
         }
 
@@ -394,7 +444,16 @@ public sealed class LokiPlugin
 
         try
         {
-            var entries = await QueryCountsByContainerAsync(BuildErrorLevelCountQuery(range, containerName));
+            var selector = await ResolveContainerSelectorAsync(containerName, lookback);
+
+            if (selector == null)
+            {
+                return BuildNoStreamMessage(containerName, range);
+            }
+
+            // A name can match several containers with no compose_service label: container_name keeps their rows apart.
+            var groupBy = string.IsNullOrWhiteSpace(containerName) ? ServiceLabel : $"{ServiceLabel}, {ContainerLabel}";
+            var entries = await QueryCountsByContainerAsync(BuildErrorLevelCountQuery(range, selector, groupBy));
 
             if (entries.Count == 0)
             {
@@ -536,14 +595,19 @@ public sealed class LokiPlugin
         _logger.LogInformation("Searching logs over {Range}", range);
         _logger.LogDebug("Log search text: {SearchText}", searchText);
 
-        var query = BuildSearchQuery(searchText, containerName);
-
         try
         {
-            var encodedQuery = Uri.EscapeDataString(query);
             var nowUtc = DateTimeOffset.UtcNow;
             var now = nowUtc.ToUnixTimeMilliseconds() * 1_000_000;
             var start = nowUtc.Subtract(duration).ToUnixTimeMilliseconds() * 1_000_000;
+            var selector = await ResolveContainerSelectorAsync(containerName, duration);
+
+            if (selector == null)
+            {
+                return BuildNoStreamMessage(containerName, range);
+            }
+
+            var encodedQuery = Uri.EscapeDataString(BuildSearchQuery(searchText, selector));
 
             var url = $"{_baseUrl}/loki/api/v1/query_range?query={encodedQuery}&start={start}&end={now}&limit=50";
             var response = await _httpClient.GetAsync(url);
