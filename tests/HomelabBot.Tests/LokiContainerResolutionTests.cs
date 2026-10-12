@@ -72,7 +72,6 @@ public class LokiContainerResolutionTests
         var result = await CreatePlugin(handler).SearchLogs("failed", "1h", "nope");
 
         Assert.Equal(LokiPlugin.BuildNoStreamMessage("nope", "1h"), result);
-        Assert.DoesNotContain("No logs found containing", result);
 
         // Every selector is probed; the search itself is not sent.
         Assert.Equal(LokiPlugin.BuildContainerSelectors("nope"), handler.Queries);
@@ -81,12 +80,11 @@ public class LokiContainerResolutionTests
     [Fact]
     public async Task CountErrorsByContainer_NameMatchesNothing_ReturnsNoStreamMessage()
     {
-        var handler = new LokiHandler(query => query.StartsWith("sum by") ? EmptyVector : EmptyStreams);
+        var handler = new LokiHandler(_ => EmptyStreams);
 
         var result = await CreatePlugin(handler).CountErrorsByContainer("6h", "nope");
 
         Assert.Equal(LokiPlugin.BuildNoStreamMessage("nope", "6h"), result);
-        Assert.DoesNotContain("No error logs found", result);
         Assert.Equal(LokiPlugin.BuildContainerSelectors("nope"), handler.Queries);
     }
 
@@ -97,7 +95,9 @@ public class LokiContainerResolutionTests
 
         var result = await CreatePlugin(handler).SearchLogs("failed", "1h", Container);
 
+        // The first failed probe ends the call: no later selector is tried.
         Assert.StartsWith("Error searching logs:", result);
+        Assert.Single(handler.Queries);
     }
 
     [Theory]
