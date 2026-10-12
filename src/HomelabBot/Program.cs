@@ -2,6 +2,7 @@ using System.Text;
 using DotNetEnv;
 using HomelabBot.Configuration;
 using HomelabBot.Data;
+using HomelabBot.Extensions;
 using HomelabBot.Mcp;
 using HomelabBot.Plugins;
 using HomelabBot.Services;
@@ -99,19 +100,7 @@ try
     {
         builder.Services.AddMcpServer()
             .WithHttpTransport()
-            .WithTools<DockerPlugin>()
-            .WithTools<PrometheusPlugin>()
-            .WithTools<AlertmanagerPlugin>()
-            .WithTools<LokiPlugin>()
-            .WithTools<GrafanaPlugin>()
-            .WithTools<MikroTikPlugin>()
-            .WithTools<TrueNASPlugin>()
-            .WithTools<HomeAssistantPlugin>()
-            .WithTools<NtfyPlugin>()
-            .WithTools<KnowledgePlugin>()
-            .WithTools<InvestigationPlugin>()
-            .WithTools<RunbookPlugin>()
-            .WithTools<HomelabMcpTools>();
+            .WithHomelabTools();
     }
 
     // Langfuse/OpenTelemetry
