@@ -11,6 +11,11 @@ namespace HomelabBot.Plugins;
 [McpServerToolType]
 public sealed class PrometheusPlugin
 {
+    internal const int MaxSeries = 20;
+
+    // cAdvisor series carry about 15 labels: 20 full rows would pass the size limit of a tool result.
+    internal const int MaxLabelsPerSeries = 10;
+
     private readonly PrometheusQueryService _prometheus;
     private readonly ILogger<PrometheusPlugin> _logger;
 
@@ -100,23 +105,7 @@ public sealed class PrometheusPlugin
                 return "Query returned no results.";
             }
 
-            var sb = new StringBuilder();
-            sb.AppendLine($"Query: `{query}`\n");
-
-            foreach (var item in result.Data.Result.Take(20))
-            {
-                var labels = FormatLabels(item.Metric);
-                var value = item.Value?.Length > 1 ? item.Value[1].ToString() : "N/A";
-
-                sb.AppendLine($"- {labels}: **{value}**");
-            }
-
-            if (result.Data.Result.Count > 20)
-            {
-                sb.AppendLine($"\n... and {result.Data.Result.Count - 20} more results");
-            }
-
-            return sb.ToString();
+            return FormatQueryResult(query, result.Data.Result);
         }
         catch (Exception ex)
         {
@@ -251,18 +240,51 @@ public sealed class PrometheusPlugin
         return sb.ToString();
     }
 
-    private static string FormatLabels(Dictionary<string, string>? labels)
+    internal static string FormatQueryResult(string query, List<PrometheusResult> results)
+    {
+        // The cut notice goes in the first line: the conversation layer keeps only the start of a long tool result.
+        var cut = results.Count > MaxSeries ? $" (showing {MaxSeries} of {results.Count} series)" : "";
+
+        var sb = new StringBuilder();
+        sb.AppendLine($"Query: `{query}`{cut}\n");
+
+        foreach (var item in results.Take(MaxSeries))
+        {
+            var labels = FormatLabels(item.Metric);
+            var value = item.Value?.Length > 1 ? item.Value[1].ToString() : "N/A";
+
+            sb.AppendLine($"- {labels}: **{value}**");
+        }
+
+        return sb.ToString();
+    }
+
+    // PromQL-native form: name{a=b, c=d}
+    internal static string FormatLabels(Dictionary<string, string>? labels)
     {
         if (labels == null || labels.Count == 0)
         {
             return "{}";
         }
 
-        var relevant = labels
+        var name = labels.GetValueOrDefault("__name__") ?? "";
+        var rest = labels
             .Where(l => l.Key != "__name__")
+            .OrderBy(l => l.Key, StringComparer.Ordinal)
             .Select(l => $"{l.Key}={l.Value}")
-            .Take(3);
+            .ToList();
 
-        return "{" + string.Join(", ", relevant) + "}";
+        if (rest.Count == 0)
+        {
+            return name;
+        }
+
+        var shown = rest.Take(MaxLabelsPerSeries);
+        if (rest.Count > MaxLabelsPerSeries)
+        {
+            shown = shown.Append($"+{rest.Count - MaxLabelsPerSeries} more labels");
+        }
+
+        return name + "{" + string.Join(", ", shown) + "}";
     }
 }
