@@ -40,7 +40,7 @@ public class LogQlTests
     [Fact]
     public void BuildSearchQuery_BracketIsRegexEscapedAndStringEscaped()
     {
-        var query = LokiPlugin.BuildSearchQuery("[Error", null);
+        var query = LokiPlugin.BuildSearchQuery("[Error", LokiPlugin.BuildServiceSelector(null));
 
         // LogQL string "\\[" unquotes to regex \[ which matches a literal '['.
         Assert.Equal("{compose_service=~\".+\"} |~ \"(?i)\\\\[Error\"", query);
@@ -49,7 +49,7 @@ public class LogQlTests
     [Fact]
     public void BuildSearchQuery_QuoteAndBackslashAreEscaped()
     {
-        var query = LokiPlugin.BuildSearchQuery("path \"C:\\x\"", "web");
+        var query = LokiPlugin.BuildSearchQuery("path \"C:\\x\"", LokiPlugin.BuildServiceSelector("web"));
 
         Assert.Equal("{compose_service=\"web\"} |~ \"(?i)path \\\"C:\\\\\\\\x\\\"\"", query);
     }
@@ -190,7 +190,7 @@ public class LogQlTests
     [Fact]
     public void BuildErrorLevelCountQuery_EmbedsQuotedLevelRegex()
     {
-        var query = LokiPlugin.BuildErrorLevelCountQuery("24h", "homelab-bot");
+        var query = LokiPlugin.BuildErrorLevelCountQuery("24h", LokiPlugin.BuildServiceSelector("homelab-bot"));
 
         Assert.StartsWith("sum by (compose_service) (count_over_time({compose_service=\"homelab-bot\"} |~ \"(?:^.{0,40}\\\\[(?i:err", query);
         Assert.EndsWith(" [24h]))", query);
