@@ -164,6 +164,9 @@ public class LogQlTests
     public void ErrorLevelRegex_MatchesErrorLevelLines(string line)
     {
         Assert.Matches(new Regex(LogQl.ErrorLevelRegex), line);
+
+        // The prefilter must keep every line that the level regex matches, or the count drops.
+        Assert.Matches(new Regex(LogQl.ErrorLevelPrefilter), line);
     }
 
     [Theory]
@@ -192,7 +195,8 @@ public class LogQlTests
     {
         var query = LokiPlugin.BuildErrorLevelCountQuery("24h", LokiPlugin.BuildServiceSelector("homelab-bot"));
 
-        Assert.StartsWith("sum by (compose_service) (count_over_time({compose_service=\"homelab-bot\"} |~ \"(?:^.{0,40}\\\\[(?i:err", query);
+        Assert.StartsWith("sum by (compose_service) (count_over_time({compose_service=\"homelab-bot\"} |~ \"(?i)(err|", query);
+        Assert.Contains(" |~ \"(?:^.{0,40}\\\\[(?i:err", query);
         Assert.EndsWith(" [24h]))", query);
     }
 }

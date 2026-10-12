@@ -27,19 +27,30 @@ internal static class LokiStub
     // What the resilience pipeline of the Loki client throws when an attempt runs out of time.
     public static Handler TimingOut() => new(_ => throw new TimeoutRejectedException());
 
-    // Answers each request from its decoded LogQL query; a null answer becomes HTTP 500.
-    internal sealed class Handler(Func<string, string?> respond) : HttpMessageHandler
+    // HTTP 500 with no text for every request.
+    public static Handler Failing() => new(_ => null);
+
+    // Loki answers a query that it cannot parse with 400 and the reason as plain text.
+    public static Handler Rejecting(string detail) => new(_ => null, HttpStatusCode.BadRequest, detail);
+
+    // Answers each request from its decoded LogQL query; a null answer becomes the failure answer (HTTP 500, no text).
+    internal sealed class Handler(
+        Func<string, string?> respond,
+        HttpStatusCode failureStatus = HttpStatusCode.InternalServerError,
+        string failureText = "") : HttpMessageHandler
     {
         public List<string> Queries { get; } = [];
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             var query = HttpUtility.ParseQueryString(request.RequestUri!.Query)["query"] ?? "";
             Queries.Add(query);
 
             var body = respond(query);
             var response = body == null
-                ? new HttpResponseMessage(HttpStatusCode.InternalServerError)
+                ? new HttpResponseMessage(failureStatus) { Content = new StringContent(failureText) }
                 : new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
 
             return Task.FromResult(response);
