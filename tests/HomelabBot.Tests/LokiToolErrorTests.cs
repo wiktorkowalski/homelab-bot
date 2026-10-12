@@ -25,11 +25,24 @@ public class LokiToolErrorTests
     }
 
     [Fact]
-    public async Task CountErrorsByContainer_ServerFault_KeepsTheStatusInTheAnswer()
+    public async Task CountErrorsByContainer_ServerFault_AnswersWithTheStatusAndNotTheBody()
     {
-        var result = await LokiStub.CreatePlugin(LokiStub.Failing()).CountErrorsByContainer("1h");
+        // Loki's body can quote the query: outside a rejected QueryLogs call it stays out of answers and Error logs.
+        var handler = new LokiStub.Handler(_ => null, failureText: "internal: secret-detail");
 
-        Assert.Equal("Error counting errors: Loki answered 500: no detail", result);
+        var result = await LokiStub.CreatePlugin(handler).CountErrorsByContainer("1h");
+
+        Assert.Equal("Error counting errors: Loki answered 500", result);
+    }
+
+    [Fact]
+    public async Task QueryLogs_ServerFault_AnswersWithTheStatusAndNotTheBody()
+    {
+        var handler = new LokiStub.Handler(_ => null, failureText: "internal: secret-detail");
+
+        var result = await LokiStub.CreatePlugin(handler).QueryLogs("{job=\"x\"}");
+
+        Assert.Equal("Error executing query: Loki answered 500", result);
     }
 
     [Theory]

@@ -406,6 +406,7 @@ public sealed class LokiPlugin
         $"Error: Loki did not answer within {LogQl.QueryTimeout.TotalSeconds:F0}s for the last {range}. Use a shorter time range.";
 
     // EnsureSuccessStatusCode drops the body, and the body is where Loki explains a rejected query.
+    // The body goes into Detail, not into the exception message: see LokiRequestException.
     private static async Task EnsureSuccessAsync(HttpResponseMessage response)
     {
         if (response.IsSuccessStatusCode)
@@ -779,8 +780,10 @@ public sealed class LokiPlugin
         return DateTime.UtcNow;
     }
 
+    // The message holds the status only: generic catches log it at Error and return it to the caller.
+    // Detail is Loki's response body. It can quote the query, so only the 400 branch of QueryLogs uses it.
     private sealed class LokiRequestException(HttpStatusCode status, string detail)
-        : HttpRequestException($"Loki answered {(int)status}: {detail}", null, status)
+        : HttpRequestException($"Loki answered {(int)status}", null, status)
     {
         public string Detail { get; } = detail;
     }
