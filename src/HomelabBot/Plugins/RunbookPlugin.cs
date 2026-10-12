@@ -42,7 +42,7 @@ public sealed class RunbookPlugin
     {
         if (!TryParseSteps(stepsJson, out var steps, out var error))
         {
-            return error;
+            return $"Error: Invalid steps: {error}";
         }
 
         var trustLevel = DetermineTrustLevel(steps);
@@ -108,7 +108,7 @@ public sealed class RunbookPlugin
             var runbook = await db.Runbooks.FindAsync(runbookId);
             if (runbook == null)
             {
-                return $"Runbook {runbookId} not found.";
+                return $"Error: Runbook {runbookId} not found.";
             }
 
             if (!runbook.Enabled)
@@ -209,12 +209,12 @@ public sealed class RunbookPlugin
 
         if (runbook == null)
         {
-            return $"Runbook {runbookId} not found.";
+            return $"Error: Runbook {runbookId} not found.";
         }
 
         if (!TryParseSteps(runbook.StepsJson, out var steps, out var error))
         {
-            return $"❌ Invalid steps: {error}";
+            return $"Error: Invalid steps: {error}";
         }
 
         var sb = new StringBuilder();

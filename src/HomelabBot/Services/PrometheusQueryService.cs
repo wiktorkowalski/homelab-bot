@@ -1,5 +1,7 @@
 using System.Net.Http.Json;
+using System.Text.Json;
 using HomelabBot.Configuration;
+using HomelabBot.Models;
 using HomelabBot.Models.Prometheus;
 using Microsoft.Extensions.Options;
 
@@ -7,6 +9,8 @@ namespace HomelabBot.Services;
 
 public sealed class PrometheusQueryService
 {
+    private const int MaxErrorDetailLength = 500;
+
     private readonly HttpClient _httpClient;
     private readonly ILogger<PrometheusQueryService> _logger;
     private readonly string _baseUrl;
@@ -57,22 +61,15 @@ public sealed class PrometheusQueryService
         }
     }
 
+    // Throws on a fault, unlike the other methods: the caller must tell a rejected query from an empty result.
     public async Task<PrometheusQueryResponse?> QueryAsync(string query, CancellationToken ct = default)
     {
-        try
-        {
-            var encodedQuery = Uri.EscapeDataString(query);
-            var response = await _httpClient.GetAsync(
-                $"{_baseUrl}/api/v1/query?query={encodedQuery}", ct);
-            response.EnsureSuccessStatusCode();
+        var encodedQuery = Uri.EscapeDataString(query);
+        var response = await _httpClient.GetAsync(
+            $"{_baseUrl}/api/v1/query?query={encodedQuery}", ct);
+        await EnsureSuccessAsync(response, ct);
 
-            return await response.Content.ReadFromJsonAsync<PrometheusQueryResponse>(ct);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to query Prometheus: {Query}", query);
-            return null;
-        }
+        return await response.Content.ReadFromJsonAsync<PrometheusQueryResponse>(ct);
     }
 
     public async Task<List<MetricResult>> QueryMultipleAsync(string query, CancellationToken ct = default)
@@ -158,21 +155,51 @@ public sealed class PrometheusQueryService
         }
     }
 
+    // Throws on a fault, like QueryAsync: the caller must tell a Prometheus that is down from an empty list.
     public async Task<PrometheusLabelResponse?> GetLabelValuesAsync(
         string label, CancellationToken ct = default)
     {
+        var response = await _httpClient.GetAsync(
+            $"{_baseUrl}/api/v1/label/{Uri.EscapeDataString(label)}/values", ct);
+        await EnsureSuccessAsync(response, ct);
+
+        return await response.Content.ReadFromJsonAsync<PrometheusLabelResponse>(ct);
+    }
+
+    // Prometheus explains a failed request in the "error" field of a JSON body; a proxy in front of it answers with plain text.
+    internal static string ExtractErrorDetail(string body)
+    {
+        var detail = body.Trim();
+
         try
         {
-            var response = await _httpClient.GetAsync(
-                $"{_baseUrl}/api/v1/label/{Uri.EscapeDataString(label)}/values", ct);
-            response.EnsureSuccessStatusCode();
-
-            return await response.Content.ReadFromJsonAsync<PrometheusLabelResponse>(ct);
+            using var document = JsonDocument.Parse(detail);
+            if (document.RootElement.ValueKind == JsonValueKind.Object
+                && document.RootElement.TryGetProperty("error", out var error)
+                && error.ValueKind == JsonValueKind.String
+                && error.GetString() is { } reason)
+            {
+                detail = reason.Trim();
+            }
         }
-        catch (Exception ex)
+        catch (JsonException)
         {
-            _logger.LogWarning(ex, "Failed to get label values for {Label}", label);
-            return null;
+            // Not JSON: the text itself is the detail.
         }
+
+        return detail.Length == 0 ? "no detail" : ConversationSearchResult.Truncate(detail, MaxErrorDetailLength);
+    }
+
+    // EnsureSuccessStatusCode drops the body, and the body is where Prometheus explains a rejected query.
+    private static async Task EnsureSuccessAsync(HttpResponseMessage response, CancellationToken ct)
+    {
+        if (response.IsSuccessStatusCode)
+        {
+            return;
+        }
+
+        throw new PrometheusRequestException(
+            response.StatusCode,
+            ExtractErrorDetail(await response.Content.ReadAsStringAsync(ct)));
     }
 }

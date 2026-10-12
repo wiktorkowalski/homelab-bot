@@ -122,7 +122,7 @@ public sealed class InvestigationPlugin
             var active = await _memoryService.GetActiveInvestigationAsync(threadId);
             if (active == null)
             {
-                return "No active investigation. Call StartInvestigation first.";
+                return "Error: No active investigation. Call StartInvestigation first.";
             }
 
             investigationId = active.Id;
@@ -144,7 +144,7 @@ public sealed class InvestigationPlugin
             var active = await _memoryService.GetActiveInvestigationAsync(threadId);
             if (active == null)
             {
-                return "No active investigation to resolve.";
+                return "Error: No active investigation to resolve.";
             }
 
             investigationId = active.Id;
@@ -153,7 +153,7 @@ public sealed class InvestigationPlugin
         var investigation = await _memoryService.ResolveInvestigationAsync(investigationId, resolution);
         if (investigation == null)
         {
-            return "Investigation not found.";
+            return "Error: Investigation not found.";
         }
 
         _activeInvestigations.Remove(threadId);
