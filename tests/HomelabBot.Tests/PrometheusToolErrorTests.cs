@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using HomelabBot.Configuration;
+using HomelabBot.Helpers;
 using HomelabBot.Plugins;
 using HomelabBot.Services;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -27,7 +28,7 @@ public class PrometheusToolErrorTests
         var result = await CreatePlugin(status, body).QueryPrometheus("foo{");
 
         Assert.Equal($"Error: Prometheus rejected the query: {reason}", result);
-        Assert.True(TelemetryFunctionFilter.IsFailureText(result));
+        Assert.True(ToolResult.IsFailure(result));
     }
 
     [Fact]
@@ -46,7 +47,7 @@ public class PrometheusToolErrorTests
             """{"status":"success","data":{"resultType":"vector","result":[]}}""").QueryPrometheus("absent_metric");
 
         Assert.Equal("Query returned no results.", result);
-        Assert.False(TelemetryFunctionFilter.IsFailureText(result));
+        Assert.False(ToolResult.IsFailure(result));
     }
 
     [Theory]
