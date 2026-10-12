@@ -134,6 +134,41 @@ public class HealingChainServiceTests : IClassFixture<DatabaseFixture>, IDisposa
         Assert.Equal(HealingChainStatus.Completed, saved.Status);
     }
 
+    [Fact]
+    public async Task ExecuteChain_StepThatAnswersWithAnError_StopsTheChainAndFailsIt()
+    {
+        var kernel = new StepKernel();
+        var chain = new HealingChain { Trigger = "plex down", StepsJson = "[]" };
+
+        var result = await CreateService().ExecuteChainAsync(
+            chain, StepKernel.Steps("Works", "AnswersError", "Works"), kernel.Kernel, CancellationToken.None);
+
+        Assert.False(result.Success);
+        Assert.Equal(1, result.StepsExecuted);
+        Assert.Equal("Healing chain failed at step 2/3.", result.Message);
+        Assert.Null(result.GeneratedRunbookId);
+        Assert.Equal(["Works", "AnswersError"], kernel.Calls);
+    }
+
+    [Theory]
+    [InlineData("AnswersError")]
+    [InlineData("Throws")]
+    public async Task ExecuteChain_FailedStepAfterAGoodOne_StoresTheChainAsFailed(string failingFunction)
+    {
+        var chain = new HealingChain { Trigger = "plex down", StepsJson = "[]", Status = HealingChainStatus.Executing };
+        await using (var db = await _fixture.DbContextFactory.CreateDbContextAsync())
+        {
+            db.HealingChains.Add(chain);
+            await db.SaveChangesAsync();
+        }
+
+        await CreateService().ExecuteChainAsync(
+            chain, StepKernel.Steps("Works", failingFunction), new StepKernel().Kernel, CancellationToken.None);
+
+        await using var read = await _fixture.DbContextFactory.CreateDbContextAsync();
+        Assert.Equal(HealingChainStatus.Failed, (await read.HealingChains.SingleAsync(c => c.Id == chain.Id)).Status);
+    }
+
     private static List<RunbookStep>? InvokeParseSteps(string response) =>
         HealingChainService.ParseStepsFromResponse(response);
 

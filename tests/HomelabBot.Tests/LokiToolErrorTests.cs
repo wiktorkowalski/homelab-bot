@@ -1,3 +1,4 @@
+using HomelabBot.Helpers;
 using HomelabBot.Plugins;
 using HomelabBot.Services;
 
@@ -55,7 +56,7 @@ public class LokiToolErrorTests
         var result = await LokiStub.CreatePlugin(handler).DetectCriticalPatterns(since);
 
         Assert.Contains("time range", result, StringComparison.OrdinalIgnoreCase);
-        Assert.True(TelemetryFunctionFilter.IsFailureText(result));
+        Assert.True(ToolResult.IsFailure(result));
         Assert.Empty(handler.Queries);
     }
 
@@ -78,14 +79,14 @@ public class LokiToolErrorTests
     [InlineData("**Error counts by container** (last 1h):", false)]
     [InlineData("No error logs found in the last 1h.", false)]
     [InlineData(null, false)]
-    public void TelemetryFilter_FailureText_IsATextThatStartsWithError(string? result, bool expected)
+    public void ToolResult_Failure_IsATextThatStartsWithError(string? result, bool expected)
     {
-        Assert.Equal(expected, TelemetryFunctionFilter.IsFailureText(result));
+        Assert.Equal(expected, ToolResult.IsFailure(result));
     }
 
     [Fact]
     public void TimeoutMessage_CountsAsAFailureInTelemetry()
     {
-        Assert.True(TelemetryFunctionFilter.IsFailureText(LokiPlugin.BuildTimeoutMessage("7d")));
+        Assert.True(ToolResult.IsFailure(LokiPlugin.BuildTimeoutMessage("7d")));
     }
 }

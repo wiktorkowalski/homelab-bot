@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using HomelabBot.Data;
 using HomelabBot.Data.Entities;
+using HomelabBot.Helpers;
 using HomelabBot.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.SemanticKernel;
@@ -160,13 +161,21 @@ public sealed class RunbookPlugin
                     args[param.Key] = param.Value;
                 }
 
-                var result = await kernel.InvokeAsync(function, args);
+                var result = (await kernel.InvokeAsync(function, args)).ToString();
+
+                var failed = ToolResult.IsFailure(result);
+                if (failed)
+                {
+                    _logger.LogWarning("Runbook step {Order} answered with an error: {Description}", step.Order, step.Description);
+                    success = false;
+                }
+
                 results.Add(new RunbookStepResult
                 {
                     StepOrder = step.Order,
                     Description = step.Description,
-                    Executed = true,
-                    Result = result.ToString(),
+                    Executed = !failed,
+                    Result = result,
                 });
             }
             catch (Exception ex)
@@ -177,7 +186,7 @@ public sealed class RunbookPlugin
                     StepOrder = step.Order,
                     Description = step.Description,
                     Executed = false,
-                    Result = ex.Message,
+                    Result = $"Error: {ex.Message}",
                 });
                 success = false;
             }
@@ -305,7 +314,7 @@ public sealed class RunbookPlugin
             }
             else
             {
-                sb.AppendLine($"❌ Step {r.StepOrder}: {r.Description} — Error: {r.Result}");
+                sb.AppendLine($"❌ Step {r.StepOrder}: {r.Description} — {r.Result}");
             }
         }
 

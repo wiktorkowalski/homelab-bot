@@ -1,13 +1,12 @@
 using System.Diagnostics;
 using System.Text.Json;
+using HomelabBot.Helpers;
 using Microsoft.SemanticKernel;
 
 namespace HomelabBot.Services;
 
 public sealed class TelemetryFunctionFilter : IFunctionInvocationFilter
 {
-    private const string ErrorResultPrefix = "Error";
-
     private readonly TelemetryService _telemetryService;
     private readonly ILogger<TelemetryFunctionFilter> _logger;
 
@@ -16,10 +15,6 @@ public sealed class TelemetryFunctionFilter : IFunctionInvocationFilter
         _telemetryService = telemetryService;
         _logger = logger;
     }
-
-    // Plugins catch their faults and answer with text that starts with "Error": no exception reaches this filter.
-    internal static bool IsFailureText(string? result) =>
-        result?.StartsWith(ErrorResultPrefix, StringComparison.Ordinal) == true;
 
     public async Task OnFunctionInvocationAsync(FunctionInvocationContext context, Func<FunctionInvocationContext, Task> next)
     {
@@ -71,7 +66,7 @@ public sealed class TelemetryFunctionFilter : IFunctionInvocationFilter
                 }
             }
 
-            var failed = IsFailureText(resultJson);
+            var failed = ToolResult.IsFailure(resultJson);
 
             await _telemetryService.LogToolCallAsync(
                 interactionId.Value,

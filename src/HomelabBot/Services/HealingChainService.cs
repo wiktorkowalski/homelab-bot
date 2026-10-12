@@ -3,6 +3,7 @@ using System.Text.Json;
 using HomelabBot.Configuration;
 using HomelabBot.Data;
 using HomelabBot.Data.Entities;
+using HomelabBot.Helpers;
 using HomelabBot.Models;
 using HomelabBot.Plugins;
 using Microsoft.EntityFrameworkCore;
@@ -93,7 +94,7 @@ public sealed class HealingChainService
         _activeChains[chain.Id] = true;
         try
         {
-            return await ExecuteChainAsync(chain, steps, ct);
+            return await ExecuteChainAsync(chain, steps, _kernelService.GetKernel(), ct);
         }
         finally
         {
@@ -156,11 +157,10 @@ public sealed class HealingChainService
         }
     }
 
-    private async Task<HealingChainResult> ExecuteChainAsync(
-        HealingChain chain, List<RunbookStep> steps, CancellationToken ct)
+    internal async Task<HealingChainResult> ExecuteChainAsync(
+        HealingChain chain, List<RunbookStep> steps, Kernel kernel, CancellationToken ct)
     {
         var executionLog = new List<StepExecutionLog>();
-        var kernel = _kernelService.GetKernel();
         var stepsExecuted = 0;
         var success = true;
 
@@ -210,16 +210,24 @@ public sealed class HealingChainService
                     args[param.Key] = param.Value;
                 }
 
-                var result = await kernel.InvokeAsync(function, args, ct);
-                stepsExecuted++;
-
-                var resultStr = result.ToString();
+                var resultStr = (await kernel.InvokeAsync(function, args, ct)).ToString();
                 executionLog.Add(new StepExecutionLog
                 {
                     StepOrder = step.Order,
                     Description = step.Description,
                     Result = resultStr?.Length > 500 ? resultStr[..497] + "..." : resultStr
                 });
+
+                // The chain stops as it does for an exception.
+                if (ToolResult.IsFailure(resultStr))
+                {
+                    _logger.LogWarning("Healing chain step {Order} answered with an error: {Description}",
+                        step.Order, step.Description);
+                    success = false;
+                    break;
+                }
+
+                stepsExecuted++;
             }
             catch (Exception ex)
             {
