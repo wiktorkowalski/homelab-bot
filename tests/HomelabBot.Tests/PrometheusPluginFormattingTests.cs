@@ -70,26 +70,40 @@ public class PrometheusPluginFormattingTests
     }
 
     [Fact]
-    public void FormatQueryResult_MoreThan20Series_ShowsTruncationLine()
+    public void FormatLabels_MoreLabelsThanTheCap_StatesHowManyWereLeftOut()
     {
-        var results = Enumerable.Range(0, 25).Select(i => Row($"metric_{i}", "1")).ToList();
+        var labels = Enumerable.Range(0, PrometheusPlugin.MaxLabelsPerSeries + 3)
+            .ToDictionary(i => $"label_{i:D2}", i => "v");
+        labels["__name__"] = "container_memory_usage_bytes";
 
-        var output = PrometheusPlugin.FormatQueryResult("{job=\"node\"}", results);
+        var output = PrometheusPlugin.FormatLabels(labels);
 
-        Assert.Equal(20, CountRows(output));
-        Assert.Contains("showing 20 of 25 series", output);
+        Assert.StartsWith("container_memory_usage_bytes{label_00=v, ", output);
+        Assert.EndsWith($"label_{PrometheusPlugin.MaxLabelsPerSeries - 1:D2}=v, +3 more labels}}", output);
     }
 
     [Fact]
-    public void FormatQueryResult_Exactly20Series_NoTruncationLine()
+    public void FormatQueryResult_MoreSeriesThanTheCap_StatesTheCutInTheFirstLine()
     {
-        var results = Enumerable.Range(0, 20).Select(i => Row($"metric_{i}", "1")).ToList();
+        var total = PrometheusPlugin.MaxSeries + 5;
 
-        var output = PrometheusPlugin.FormatQueryResult("{job=\"node\"}", results);
+        var output = PrometheusPlugin.FormatQueryResult("{job=\"node\"}", Rows(total));
 
-        Assert.Equal(20, CountRows(output));
+        Assert.Equal(PrometheusPlugin.MaxSeries, CountRows(output));
+        Assert.StartsWith($"Query: `{{job=\"node\"}}` (showing {PrometheusPlugin.MaxSeries} of {total} series)\n", output);
+    }
+
+    [Fact]
+    public void FormatQueryResult_SeriesAtTheCap_NoCutNotice()
+    {
+        var output = PrometheusPlugin.FormatQueryResult("{job=\"node\"}", Rows(PrometheusPlugin.MaxSeries));
+
+        Assert.Equal(PrometheusPlugin.MaxSeries, CountRows(output));
         Assert.DoesNotContain("showing", output);
     }
+
+    private static List<PrometheusResult> Rows(int count) =>
+        Enumerable.Range(0, count).Select(i => Row($"metric_{i}", "1")).ToList();
 
     private static PrometheusResult Row(string name, string value) => new()
     {

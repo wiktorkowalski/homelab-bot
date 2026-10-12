@@ -11,6 +11,11 @@ namespace HomelabBot.Plugins;
 [McpServerToolType]
 public sealed class PrometheusPlugin
 {
+    internal const int MaxSeries = 20;
+
+    // cAdvisor series carry about 15 labels: 20 full rows would pass the size limit of a tool result.
+    internal const int MaxLabelsPerSeries = 10;
+
     private readonly PrometheusQueryService _prometheus;
     private readonly ILogger<PrometheusPlugin> _logger;
 
@@ -237,20 +242,18 @@ public sealed class PrometheusPlugin
 
     internal static string FormatQueryResult(string query, List<PrometheusResult> results)
     {
-        var sb = new StringBuilder();
-        sb.AppendLine($"Query: `{query}`\n");
+        // The cut notice goes in the first line: the conversation layer keeps only the start of a long tool result.
+        var cut = results.Count > MaxSeries ? $" (showing {MaxSeries} of {results.Count} series)" : "";
 
-        foreach (var item in results.Take(20))
+        var sb = new StringBuilder();
+        sb.AppendLine($"Query: `{query}`{cut}\n");
+
+        foreach (var item in results.Take(MaxSeries))
         {
             var labels = FormatLabels(item.Metric);
             var value = item.Value?.Length > 1 ? item.Value[1].ToString() : "N/A";
 
             sb.AppendLine($"- {labels}: **{value}**");
-        }
-
-        if (results.Count > 20)
-        {
-            sb.AppendLine($"\nshowing 20 of {results.Count} series");
         }
 
         return sb.ToString();
@@ -276,6 +279,12 @@ public sealed class PrometheusPlugin
             return name;
         }
 
-        return name + "{" + string.Join(", ", rest) + "}";
+        var shown = rest.Take(MaxLabelsPerSeries);
+        if (rest.Count > MaxLabelsPerSeries)
+        {
+            shown = shown.Append($"+{rest.Count - MaxLabelsPerSeries} more labels");
+        }
+
+        return name + "{" + string.Join(", ", shown) + "}";
     }
 }
