@@ -36,7 +36,8 @@ internal sealed class McpTestHost : IAsyncDisposable
         builder.Logging.SetMinimumLevel(LogLevel.Debug);
         builder.Logging.AddProvider(logs);
 
-        builder.Services.AddHttpClient("Default");
+        // No retry policy here: the one valid call of the tests fails fast at the unreachable Loki host.
+        builder.Services.AddHttpClient();
         builder.Services.AddSingleton(Options.Create(new LokiConfiguration { Host = "http://loki.invalid" }));
         builder.Services.AddMcpServer()
             .WithHttpTransport()

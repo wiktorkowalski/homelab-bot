@@ -143,6 +143,7 @@ try
     // HTTP clients with resilience
     builder.Services.AddHttpClient("Default")
         .AddStandardResilienceHandler();
+    builder.Services.AddLokiHttpClient();
 
     // Shared services
     builder.Services.AddSingleton<PrometheusQueryService>();
