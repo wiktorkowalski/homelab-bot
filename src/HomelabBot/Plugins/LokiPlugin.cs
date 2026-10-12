@@ -1,9 +1,11 @@
 using System.ComponentModel;
+using System.Net;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using HomelabBot.Configuration;
 using HomelabBot.Helpers;
+using HomelabBot.Models;
 using Microsoft.Extensions.Options;
 using Microsoft.SemanticKernel;
 using ModelContextProtocol.Server;
@@ -15,6 +17,8 @@ namespace HomelabBot.Plugins;
 public sealed class LokiPlugin
 {
     internal const string HttpClientName = "Loki";
+
+    private const int MaxErrorDetailLength = 500;
 
     private const string ServiceLabel = "compose_service";
     private const string ContainerLabel = "container_name";
@@ -42,7 +46,7 @@ public sealed class LokiPlugin
         try
         {
             var response = await _httpClient.GetAsync($"{_baseUrl}/loki/api/v1/labels");
-            response.EnsureSuccessStatusCode();
+            await EnsureSuccessAsync(response);
 
             var result = await response.Content.ReadFromJsonAsync<LokiLabelsResponse>();
 
@@ -79,7 +83,7 @@ public sealed class LokiPlugin
         try
         {
             var response = await _httpClient.GetAsync($"{_baseUrl}/loki/api/v1/label/{labelName}/values");
-            response.EnsureSuccessStatusCode();
+            await EnsureSuccessAsync(response);
 
             var result = await response.Content.ReadFromJsonAsync<LokiLabelsResponse>();
 
@@ -139,7 +143,7 @@ public sealed class LokiPlugin
 
             var url = $"{_baseUrl}/loki/api/v1/query_range?query={encodedQuery}&start={start}&end={now}&limit={limit}";
             var response = await _httpClient.GetAsync(url);
-            response.EnsureSuccessStatusCode();
+            await EnsureSuccessAsync(response);
 
             var result = await response.Content.ReadFromJsonAsync<LokiQueryResponse>();
 
@@ -196,6 +200,13 @@ public sealed class LokiPlugin
         catch (TimeoutRejectedException)
         {
             return ReportQueryTimeout(range);
+        }
+        catch (LokiRequestException ex) when (ex.StatusCode == HttpStatusCode.BadRequest)
+        {
+            // The caller wrote the query: Warning, no stack trace. Loki's answer can quote the query, so it stays at Debug.
+            _logger.LogWarning("Loki rejected a LogQL query over {Range}", range);
+            _logger.LogDebug("Loki rejection: {Detail}; query text: {Query}", ex.Detail, query);
+            return $"Error: Loki rejected the query: {ex.Detail}";
         }
         catch (Exception ex)
         {
@@ -308,11 +319,13 @@ public sealed class LokiPlugin
     }
 
     // Keyword match kept for AnomalyDetectionService: switching it to levels would shift its thresholds.
-    public Task<Dictionary<string, long>> GetErrorCountsByContainerAsync(string since = "1h", string? containerName = null) =>
-        QueryCountsByContainerAsync(BuildCountQuery(
-            "|~ \"(?i)(\\\\berror\\\\b|\\\\bexception\\\\b|\\\\bfailed\\\\b|\\\\bfailure\\\\b)\"",
-            NormalizeDuration(since),
-            BuildServiceSelector(containerName)));
+    public Task<Dictionary<string, long>> GetErrorCountsByContainerAsync(string since = "1h", string? containerName = null, CancellationToken ct = default) =>
+        QueryCountsByContainerAsync(
+            BuildCountQuery(
+                "|~ \"(?i)(\\\\berror\\\\b|\\\\bexception\\\\b|\\\\bfailed\\\\b|\\\\bfailure\\\\b)\"",
+                NormalizeDuration(since),
+                BuildServiceSelector(containerName)),
+            ct);
 
     internal static string BuildServiceSelector(string? containerName) =>
         string.IsNullOrWhiteSpace(containerName)
@@ -334,7 +347,11 @@ public sealed class LokiPlugin
     }
 
     internal static string BuildErrorLevelCountQuery(string logQlRange, string selector, string groupBy = ServiceLabel) =>
-        BuildCountQuery($"|~ {LogQl.QuoteString(LogQl.ErrorLevelRegex)}", logQlRange, selector, groupBy);
+        BuildCountQuery(
+            $"|~ {LogQl.QuoteString(LogQl.ErrorLevelPrefilter)} |~ {LogQl.QuoteString(LogQl.ErrorLevelRegex)}",
+            logQlRange,
+            selector,
+            groupBy);
 
     internal static string BuildSearchQuery(string searchText, string selector) =>
         $"{selector} {LogQl.ContainsIgnoreCaseFilter(searchText)}";
@@ -366,7 +383,7 @@ public sealed class LokiPlugin
             var encodedQuery = Uri.EscapeDataString(selector);
             var url = $"{_baseUrl}/loki/api/v1/query_range?query={encodedQuery}&start={start}&end={now}&limit=1";
             var response = await _httpClient.GetAsync(url);
-            response.EnsureSuccessStatusCode();
+            await EnsureSuccessAsync(response);
 
             var result = await response.Content.ReadFromJsonAsync<LokiQueryResponse>();
 
@@ -386,7 +403,21 @@ public sealed class LokiPlugin
     }
 
     internal static string BuildTimeoutMessage(string range) =>
-        $"Loki did not answer within {LogQl.QueryTimeout.TotalSeconds:F0}s for the last {range}. Use a shorter time range.";
+        $"Error: Loki did not answer within {LogQl.QueryTimeout.TotalSeconds:F0}s for the last {range}. Use a shorter time range.";
+
+    // EnsureSuccessStatusCode drops the body, and the body is where Loki explains a rejected query.
+    // The body goes into Detail, not into the exception message: see LokiRequestException.
+    private static async Task EnsureSuccessAsync(HttpResponseMessage response)
+    {
+        if (response.IsSuccessStatusCode)
+        {
+            return;
+        }
+
+        var detail = ConversationSearchResult.Truncate((await response.Content.ReadAsStringAsync()).Trim(), MaxErrorDetailLength);
+
+        throw new LokiRequestException(response.StatusCode, detail.Length == 0 ? "no detail" : detail);
+    }
 
     // The window is the caller's choice and the retry policy already logged the timeout: Warning, no stack trace.
     private string ReportQueryTimeout(string range)
@@ -404,17 +435,20 @@ public sealed class LokiPlugin
         }
 
         _logger.LogWarning("Rejected Loki tool call with invalid time range {Since}", since);
+
+        // Telemetry counts a result that starts with "Error" as a failed tool call.
+        error = $"Error: {error}";
         return false;
     }
 
-    private async Task<Dictionary<string, long>> QueryCountsByContainerAsync(string query)
+    private async Task<Dictionary<string, long>> QueryCountsByContainerAsync(string query, CancellationToken ct = default)
     {
         var encodedQuery = Uri.EscapeDataString(query);
         var url = $"{_baseUrl}/loki/api/v1/query?query={encodedQuery}";
-        var response = await _httpClient.GetAsync(url);
-        response.EnsureSuccessStatusCode();
+        var response = await _httpClient.GetAsync(url, ct);
+        await EnsureSuccessAsync(response);
 
-        var result = await response.Content.ReadFromJsonAsync<LokiQueryResponse>();
+        var result = await response.Content.ReadFromJsonAsync<LokiQueryResponse>(ct);
         var entries = new Dictionary<string, long>();
 
         if (result?.Data?.Result == null)
@@ -509,11 +543,16 @@ public sealed class LokiPlugin
     [KernelFunction]
     [Description("Detects critical log patterns (fatal, panic, OOM, segfault, killed) across all containers.")]
     public async Task<string> DetectCriticalPatterns(
-        [Description("Time range like '1h', '6h', '24h' (default 1h)")] string since = "1h")
+        [Description("Time range like '1h', '6h', '24h' (default 1h, max 7d)")] string since = "1h")
     {
-        _logger.LogInformation("Detecting critical patterns since {Since}", since);
+        if (!TryParseSince(since, out var duration, out var sinceError))
+        {
+            return sinceError;
+        }
 
-        var duration = FormattingHelpers.ParseDuration(since);
+        var range = FormattingHelpers.FormatCompactDuration(duration);
+        _logger.LogInformation("Detecting critical patterns over {Range}", range);
+
         var query = "{compose_service=~\".+\",compose_service!=\"loki\"} |~ \"(?i)(\\\\bfatal\\\\b|\\\\bpanic\\\\b|\\\\boom\\\\b|out of memory|killed process|segfault)\"";
         var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() * 1_000_000;
         var start = DateTimeOffset.UtcNow.Subtract(duration).ToUnixTimeMilliseconds() * 1_000_000;
@@ -523,17 +562,17 @@ public sealed class LokiPlugin
             var encodedQuery = Uri.EscapeDataString(query);
             var url = $"{_baseUrl}/loki/api/v1/query_range?query={encodedQuery}&start={start}&end={now}&limit=50";
             var response = await _httpClient.GetAsync(url);
-            response.EnsureSuccessStatusCode();
+            await EnsureSuccessAsync(response);
 
             var result = await response.Content.ReadFromJsonAsync<LokiQueryResponse>();
 
             if (result?.Data?.Result == null || result.Data.Result.Count == 0)
             {
-                return $"No critical patterns (fatal/panic/OOM/segfault) found in the last {since}.";
+                return $"No critical patterns (fatal/panic/OOM/segfault) found in the last {range}.";
             }
 
             var sb = new StringBuilder();
-            sb.AppendLine($"**Critical patterns detected** (last {since}):\n");
+            sb.AppendLine($"**Critical patterns detected** (last {range}):\n");
 
             var allEvents = new List<(DateTime Timestamp, string Container, string Message)>();
 
@@ -581,7 +620,7 @@ public sealed class LokiPlugin
         }
         catch (TimeoutRejectedException)
         {
-            return ReportQueryTimeout(since);
+            return ReportQueryTimeout(range);
         }
         catch (Exception ex)
         {
@@ -600,7 +639,7 @@ public sealed class LokiPlugin
         var encodedQuery = Uri.EscapeDataString(query);
         var url = $"{_baseUrl}/loki/api/v1/query_range?query={encodedQuery}&start={start}&end={now}&limit=1";
         var response = await _httpClient.GetAsync(url, ct);
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessAsync(response);
 
         var result = await response.Content.ReadFromJsonAsync<LokiQueryResponse>(ct);
         return result?.Data?.Result is { Count: > 0 };
@@ -641,7 +680,7 @@ public sealed class LokiPlugin
 
             var url = $"{_baseUrl}/loki/api/v1/query_range?query={encodedQuery}&start={start}&end={now}&limit=50";
             var response = await _httpClient.GetAsync(url);
-            response.EnsureSuccessStatusCode();
+            await EnsureSuccessAsync(response);
 
             var result = await response.Content.ReadFromJsonAsync<LokiQueryResponse>();
 
@@ -739,6 +778,14 @@ public sealed class LokiPlugin
         }
 
         return DateTime.UtcNow;
+    }
+
+    // The message holds the status only: generic catches log it at Error and return it to the caller.
+    // Detail is Loki's response body. It can quote the query, so only the 400 branch of QueryLogs uses it.
+    private sealed class LokiRequestException(HttpStatusCode status, string detail)
+        : HttpRequestException($"Loki answered {(int)status}", null, status)
+    {
+        public string Detail { get; } = detail;
     }
 
     private sealed class LokiQueryResponse

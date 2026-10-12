@@ -654,7 +654,7 @@ public sealed class AnomalyDetectionService : BackgroundService
         var anomalies = new List<Anomaly>();
         try
         {
-            var errorCounts = await _lokiPlugin.GetErrorCountsByContainerAsync("1h");
+            var errorCounts = await _lokiPlugin.GetErrorCountsByContainerAsync("1h", ct: ct);
             var spikes = DetectErrorSpikes(errorCounts);
 
             foreach (var spike in spikes)
