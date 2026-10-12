@@ -98,7 +98,7 @@ public sealed class GrafanaPlugin
 
             if (result?.Dashboard == null)
             {
-                return $"Dashboard '{uid}' not found.";
+                return $"Error: Dashboard '{uid}' not found.";
             }
 
             var dashboard = result.Dashboard;

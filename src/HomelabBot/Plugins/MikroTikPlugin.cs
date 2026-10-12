@@ -208,7 +208,7 @@ public sealed class MikroTikPlugin
         var cleanMac = macAddress.Replace(":", "").Replace("-", "").ToUpperInvariant();
         if (cleanMac.Length != 12 || !cleanMac.All(c => "0123456789ABCDEF".Contains(c)))
         {
-            return "Invalid MAC address format. Use AA:BB:CC:DD:EE:FF or AA-BB-CC-DD-EE-FF.";
+            return "Error: Invalid MAC address format. Use AA:BB:CC:DD:EE:FF or AA-BB-CC-DD-EE-FF.";
         }
 
         try

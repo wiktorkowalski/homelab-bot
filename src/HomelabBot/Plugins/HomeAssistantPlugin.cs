@@ -47,14 +47,14 @@ public sealed class HomeAssistantPlugin
 
             if (!response.IsSuccessStatusCode)
             {
-                return $"Entity '{entityId}' not found or inaccessible.";
+                return $"Error: Entity '{entityId}' not found or inaccessible.";
             }
 
             var state = await response.Content.ReadFromJsonAsync<HAState>();
 
             if (state == null)
             {
-                return $"Could not retrieve state for '{entityId}'.";
+                return $"Error: Could not retrieve state for '{entityId}'.";
             }
 
             var sb = new StringBuilder();
@@ -106,7 +106,7 @@ public sealed class HomeAssistantPlugin
 
             if (states == null)
             {
-                return "Could not retrieve entities.";
+                return "Error: Could not retrieve entities.";
             }
 
             var filtered = states

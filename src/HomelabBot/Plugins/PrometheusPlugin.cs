@@ -107,6 +107,13 @@ public sealed class PrometheusPlugin
 
             return FormatQueryResult(query, result.Data.Result);
         }
+        catch (PrometheusRequestException ex) when (ex.IsQueryRejection)
+        {
+            // The caller wrote the query: Warning, no stack trace.
+            _logger.LogWarning("Prometheus rejected a PromQL query with {StatusCode}", (int?)ex.StatusCode);
+            _logger.LogDebug("Prometheus rejection: {Detail}", ex.Detail);
+            return $"Error: Prometheus rejected the query: {ex.Detail}";
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error executing PromQL query: {Query}", query);

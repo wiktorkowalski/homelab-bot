@@ -151,7 +151,7 @@ public sealed class AlertmanagerPlugin
             var durationSpan = FormattingHelpers.ParseDuration(duration, TimeSpan.Zero);
             if (durationSpan == TimeSpan.Zero)
             {
-                return "Invalid duration format. Use formats like '2h', '30m', '1d'.";
+                return "Error: Invalid duration format. Use formats like '2h', '30m', '1d'.";
             }
 
             var now = DateTime.UtcNow;

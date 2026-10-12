@@ -74,7 +74,7 @@ public class DockerPlugin
         var container = await FindContainerAsync(containerName);
         if (container == null)
         {
-            return $"Container '{containerName}' not found.";
+            return $"Error: Container '{containerName}' not found.";
         }
 
         var inspect = await _client.Containers.InspectContainerAsync(container.ID);
@@ -149,7 +149,7 @@ public class DockerPlugin
         var container = await FindContainerAsync(containerName);
         if (container == null)
         {
-            return $"Container '{containerName}' not found.";
+            return $"Error: Container '{containerName}' not found.";
         }
 
         var name = container.Names.FirstOrDefault()?.TrimStart('/') ?? containerName;
@@ -174,7 +174,7 @@ public class DockerPlugin
         var container = await FindContainerAsync(containerName);
         if (container == null)
         {
-            return $"Container '{containerName}' not found.";
+            return $"Error: Container '{containerName}' not found.";
         }
 
         var name = container.Names.FirstOrDefault()?.TrimStart('/') ?? containerName;
@@ -202,7 +202,7 @@ public class DockerPlugin
         var container = await FindContainerAsync(containerName);
         if (container == null)
         {
-            return $"Container '{containerName}' not found.";
+            return $"Error: Container '{containerName}' not found.";
         }
 
         var name = container.Names.FirstOrDefault()?.TrimStart('/') ?? containerName;
@@ -227,7 +227,7 @@ public class DockerPlugin
         var container = await FindContainerAsync(containerName);
         if (container == null)
         {
-            return $"Container '{containerName}' not found.";
+            return $"Error: Container '{containerName}' not found.";
         }
 
         var name = container.Names.FirstOrDefault()?.TrimStart('/') ?? containerName;
