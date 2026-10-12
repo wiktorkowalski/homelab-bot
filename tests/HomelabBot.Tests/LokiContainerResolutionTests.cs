@@ -35,8 +35,8 @@ public class LokiContainerResolutionTests
     {
         var handler = new LokiHandler(query => query switch
         {
-            _ when query.StartsWith("sum by (compose_service) (count_over_time({container_name=\"uberprints-server\"} ") =>
-                """{"status":"success","data":{"resultType":"vector","result":[{"metric":{"compose_service":"server"},"value":[1760000000,"7"]}]}}""",
+            _ when query.StartsWith("sum by (compose_service, container_name) (count_over_time({container_name=\"uberprints-server\"} ") =>
+                """{"status":"success","data":{"resultType":"vector","result":[{"metric":{"compose_service":"server","container_name":"uberprints-server"},"value":[1760000000,"7"]}]}}""",
             "{container_name=\"uberprints-server\"}" => ServerStream,
             _ => EmptyStreams,
         });
@@ -48,20 +48,39 @@ public class LokiContainerResolutionTests
     }
 
     [Fact]
-    public async Task CountErrorsByContainer_StreamWithoutComposeService_UsesRequestedName()
+    public async Task CountErrorsByContainer_StreamsWithoutComposeService_ShowUnderTheirContainerNames()
     {
+        // The regex selector matches two plain docker run containers.
         var handler = new LokiHandler(query => query switch
         {
-            _ when query.StartsWith("sum by (compose_service) (count_over_time(") =>
-                """{"status":"success","data":{"resultType":"vector","result":[{"metric":{},"value":[1760000000,"3"]}]}}""",
-            "{container_name=\"uberprints-server\"}" => ServerStream,
+            _ when query.StartsWith("sum by (compose_service, container_name) (count_over_time(") =>
+                """{"status":"success","data":{"resultType":"vector","result":[{"metric":{"container_name":"web-1"},"value":[1760000000,"3"]},{"metric":{"container_name":"old-web"},"value":[1760000000,"2"]}]}}""",
+            "{container_name=~\".*web.*\"}" => ServerStream,
             _ => EmptyStreams,
         });
 
-        var result = await CreatePlugin(handler).CountErrorsByContainer("1h", Container);
+        var result = await CreatePlugin(handler).CountErrorsByContainer("1h", "web");
 
-        Assert.Contains("**uberprints-server**: 3 errors", result);
+        Assert.Contains("**web-1**: 3 errors", result);
+        Assert.Contains("**old-web**: 2 errors", result);
         Assert.DoesNotContain("unknown", result);
+    }
+
+    [Fact]
+    public async Task CountErrorsByContainer_ReplicasOfOneService_AddUpInOneRow()
+    {
+        var handler = new LokiHandler(query => query switch
+        {
+            _ when query.StartsWith("sum by (compose_service, container_name) (count_over_time(") =>
+                """{"status":"success","data":{"resultType":"vector","result":[{"metric":{"compose_service":"server","container_name":"server-1"},"value":[1760000000,"4"]},{"metric":{"compose_service":"server","container_name":"server-2"},"value":[1760000000,"1"]}]}}""",
+            "{compose_service=\"server\"}" => ServerStream,
+            _ => EmptyStreams,
+        });
+
+        var result = await CreatePlugin(handler).CountErrorsByContainer("1h", "server");
+
+        Assert.Contains("**server**: 5 errors", result);
+        Assert.Contains("Total: 5 errors across 1 containers", result);
     }
 
     [Fact]

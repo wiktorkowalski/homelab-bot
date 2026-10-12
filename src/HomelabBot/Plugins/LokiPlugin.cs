@@ -13,6 +13,9 @@ namespace HomelabBot.Plugins;
 [McpServerToolType]
 public sealed class LokiPlugin
 {
+    private const string ServiceLabel = "compose_service";
+    private const string ContainerLabel = "container_name";
+
     private readonly HttpClient _httpClient;
     private readonly ILogger<LokiPlugin> _logger;
     private readonly string _baseUrl;
@@ -318,8 +321,8 @@ public sealed class LokiPlugin
         ];
     }
 
-    internal static string BuildErrorLevelCountQuery(string logQlRange, string selector) =>
-        BuildCountQuery($"|~ {LogQl.QuoteString(LogQl.ErrorLevelRegex)}", logQlRange, selector);
+    internal static string BuildErrorLevelCountQuery(string logQlRange, string selector, string groupBy = ServiceLabel) =>
+        BuildCountQuery($"|~ {LogQl.QuoteString(LogQl.ErrorLevelRegex)}", logQlRange, selector, groupBy);
 
     internal static string BuildSearchQuery(string searchText, string selector) =>
         $"{selector} {LogQl.ContainsIgnoreCaseFilter(searchText)}";
@@ -328,8 +331,8 @@ public sealed class LokiPlugin
         $"No log stream has compose_service or container_name matching '{containerName}' in the last {range}. "
         + "Use ListLabelValues with container_name or compose_service to see valid names.";
 
-    private static string BuildCountQuery(string lineFilter, string logQlRange, string selector) =>
-        $"sum by (compose_service) (count_over_time({selector} {lineFilter} [{logQlRange}]))";
+    private static string BuildCountQuery(string lineFilter, string logQlRange, string selector, string groupBy = ServiceLabel) =>
+        $"sum by ({groupBy}) (count_over_time({selector} {lineFilter} [{logQlRange}]))";
 
     // Finds the first selector of BuildContainerSelectors with a stream in the window, so the search and
     // count tools accept the same names as GetContainerLogsFromLoki. A blank name selects every service.
@@ -382,8 +385,7 @@ public sealed class LokiPlugin
         return false;
     }
 
-    // unlabelledName names the row of streams without a compose_service label (plain docker run containers).
-    private async Task<Dictionary<string, long>> QueryCountsByContainerAsync(string query, string unlabelledName = "unknown")
+    private async Task<Dictionary<string, long>> QueryCountsByContainerAsync(string query)
     {
         var encodedQuery = Uri.EscapeDataString(query);
         var url = $"{_baseUrl}/loki/api/v1/query?query={encodedQuery}";
@@ -400,7 +402,10 @@ public sealed class LokiPlugin
 
         foreach (var stream in result.Data.Result)
         {
-            var container = stream.Labels?.GetValueOrDefault("compose_service") ?? unlabelledName;
+            // A plain docker run container has no compose_service label; container_name is there when the query groups by it.
+            var container = stream.Labels?.GetValueOrDefault(ServiceLabel)
+                ?? stream.Labels?.GetValueOrDefault(ContainerLabel)
+                ?? "unknown";
             long count = 0;
 
             if (stream.Values is { Count: > 0 } && stream.Values[0].Length >= 2)
@@ -414,7 +419,8 @@ public sealed class LokiPlugin
 
             if (count > 0)
             {
-                entries[container] = count;
+                // Replicas of one service come back as one series per container_name.
+                entries[container] = entries.GetValueOrDefault(container) + count;
             }
         }
 
@@ -445,9 +451,9 @@ public sealed class LokiPlugin
                 return BuildNoStreamMessage(containerName, range);
             }
 
-            // A stream without a compose_service label shows under the requested name.
-            var unlabelledName = string.IsNullOrWhiteSpace(containerName) ? "unknown" : containerName;
-            var entries = await QueryCountsByContainerAsync(BuildErrorLevelCountQuery(range, selector), unlabelledName);
+            // A name can match several containers with no compose_service label: container_name keeps their rows apart.
+            var groupBy = string.IsNullOrWhiteSpace(containerName) ? ServiceLabel : $"{ServiceLabel}, {ContainerLabel}";
+            var entries = await QueryCountsByContainerAsync(BuildErrorLevelCountQuery(range, selector, groupBy));
 
             if (entries.Count == 0)
             {
