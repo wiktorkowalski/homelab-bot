@@ -362,6 +362,22 @@ public sealed class KernelServiceClaudeTests : IDisposable
     }
 
     [Fact]
+    public async Task TurnsAfterATrim_SendTheSameFirstMessage()
+    {
+        for (var i = 0; i < 18; i++)
+        {
+            _handler.Enqueue(ClaudeResponses.Text($"a{i}"));
+            await _service.ProcessMessageAsync(ThreadId, $"q{i}");
+        }
+
+        // Request i holds 2i+1 messages. The 33 of request 16 pass HistoryLimit (32) and are cut
+        // to HistoryTarget (20): 19 are left, from q7 on. The start then stays where it is.
+        var firsts = Requests().Select(r => (string?)r["messages"]![0]!["content"]![0]!["text"]).ToList();
+        Assert.Equal(Enumerable.Repeat("q0", 16), firsts.Take(16));
+        Assert.Equal(["q7", "q7"], firsts.Skip(16));
+    }
+
+    [Fact]
     public async Task ToolSpan_CarriesTheNameTheModelCalled()
     {
         using var root = new Activity("test-root").Start();

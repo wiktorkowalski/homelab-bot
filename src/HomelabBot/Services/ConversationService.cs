@@ -13,12 +13,17 @@ public sealed class ConversationService
     private readonly ConcurrentDictionary<ulong, ChatHistory> _histories = new();
     private readonly IDbContextFactory<HomelabDbContext> _dbFactory;
     private readonly ILogger<ConversationService> _logger;
-    internal const int MaxHistoryMessages = 20;
 
-    // Approximate token budget for everything after the system prompt (chars/4, no tokenizer in
-    // the repo). The base prompt with tool schemas is already 16-24k tokens; 15k of history keeps
-    // a request well under the ~70k seen when one large tool result stuck in the window (#120).
-    internal const int MaxHistoryTokens = 15_000;
+    // Limits for everything after the system prompt. Tokens are an estimate (chars/4, no tokenizer
+    // in the repo); JSON and Polish text count up to twice as high at the API. The base prompt
+    // with tool schemas is 16-24k tokens on top. The limit bounds the cost of a request: one
+    // large tool result stuck in the window once made requests of ~70k tokens (#120).
+    internal static readonly (int Messages, int Tokens) HistoryLimit = (32, 24_000);
+
+    // A trim cuts down to this target, not just back under the limit. The prompt cache matches by
+    // prefix and every trim moves the start of the message list: a window kept full drops a turn
+    // on every message, so no request could read the cached messages of the one before.
+    internal static readonly (int Messages, int Tokens) HistoryTarget = (20, 15_000);
 
     // One tool result may take ~2k tokens once its turn is over. The model sees the full result
     // during the turn that produced it; later turns only need the gist.
@@ -296,7 +301,7 @@ public sealed class ConversationService
     private void TrimHistoryIfNeeded(ChatHistory history)
     {
         var truncatedResults = TruncateToolResults(history, MaxToolResultChars);
-        var removed = TrimHistory(history, MaxHistoryMessages, MaxHistoryTokens);
+        var removed = TrimHistory(history, HistoryLimit, HistoryTarget);
 
         if (truncatedResults > 0 || removed > 0)
         {
@@ -352,17 +357,25 @@ public sealed class ConversationService
         return truncated;
     }
 
-    // Drops whole turns from the front (never the system prompt at index 0) until the message-count
-    // and approximate token limits hold. A turn starts at a user message; cutting mid-turn would
-    // leave history opening with an assistant or an orphaned tool result, which the API rejects.
-    // The current turn (from the last user message on) is never dropped, even when it alone
-    // exceeds the budget.
-    internal static int TrimHistory(ChatHistory history, int maxMessages, int maxTokens)
+    // Once the message count or the approximate token count passes the limit, drops whole turns
+    // from the front (never the system prompt at index 0) until both fit the target. A turn starts
+    // at a user message; cutting mid-turn would leave history opening with an assistant or an
+    // orphaned tool result, which the API rejects. The current turn (from the last user message
+    // on) is never dropped, even when it alone exceeds the target.
+    internal static int TrimHistory(
+        ChatHistory history, (int Messages, int Tokens) limit, (int Messages, int Tokens) target)
     {
         var tokens = 0;
         for (var i = 1; i < history.Count; i++)
         {
             tokens += EstimateTokens(history[i]);
+        }
+
+        bool Over((int Messages, int Tokens) cap) => history.Count - 1 > cap.Messages || tokens > cap.Tokens;
+
+        if (!Over(limit))
+        {
+            return 0;
         }
 
         var protectedFrom = LastUserIndex(history);
@@ -372,7 +385,7 @@ public sealed class ConversationService
         }
 
         var removed = 0;
-        while (protectedFrom > 1 && (history.Count - 1 > maxMessages || tokens > maxTokens))
+        while (protectedFrom > 1 && Over(target))
         {
             do
             {
@@ -436,8 +449,14 @@ public sealed class ConversationService
         return -1;
     }
 
-    private static string Truncate(string text, int maxChars) =>
-        $"{text[..maxChars]}\n[truncated: kept {maxChars} of {text.Length} chars]";
+    // The marker counts toward the cap. A capped result that passed the cap again would be cut
+    // once more at the next Add* call, and that changes bytes inside the cached prefix. The room
+    // for the marker is measured with the longer of its two numbers in both places.
+    private static string Truncate(string text, int maxChars)
+    {
+        var kept = maxChars - $"\n[truncated: kept {text.Length} of {text.Length} chars]".Length;
+        return string.Concat(text.AsSpan(0, kept), $"\n[truncated: kept {kept} of {text.Length} chars]");
+    }
 
     // Auto-invoked results are stored as strings already; ToString covers anything else without
     // the serializer throwing on an odd object graph.
