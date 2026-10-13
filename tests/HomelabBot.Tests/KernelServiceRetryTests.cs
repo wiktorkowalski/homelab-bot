@@ -1,4 +1,3 @@
-using System.Net;
 using HomelabBot.Services;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -30,53 +29,61 @@ public class KernelServiceRetryTests
         Assert.Equal(expected, KernelService.IsEmptyResponse(response));
     }
 
-    // --- IsTransient ---
+    // --- GetStopReason / GetRefusal ---
 
-    [Theory]
-    [InlineData(408, true)]
-    [InlineData(429, true)]
-    [InlineData(500, true)]
-    [InlineData(502, true)]
-    [InlineData(503, true)]
-    [InlineData(504, true)]
-    [InlineData(400, false)]
-    [InlineData(401, false)]
-    [InlineData(402, false)]
-    [InlineData(403, false)]
-    [InlineData(404, false)]
-    [InlineData(422, false)]
-    public void IsTransient_ClassifiesStatusCodes(int code, bool expected)
+    [Fact]
+    public void GetStopReason_Null_ReturnsUnknown()
     {
-        var ex = new HttpOperationException((HttpStatusCode)code, null, "boom", null);
-        Assert.Equal(expected, KernelService.IsTransient(ex));
+        Assert.Equal("unknown", KernelService.GetStopReason(null));
     }
 
     [Fact]
-    public void IsTransient_NoStatusCode_TreatedAsTransient()
+    public void GetStopReason_NoRawMessage_ReturnsUnknown()
     {
-        // No HTTP response received (connection reset / timeout / DNS).
-        var ex = new HttpOperationException((HttpStatusCode?)null, null, "transport failure", null);
-        Assert.True(KernelService.IsTransient(ex));
-    }
-
-    // --- GetFinishReason ---
-
-    [Fact]
-    public void GetFinishReason_Null_ReturnsUnknown()
-    {
-        Assert.Equal("unknown", KernelService.GetFinishReason(null));
+        Assert.Equal("unknown", KernelService.GetStopReason(new ChatMessageContent(AuthorRole.Assistant, "x")));
     }
 
     [Fact]
-    public void GetFinishReason_NoMetadata_ReturnsUnknown()
+    public void GetStopReason_FromRawClaudeMessage()
     {
-        Assert.Equal("unknown", KernelService.GetFinishReason(new ChatMessageContent(AuthorRole.Assistant, "x")));
+        Assert.Equal("max_tokens", KernelService.GetStopReason(Msg(null, ClaudeResponses.EmptyAtMaxTokens())));
+        Assert.Equal("end_turn", KernelService.GetStopReason(Msg("x", ClaudeResponses.Text("x"))));
     }
 
     [Fact]
-    public void GetFinishReason_FromMetadata()
+    public void GetRefusal_OnlyForStopReasonRefusal()
     {
-        Assert.Equal("length", KernelService.GetFinishReason(Msg(null, "length")));
+        Assert.Null(KernelService.GetRefusal(null));
+        Assert.Null(KernelService.GetRefusal(new ChatMessageContent(AuthorRole.Assistant, "x")));
+        Assert.Null(KernelService.GetRefusal(Msg(null, ClaudeResponses.EmptyAtMaxTokens())));
+        Assert.Equal(("bio", "declined by policy"), KernelService.GetRefusal(Msg(null, ClaudeResponses.Refusal("bio"))));
+    }
+
+    [Fact]
+    public void GetRefusal_WithoutStopDetails_StillReportsTheRefusal()
+    {
+        var raw = ClaudeResponses.Refusal(category: null);
+
+        Assert.Equal(("unspecified", "no explanation given"), KernelService.GetRefusal(Msg(null, raw)));
+    }
+
+    [Fact]
+    public void RefusalMessage_NamesTheCategory()
+    {
+        Assert.Contains("category: cyber", KernelService.RefusalMessage("cyber"), StringComparison.Ordinal);
+    }
+
+    // --- TelemetryText ---
+
+    [Fact]
+    public void TelemetryText_ToolTurnsWithoutText_ShowCallAndResult()
+    {
+        var call = new ChatMessageContent(AuthorRole.Assistant, [new FunctionCallContent("Docker_List", id: "toolu_1")]);
+        var result = new ChatMessageContent(AuthorRole.Tool, [new FunctionResultContent("Docker_List", callId: "toolu_1", result: "3 containers")]);
+
+        Assert.StartsWith("[tool call] Docker_List", KernelService.TelemetryText(call), StringComparison.Ordinal);
+        Assert.Equal("[tool result] 3 containers", KernelService.TelemetryText(result));
+        Assert.Equal("plain", KernelService.TelemetryText(new ChatMessageContent(AuthorRole.User, "plain")));
     }
 
     // --- BackoffDelay ---
@@ -143,7 +150,7 @@ public class KernelServiceRetryTests
         Task<ChatMessageContent> Invoke(CancellationToken _)
         {
             calls++;
-            return Task.FromResult(Msg(null, "length"));
+            return Task.FromResult(Msg(null, ClaudeResponses.EmptyAtMaxTokens()));
         }
 
         var result = await KernelService.InvokeWithRetryAsync(
@@ -151,7 +158,8 @@ public class KernelServiceRetryTests
 
         Assert.True(KernelService.IsEmptyResponse(result));
         Assert.Equal(3, calls);
-        Assert.Contains(logger.Entries, e => e.Level == LogLevel.Error);
+        Assert.Contains(logger.Entries, e => e.Level == LogLevel.Error && e.Message.Contains("stopReason=max_tokens", StringComparison.Ordinal));
+        Assert.Equal(2, logger.Entries.Count(e => e.Level == LogLevel.Warning));
     }
 
     [Fact]
@@ -202,65 +210,7 @@ public class KernelServiceRetryTests
     }
 
     [Fact]
-    public async Task InvokeWithRetry_TransientAfterToolExecution_DoesNotRetry()
-    {
-        var history = NewHistory();
-        var calls = 0;
-        Task<ChatMessageContent> Invoke(CancellationToken _)
-        {
-            calls++;
-            history.AddMessage(AuthorRole.Tool, "container restarted");
-            throw new HttpOperationException(HttpStatusCode.ServiceUnavailable, null, "503", null);
-        }
-
-        await Assert.ThrowsAsync<HttpOperationException>(() => KernelService.InvokeWithRetryAsync(
-            Invoke, history, "test-model", 3, threadId: 0, NullLogger.Instance, _ => TimeSpan.Zero));
-
-        Assert.Equal(1, calls); // retrying would re-execute the tool
-    }
-
-    [Fact]
-    public async Task InvokeWithRetry_TransientThenSucceeds()
-    {
-        var history = NewHistory();
-        var calls = 0;
-        Task<ChatMessageContent> Invoke(CancellationToken _)
-        {
-            calls++;
-            if (calls == 1)
-            {
-                throw new HttpOperationException(HttpStatusCode.ServiceUnavailable, null, "503", null);
-            }
-
-            return Task.FromResult(Msg("ok"));
-        }
-
-        var result = await KernelService.InvokeWithRetryAsync(
-            Invoke, history, "test-model", 3, threadId: 0, NullLogger.Instance, _ => TimeSpan.Zero);
-
-        Assert.Equal("ok", result!.Content);
-        Assert.Equal(2, calls);
-    }
-
-    [Fact]
-    public async Task InvokeWithRetry_NonTransientHttpError_ThrowsImmediately()
-    {
-        var history = NewHistory();
-        var calls = 0;
-        Task<ChatMessageContent> Invoke(CancellationToken _)
-        {
-            calls++;
-            throw new HttpOperationException(HttpStatusCode.BadRequest, null, "400", null);
-        }
-
-        await Assert.ThrowsAsync<HttpOperationException>(() => KernelService.InvokeWithRetryAsync(
-            Invoke, history, "test-model", 3, threadId: 0, NullLogger.Instance, _ => TimeSpan.Zero));
-
-        Assert.Equal(1, calls);
-    }
-
-    [Fact]
-    public async Task InvokeWithRetry_AllTransient_ThrowsAfterMaxAttempts()
+    public async Task InvokeWithRetry_Refusal_IsReturnedWithoutRetry()
     {
         var history = NewHistory();
         var calls = 0;
@@ -268,14 +218,39 @@ public class KernelServiceRetryTests
         Task<ChatMessageContent> Invoke(CancellationToken _)
         {
             calls++;
-            throw new HttpOperationException(HttpStatusCode.GatewayTimeout, null, "504", null);
+            return Task.FromResult(Msg(null, ClaudeResponses.Refusal()));
         }
 
-        await Assert.ThrowsAsync<HttpOperationException>(() => KernelService.InvokeWithRetryAsync(
-            Invoke, history, "test-model", 3, threadId: 0, logger, _ => TimeSpan.Zero));
+        var result = await KernelService.InvokeWithRetryAsync(
+            Invoke, history, "test-model", 3, threadId: 0, logger, _ => TimeSpan.Zero);
 
-        Assert.Equal(3, calls);
-        Assert.Contains(logger.Entries, e => e.Level == LogLevel.Error);
+        Assert.NotNull(KernelService.GetRefusal(result));
+        Assert.Equal(1, calls);
+
+        // The caller reports the refusal; the retry helper must not log it as an empty response.
+        Assert.Empty(logger.Entries);
+    }
+
+    // The Anthropic SDK has already retried a transient failure, per request. A second layer here
+    // would repeat whole tool loops, so every exception goes straight to the caller.
+    [Theory]
+    [InlineData(typeof(HttpRequestException))]
+    [InlineData(typeof(TimeoutException))]
+    [InlineData(typeof(InvalidOperationException))]
+    public async Task InvokeWithRetry_Exception_IsNeverRetried(Type exceptionType)
+    {
+        var history = NewHistory();
+        var calls = 0;
+        Task<ChatMessageContent> Invoke(CancellationToken _)
+        {
+            calls++;
+            throw (Exception)Activator.CreateInstance(exceptionType, "boom")!;
+        }
+
+        await Assert.ThrowsAsync(exceptionType, () => KernelService.InvokeWithRetryAsync(
+            Invoke, history, "test-model", 3, threadId: 0, NullLogger.Instance, _ => TimeSpan.Zero));
+
+        Assert.Equal(1, calls);
     }
 
     [Fact]
@@ -307,15 +282,12 @@ public class KernelServiceRetryTests
         return history;
     }
 
-    private static ChatMessageContent Msg(string? content, string? finishReason = null)
-    {
-        return finishReason is null
-            ? new ChatMessageContent(AuthorRole.Assistant, content)
-            : new ChatMessageContent(
-                AuthorRole.Assistant,
-                content,
-                metadata: new Dictionary<string, object?> { ["FinishReason"] = finishReason });
-    }
+    // rawClaudeJson: the Messages API response the bridge keeps as InnerContent.
+    private static ChatMessageContent Msg(string? content, string? rawClaudeJson = null) =>
+        new(AuthorRole.Assistant, content)
+        {
+            InnerContent = rawClaudeJson is null ? null : ClaudeResponses.Parse(rawClaudeJson),
+        };
 
     private sealed class ListLogger : ILogger
     {

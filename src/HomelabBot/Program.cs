@@ -1,4 +1,5 @@
 using System.Text;
+using Anthropic;
 using DotNetEnv;
 using HomelabBot.Configuration;
 using HomelabBot.Data;
@@ -7,6 +8,7 @@ using HomelabBot.Mcp;
 using HomelabBot.Plugins;
 using HomelabBot.Services;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using OpenTelemetry;
 using OpenTelemetry.Exporter;
 using OpenTelemetry.Resources;
@@ -120,6 +122,7 @@ try
                 tracing
                     .SetSampler(new AlwaysOnSampler())
                     .AddSource("HomelabBot.Chat")
+                    .AddSource(AnthropicChatClientFactory.ActivitySourceName)
                     .AddSource("Microsoft.SemanticKernel*")
                     .AddProcessor(sp => new LangfuseEnrichmentProcessor(sp.GetRequiredService<ILoggerFactory>()))
                     .AddOtlpExporter(options =>
@@ -173,6 +176,12 @@ try
     builder.Services.AddSingleton<ConversationService>();
     builder.Services.AddSingleton<ConfirmationService>();
     builder.Services.AddSingleton<TelemetryService>();
+
+    // Claude API. The SDK keeps its defaults: 2 retries on 408/409/429/5xx and connection errors.
+    builder.Services.AddSingleton<IAnthropicClient>(sp => new AnthropicClient
+    {
+        ApiKey = sp.GetRequiredService<IOptions<BotConfiguration>>().Value.AnthropicApiKey,
+    });
     builder.Services.AddSingleton<KernelService>();
     builder.Services.AddSingleton<DiscordBotService>();
     builder.Services.AddHostedService(sp => sp.GetRequiredService<DiscordBotService>());

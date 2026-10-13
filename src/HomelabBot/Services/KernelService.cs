@@ -1,15 +1,16 @@
-using System.ClientModel;
-using System.ClientModel.Primitives;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Anthropic;
+using Anthropic.Models.Messages;
 using HomelabBot.Configuration;
 using HomelabBot.Plugins;
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Options;
 using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.ChatCompletion;
-using OpenAI;
+using ChatMessageContent = Microsoft.SemanticKernel.ChatMessageContent;
 
 namespace HomelabBot.Services;
 
@@ -96,6 +97,7 @@ public sealed class KernelService
 
     public KernelService(
         IOptions<BotConfiguration> config,
+        IAnthropicClient anthropicClient,
         ILogger<KernelService> logger,
         ILogger<TelemetryFunctionFilter> filterLogger,
         ConversationService conversationService,
@@ -112,45 +114,76 @@ public sealed class KernelService
         KnowledgePlugin knowledgePlugin,
         InvestigationPlugin investigationPlugin,
         RunbookPlugin runbookPlugin)
+        : this(
+            config.Value,
+            anthropicClient,
+            logger,
+            filterLogger,
+            conversationService,
+            telemetryService,
+            plugins =>
+            {
+                plugins.AddFromObject(dockerPlugin, "Docker");
+                plugins.AddFromObject(prometheusPlugin, "Prometheus");
+                plugins.AddFromObject(alertmanagerPlugin, "Alertmanager");
+                plugins.AddFromObject(lokiPlugin, "Loki");
+                plugins.AddFromObject(grafanaPlugin, "Grafana");
+                plugins.AddFromObject(mikrotikPlugin, "MikroTik");
+                plugins.AddFromObject(truenasPlugin, "TrueNAS");
+                plugins.AddFromObject(homeAssistantPlugin, "HomeAssistant");
+                plugins.AddFromObject(ntfyPlugin, "Ntfy");
+                plugins.AddFromObject(knowledgePlugin, "Knowledge");
+                plugins.AddFromObject(investigationPlugin, "Investigation");
+                plugins.AddFromObject(runbookPlugin, "Runbook");
+            })
+    {
+    }
+
+    // Tests build the service with their own plugins and a client on a scripted transport.
+    internal KernelService(
+        BotConfiguration config,
+        IAnthropicClient anthropicClient,
+        ILogger<KernelService> logger,
+        ILogger<TelemetryFunctionFilter> filterLogger,
+        ConversationService conversationService,
+        TelemetryService telemetryService,
+        Action<IKernelBuilderPlugins> addPlugins)
     {
         _logger = logger;
         _conversationService = conversationService;
         _telemetryService = telemetryService;
-        _modelId = config.Value.OpenRouterModel;
-        _maxAttempts = Math.Max(1, config.Value.MaxResponseAttempts);
-        _maxTokens = config.Value.MaxTokens;
+        _modelId = config.AnthropicModel;
+        _maxAttempts = Math.Max(1, config.MaxResponseAttempts);
+        _maxTokens = config.MaxTokens;
+
+        if (string.IsNullOrWhiteSpace(config.AnthropicApiKey))
+        {
+            _logger.LogError("Bot:AnthropicApiKey is empty; every LLM request will fail until it is set");
+        }
+
+        // None would send thinking "disabled", which this model answers with HTTP 400.
+        var effort = config.AnthropicEffort;
+        if (effort == ReasoningEffort.None)
+        {
+            _logger.LogError("Bot:AnthropicEffort None is not supported; using Medium");
+            effort = ReasoningEffort.Medium;
+        }
+
+        var chatClient = AnthropicChatClientFactory.Create(
+            anthropicClient, config.AnthropicModel, config.MaxTokens, effort, logger);
 
         var builder = Kernel.CreateBuilder();
-
-        var clientOptions = new OpenAIClientOptions { Endpoint = new Uri(config.Value.OpenRouterEndpoint) };
-        clientOptions.AddPolicy(new OpenRouterAttributionPolicy(), PipelinePosition.PerCall);
-        clientOptions.AddPolicy(
-            new OpenRouterPromptCachePolicy(config.Value.OpenRouterModel, logger), PipelinePosition.PerCall);
-        clientOptions.AddPolicy(new OpenRouterUsagePolicy(logger), PipelinePosition.PerCall);
-        var openAIClient = new OpenAIClient(new ApiKeyCredential(config.Value.OpenRouterApiKey), clientOptions);
-
-        builder.AddOpenAIChatCompletion(config.Value.OpenRouterModel, openAIClient);
-
-        builder.Plugins.AddFromObject(dockerPlugin, "Docker");
-        builder.Plugins.AddFromObject(prometheusPlugin, "Prometheus");
-        builder.Plugins.AddFromObject(alertmanagerPlugin, "Alertmanager");
-        builder.Plugins.AddFromObject(lokiPlugin, "Loki");
-        builder.Plugins.AddFromObject(grafanaPlugin, "Grafana");
-        builder.Plugins.AddFromObject(mikrotikPlugin, "MikroTik");
-        builder.Plugins.AddFromObject(truenasPlugin, "TrueNAS");
-        builder.Plugins.AddFromObject(homeAssistantPlugin, "HomeAssistant");
-        builder.Plugins.AddFromObject(ntfyPlugin, "Ntfy");
-        builder.Plugins.AddFromObject(knowledgePlugin, "Knowledge");
-        builder.Plugins.AddFromObject(investigationPlugin, "Investigation");
-        builder.Plugins.AddFromObject(runbookPlugin, "Runbook");
+        builder.Services.AddSingleton(chatClient.AsChatCompletionService());
+        addPlugins(builder.Plugins);
 
         _kernel = builder.Build();
         _kernel.FunctionInvocationFilters.Add(new TelemetryFunctionFilter(telemetryService, filterLogger));
+        _kernel.AutoFunctionInvocationFilters.Add(new ToolExceptionFilter(logger));
         _chatService = _kernel.GetRequiredService<IChatCompletionService>();
 
         _logger.LogInformation(
-            "Kernel initialized with OpenRouter {Model} and {PluginCount} plugins",
-            config.Value.OpenRouterModel, _kernel.Plugins.Count);
+            "Kernel initialized with Claude API model {Model} (effort {Effort}) and {PluginCount} plugins",
+            config.AnthropicModel, effort, _kernel.Plugins.Count);
     }
 
     public async Task<string> GenerateThreadTitleAsync(
@@ -237,7 +270,7 @@ public sealed class KernelService
         var history = _conversationService.GetOrCreateHistory(threadId, systemPrompt);
         _conversationService.AddUserMessage(threadId, userMessage);
 
-        var historyJson = JsonSerializer.Serialize(history.Select(m => new { m.Role, Content = m.Content }));
+        var historyJson = JsonSerializer.Serialize(history.Select(m => new { m.Role, Content = TelemetryText(m) }));
         var interaction = await _telemetryService.LogInteractionStartAsync(
             threadId, _modelId, userMessage, historyJson, ct);
 
@@ -251,9 +284,10 @@ public sealed class KernelService
             FunctionChoiceBehavior = allowToolUse
                 ? FunctionChoiceBehavior.Auto(ResolveFunctions(pluginAllowList))
                 : FunctionChoiceBehavior.None(functions: []),
+
+            // No sampling parameters: the model rejects a non-default temperature / top_p / top_k.
             ExtensionData = new Dictionary<string, object>
             {
-                ["temperature"] = 0.7,
                 ["max_tokens"] = maxTokens ?? _maxTokens,
             },
         };
@@ -274,9 +308,28 @@ public sealed class KernelService
 
             sw.Stop();
 
+            if (GetRefusal(response) is { } refusal)
+            {
+                _logger.LogWarning(
+                    "Claude declined the request for thread {ThreadId} (category={Category}): {Explanation}",
+                    threadId, refusal.Category, refusal.Explanation);
+
+                var declined = RefusalMessage(refusal.Category);
+
+                // Same reason as the empty case below: the turn must end with an assistant reply.
+                _conversationService.AddAssistantMessage(threadId, declined);
+
+                await _telemetryService.LogInteractionCompleteAsync(
+                    interaction.Id, declined, ResolveUsage(usageScope, response), sw.ElapsedMilliseconds, ct);
+                activity?.SetTag("langfuse.observation.level", "WARNING");
+                activity?.SetTag("langfuse.observation.status_message", $"refusal: {refusal.Category}");
+                activity?.SetTag("langfuse.trace.output", declined);
+                return declined;
+            }
+
             if (IsEmptyResponse(response))
             {
-                // The retry helper already logged the give-up at Error level (finish reason + tokens).
+                // The retry helper already logged the give-up at Error level (stop reason + tokens).
                 const string fallback =
                     "I couldn't generate a response - the model returned nothing. Try asking again or rephrasing.";
 
@@ -328,11 +381,13 @@ public sealed class KernelService
         }
     }
 
-    // Retries empty/whitespace responses (OpenRouter occasionally returns HTTP 200 with no
-    // content - notably reasoning models that spend the whole budget thinking) and transient
-    // HTTP failures (408/429/5xx/timeouts). SK auto function invocation appends tool-call and
-    // tool-result messages to the shared history in place, so each retry first resets it to the
-    // pre-call length - otherwise attempts stack duplicate/partial turns on one another.
+    // Retries empty/whitespace responses: HTTP 200 with no text, for example when thinking used
+    // the whole max_tokens budget. Transient HTTP failures are not retried here: the Anthropic
+    // SDK retries 408/409/429/5xx and connection errors itself, per request, and a second layer
+    // on top would multiply the attempts and re-run tool rounds that already finished.
+    // The function-invocation loop appends tool-call and tool-result messages to the shared
+    // history when it returns, so each retry first resets it to the pre-call length - otherwise
+    // attempts stack duplicate turns on one another.
     internal static async Task<ChatMessageContent?> InvokeWithRetryAsync(
         Func<CancellationToken, Task<ChatMessageContent>> invoke,
         ChatHistory history,
@@ -355,82 +410,52 @@ public sealed class KernelService
                 TrimToBaseline(history, baseline);
             }
 
-            try
+            response = await invoke(c);
+
+            // A refusal is a decision, not a glitch: the same request gets the same answer.
+            // The caller logs it and tells the user.
+            if (GetRefusal(response) is not null)
             {
-                response = await invoke(c);
-
-                if (!IsEmptyResponse(response))
-                {
-                    if (attempt > 1)
-                    {
-                        logger.LogInformation(
-                            "Recovered non-empty response from {Model} for thread {ThreadId} on attempt {Attempt}/{MaxAttempts}",
-                            modelId, threadId, attempt, maxAttempts);
-                    }
-
-                    return response;
-                }
-
-                var finishReason = GetFinishReason(response);
-                var (promptTokens, completionTokens) = ExtractTokenUsage(response);
-
-                // The model ran tools (side effects already happened) then returned empty - the
-                // exact empty-after-thinking case this targets. Retrying would trim those tool
-                // turns and re-run them, so a "restart container"/"send alert" could fire again.
-                // Give up instead and let the caller surface a fallback.
-                if (ToolsExecuted(history, baseline))
-                {
-                    logger.LogError(
-                        "Empty response after tool execution from {Model} for thread {ThreadId} (finishReason={FinishReason}, promptTokens={PromptTokens}, completionTokens={CompletionTokens}); not retrying to avoid re-running tools",
-                        modelId, threadId, finishReason, promptTokens, completionTokens);
-                    return response;
-                }
-
-                if (attempt < maxAttempts)
-                {
-                    logger.LogWarning(
-                        "Empty response from {Model} for thread {ThreadId} (attempt {Attempt}/{MaxAttempts}, finishReason={FinishReason}); retrying",
-                        modelId, threadId, attempt, maxAttempts, finishReason);
-                }
-                else
-                {
-                    logger.LogError(
-                        "Exhausted {MaxAttempts} attempts, still empty response from {Model} for thread {ThreadId} (finishReason={FinishReason}, promptTokens={PromptTokens}, completionTokens={CompletionTokens})",
-                        maxAttempts, modelId, threadId, finishReason, promptTokens, completionTokens);
-                    return response;
-                }
+                return response;
             }
-            catch (OperationCanceledException) when (c.IsCancellationRequested)
+
+            if (!IsEmptyResponse(response))
             {
-                throw;
+                if (attempt > 1)
+                {
+                    logger.LogInformation(
+                        "Recovered non-empty response from {Model} for thread {ThreadId} on attempt {Attempt}/{MaxAttempts}",
+                        modelId, threadId, attempt, maxAttempts);
+                }
+
+                return response;
             }
-            catch (HttpOperationException ex) when (IsTransient(ex))
+
+            var stopReason = GetStopReason(response);
+            var (promptTokens, completionTokens) = ExtractTokenUsage(response);
+
+            // The model ran tools (side effects already happened) then returned empty. Retrying
+            // would trim those tool turns and re-run them, so a "restart container"/"send alert"
+            // could fire again. Give up instead and let the caller surface a fallback.
+            if (ToolsExecuted(history, baseline))
             {
-                // Same hazard as the empty case: if tools already ran this attempt, retrying
-                // re-executes their side effects, so don't.
-                if (ToolsExecuted(history, baseline))
-                {
-                    logger.LogError(
-                        ex,
-                        "Transient {StatusCode} after tool execution from {Model} for thread {ThreadId}; not retrying to avoid re-running tools",
-                        ex.StatusCode, modelId, threadId);
-                    throw;
-                }
-
-                if (attempt >= maxAttempts)
-                {
-                    logger.LogError(
-                        ex,
-                        "Exhausted {MaxAttempts} attempts on transient {StatusCode} from {Model} for thread {ThreadId}",
-                        maxAttempts, ex.StatusCode, modelId, threadId);
-                    throw;
-                }
-
-                logger.LogWarning(
-                    ex,
-                    "Transient {StatusCode} from {Model} for thread {ThreadId} (attempt {Attempt}/{MaxAttempts}); retrying",
-                    ex.StatusCode, modelId, threadId, attempt, maxAttempts);
+                logger.LogError(
+                    "Empty response after tool execution from {Model} for thread {ThreadId} (stopReason={StopReason}, promptTokens={PromptTokens}, completionTokens={CompletionTokens}); not retrying to avoid re-running tools",
+                    modelId, threadId, stopReason, promptTokens, completionTokens);
+                return response;
             }
+
+            if (attempt >= maxAttempts)
+            {
+                logger.LogError(
+                    "Exhausted {MaxAttempts} attempts, still empty response from {Model} for thread {ThreadId} (stopReason={StopReason}, promptTokens={PromptTokens}, completionTokens={CompletionTokens})",
+                    maxAttempts, modelId, threadId, stopReason, promptTokens, completionTokens);
+                return response;
+            }
+
+            logger.LogWarning(
+                "Empty response from {Model} for thread {ThreadId} (attempt {Attempt}/{MaxAttempts}, stopReason={StopReason}); retrying",
+                modelId, threadId, attempt, maxAttempts, stopReason);
 
             await Task.Delay(backoffDelay(attempt), c);
         }
@@ -438,8 +463,8 @@ public sealed class KernelService
         return response;
     }
 
-    // SK appends tool-call/result messages to the shared history during a call; drop anything
-    // past the pre-call length so a retry starts from a clean state.
+    // The loop appends tool-call/result messages to the shared history; drop anything past the
+    // pre-call length so a retry starts from a clean state.
     private static void TrimToBaseline(ChatHistory history, int baseline)
     {
         for (var i = history.Count - 1; i >= baseline; i--)
@@ -481,30 +506,25 @@ public sealed class KernelService
         return string.IsNullOrWhiteSpace(StripThinkingBlocks(content));
     }
 
-    // Transport failures (no status) and retryable HTTP codes (408/429/5xx).
-    internal static bool IsTransient(HttpOperationException ex)
+    // The raw Claude message of the last round; the bridge keeps it as InnerContent.
+    internal static string GetStopReason(ChatMessageContent? response) =>
+        (response?.InnerContent as Message)?.StopReason?.Raw() ?? "unknown";
+
+    // stop_reason "refusal" arrives as HTTP 200, usually with no content at all. Null when the
+    // response is not a refusal.
+    internal static (string Category, string Explanation)? GetRefusal(ChatMessageContent? response)
     {
-        if (ex.StatusCode is null)
+        if (response?.InnerContent is not Message message || message.StopReason?.Raw() != "refusal")
         {
-            // No HTTP response received (connection reset, timeout, DNS, etc.).
-            return true;
+            return null;
         }
 
-        var code = (int)ex.StatusCode.Value;
-        return code == 408 || code == 429 || code >= 500;
+        var details = message.StopDetails;
+        return (details?.Category?.Raw() ?? "unspecified", details?.Explanation ?? "no explanation given");
     }
 
-    internal static string GetFinishReason(ChatMessageContent? response)
-    {
-        if (response?.Metadata is not null
-            && response.Metadata.TryGetValue("FinishReason", out var finishReason)
-            && finishReason is not null)
-        {
-            return finishReason.ToString() ?? "unknown";
-        }
-
-        return "unknown";
-    }
+    internal static string RefusalMessage(string category) =>
+        $"I can't help with this one - the model declined the request (category: {category}). Try rephrasing it.";
 
     // Full-jitter exponential backoff: random delay in [0, min(8s, 500ms * 2^(attempt-1))).
     internal static TimeSpan BackoffDelay(int attempt)
@@ -576,16 +596,16 @@ public sealed class KernelService
             return (null, null);
         }
 
-        if (response.Metadata.TryGetValue("Usage", out var usage)
-            && usage is OpenAI.Chat.ChatTokenUsage openAiUsage)
+        // The bridge reports the whole prompt here, cached part included.
+        if (response.Metadata.TryGetValue("Usage", out var usage) && usage is UsageDetails details)
         {
-            return (openAiUsage.InputTokenCount, openAiUsage.OutputTokenCount);
+            return ((int?)details.InputTokenCount, (int?)details.OutputTokenCount);
         }
 
         return (null, null);
     }
 
-    // Per-round totals when the pipeline policy captured every round. When some round had no
+    // Per-round totals when the usage client captured every round. When some round had no
     // readable usage the sum undercounts, so never store less than the final response reports.
     internal static LlmTokenUsage ResolveUsage(
         LlmTokenUsage scopeUsage, int missedRounds, ChatMessageContent? response, ILogger logger)
@@ -619,6 +639,29 @@ public sealed class KernelService
 
     private LlmTokenUsage ResolveUsage(TokenUsageScope scope, ChatMessageContent? response) =>
         ResolveUsage(scope.Snapshot(), scope.MissedRounds, response, _logger);
+
+    // Tool turns in the history carry no text, only the call and result items. The stored history
+    // must still show them: it is what explains the size of a prompt.
+    internal static string? TelemetryText(ChatMessageContent message)
+    {
+        if (!string.IsNullOrEmpty(message.Content))
+        {
+            return message.Content;
+        }
+
+        var parts = message.Items
+            .Select(item => item switch
+            {
+                Microsoft.SemanticKernel.FunctionCallContent call =>
+                    $"[tool call] {call.FunctionName} {JsonSerializer.Serialize(call.Arguments)}",
+                Microsoft.SemanticKernel.FunctionResultContent result => $"[tool result] {result.Result}",
+                _ => null,
+            })
+            .Where(part => part is not null)
+            .ToList();
+
+        return parts.Count > 0 ? string.Join("\n", parts) : message.Content;
+    }
 
     internal static string StripThinkingBlocks(string text)
     {

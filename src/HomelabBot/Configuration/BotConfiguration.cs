@@ -1,3 +1,5 @@
+using Microsoft.Extensions.AI;
+
 namespace HomelabBot.Configuration;
 
 /// <summary>
@@ -15,19 +17,23 @@ public sealed class BotConfiguration
 
     public required string DiscordToken { get; init; }
 
-    public required string OpenRouterApiKey { get; init; }
+    // Claude Console API key (https://platform.claude.com/settings/keys).
+    public required string AnthropicApiKey { get; init; }
 
-    public string OpenRouterModel { get; init; } = "anthropic/claude-sonnet-5.5";
+    public string AnthropicModel { get; init; } = "claude-sonnet-5-5";
 
-    public string OpenRouterEndpoint { get; init; } = "https://openrouter.ai/api/v1";
+    // output_config.effort: how much the model thinks and spends per request. The API default is
+    // High; Medium is the documented starting point for tool loops.
+    public ReasoningEffort AnthropicEffort { get; init; } = ReasoningEffort.Medium;
 
-    // Total attempts for a chat completion before giving up (1 = no retry). Covers both
-    // empty/null responses and transient HTTP failures (408/429/5xx/timeouts).
+    // Total attempts for a chat completion that comes back empty (1 = no retry). Transient HTTP
+    // failures (408/409/429/5xx/connection) are not counted here: the Anthropic SDK retries those
+    // itself, per request, so a tool round is never run twice.
     public int MaxResponseAttempts { get; init; } = 3;
 
-    // Generous on purpose: must exceed a reasoning model's thinking budget, else reasoning
-    // tokens consume it all and the model returns empty content (finish_reason=length). Only a
-    // cap - billed for tokens actually generated, not this ceiling.
+    // Generous on purpose: thinking counts toward max_tokens, so a low cap lets thinking consume
+    // it all and the model returns empty content (stop_reason=max_tokens). Only a cap - billed
+    // for tokens actually generated, not this ceiling.
     public int MaxTokens { get; init; } = 50000;
 
     public List<ulong> DedicatedChannels { get; init; } = [];
