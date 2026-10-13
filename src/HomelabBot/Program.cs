@@ -1,4 +1,5 @@
 using System.Text;
+using Anthropic;
 using DotNetEnv;
 using HomelabBot.Configuration;
 using HomelabBot.Data;
@@ -7,6 +8,8 @@ using HomelabBot.Mcp;
 using HomelabBot.Plugins;
 using HomelabBot.Services;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Options;
 using OpenTelemetry;
 using OpenTelemetry.Exporter;
 using OpenTelemetry.Resources;
@@ -35,6 +38,9 @@ try
     builder.Services.AddOptions<BotConfiguration>()
         .Bind(builder.Configuration.GetSection(BotConfiguration.SectionName))
         .ValidateDataAnnotations()
+        .Validate(
+            bot => bot.AnthropicEffort != ReasoningEffort.None,
+            "Bot:AnthropicEffort None turns thinking off, which the model rejects with HTTP 400. Use Low, Medium, High or ExtraHigh.")
         .ValidateOnStart();
 
     builder.Services.AddOptions<MikroTikConfiguration>()
@@ -120,6 +126,7 @@ try
                 tracing
                     .SetSampler(new AlwaysOnSampler())
                     .AddSource("HomelabBot.Chat")
+                    .AddSource(TelemetryConstants.LlmActivitySourceName)
                     .AddSource("Microsoft.SemanticKernel*")
                     .AddProcessor(sp => new LangfuseEnrichmentProcessor(sp.GetRequiredService<ILoggerFactory>()))
                     .AddOtlpExporter(options =>
@@ -173,6 +180,12 @@ try
     builder.Services.AddSingleton<ConversationService>();
     builder.Services.AddSingleton<ConfirmationService>();
     builder.Services.AddSingleton<TelemetryService>();
+
+    // Claude API. The SDK keeps its defaults: 2 retries on 408/409/429/5xx and connection errors.
+    // It also keeps its own HttpClient: a factory client would add a 100 s timeout and, with the
+    // resilience handler, a second retry layer.
+    builder.Services.AddSingleton<IAnthropicClient>(sp => AnthropicChatClientFactory.CreateApiClient(
+        sp.GetRequiredService<IOptions<BotConfiguration>>().Value.AnthropicApiKey));
     builder.Services.AddSingleton<KernelService>();
     builder.Services.AddSingleton<DiscordBotService>();
     builder.Services.AddHostedService(sp => sp.GetRequiredService<DiscordBotService>());

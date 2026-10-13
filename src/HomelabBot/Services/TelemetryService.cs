@@ -163,6 +163,17 @@ public sealed class TelemetryService
         return true;
     }
 
+    public async Task<List<ToolCallLog>> GetToolCallsAsync(int interactionId, CancellationToken ct = default)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(ct);
+
+        return await db.ToolCallLogs
+            .AsNoTracking()
+            .Where(t => t.LlmInteractionId == interactionId)
+            .OrderBy(t => t.Id)
+            .ToListAsync(ct);
+    }
+
     public async Task LogToolCallAsync(
         int interactionId,
         string pluginName,

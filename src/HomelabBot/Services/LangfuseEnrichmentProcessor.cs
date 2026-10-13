@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.Extensions.Logging;
 using OpenTelemetry;
 
@@ -7,11 +8,15 @@ namespace HomelabBot.Services;
 
 /// <summary>
 /// Enriches spans for Langfuse. Required because:
-/// 1. SK puts messages in Events, not attributes - Langfuse shows raw JSON without extraction.
+/// 1. The LLM spans carry prompt, answer and usage in OpenTelemetry GenAI attributes; Langfuse
+///    reads its own langfuse.observation.* attributes on every version, so they are set here.
 /// 2. Session/user IDs need propagation for filtering.
 /// </summary>
 public sealed class LangfuseEnrichmentProcessor : BaseProcessor<Activity>
 {
+    private const string InputMessages = "gen_ai.input.messages";
+    private const string OutputMessages = "gen_ai.output.messages";
+
     private readonly ILogger<LangfuseEnrichmentProcessor> _logger;
 
     public LangfuseEnrichmentProcessor(ILoggerFactory loggerFactory)
@@ -23,8 +28,8 @@ public sealed class LangfuseEnrichmentProcessor : BaseProcessor<Activity>
     {
         try
         {
-            PropagateFromParent(activity, "langfuse.session.id");
-            PropagateFromParent(activity, "langfuse.user.id");
+            PropagateFromAncestor(activity, "langfuse.session.id");
+            PropagateFromAncestor(activity, "langfuse.user.id");
 
             // Our custom traces and spans (Chat, Generate Title, SmartRecall, etc.)
             if (activity.Source.Name == "HomelabBot.Chat")
@@ -37,40 +42,17 @@ public sealed class LangfuseEnrichmentProcessor : BaseProcessor<Activity>
                 CopyTag(activity, "langfuse.span.input", "langfuse.observation.input");
                 CopyTag(activity, "langfuse.span.output", "langfuse.observation.output");
             }
-            else if (activity.Source.Name.StartsWith("Microsoft.SemanticKernel"))
+            else if (activity.Source.Name == TelemetryConstants.LlmActivitySourceName)
             {
-                var operation = activity.GetTagItem("gen_ai.operation.name")?.ToString();
-
-                if (operation == "execute_tool")
-                {
-                    // Tool call - extract arguments and result
-                    var args = ExtractToolContent(activity, "gen_ai.tool.message");
-                    if (!string.IsNullOrEmpty(args))
-                    {
-                        activity.SetTag("langfuse.observation.input", args);
-                    }
-
-                    var result = ExtractToolContent(activity, "gen_ai.tool.result");
-                    if (!string.IsNullOrEmpty(result))
-                    {
-                        activity.SetTag("langfuse.observation.output", result);
-                    }
-                }
-                else
-                {
-                    // Chat generation - extract user message and response
-                    var input = ExtractContent(activity, "gen_ai.user.message");
-                    if (!string.IsNullOrEmpty(input))
-                    {
-                        activity.SetTag("langfuse.observation.input", input);
-                    }
-
-                    var output = ExtractContent(activity, "gen_ai.choice");
-                    if (!string.IsNullOrEmpty(output))
-                    {
-                        activity.SetTag("langfuse.observation.output", output);
-                    }
-                }
+                EnrichGeneration(activity);
+            }
+            else if (activity.Source.Name.StartsWith("Microsoft.SemanticKernel", StringComparison.Ordinal)
+                && activity.GetTagItem("gen_ai.operation.name")?.ToString() == "execute_tool")
+            {
+                // Semantic Kernel writes these two tags only with its sensitive-diagnostics switch on.
+                CopyTag(activity, "gen_ai.tool.call.arguments", "langfuse.observation.input");
+                CopyTag(activity, "gen_ai.tool.call.result", "langfuse.observation.output");
+                activity.SetTag("langfuse.observation.type", "tool");
             }
         }
         catch (Exception ex)
@@ -81,17 +63,161 @@ public sealed class LangfuseEnrichmentProcessor : BaseProcessor<Activity>
         base.OnEnd(activity);
     }
 
-    private static void PropagateFromParent(Activity activity, string key)
+    // One LLM request. Input and output become chat-format JSON, which Langfuse renders as a
+    // conversation. The raw attributes are then removed: they hold the same text a second time.
+    internal static void EnrichGeneration(Activity activity)
     {
-        if (activity.GetTagItem(key) != null || activity.Parent == null)
+        if (ToChatFormat(activity.GetTagItem(InputMessages)?.ToString()) is { } input)
+        {
+            activity.SetTag("langfuse.observation.input", input.ToJsonString());
+            activity.SetTag(InputMessages, null);
+        }
+
+        if (ToChatFormat(activity.GetTagItem(OutputMessages)?.ToString()) is { } output)
+        {
+            activity.SetTag("langfuse.observation.output", (output.Count == 1 ? output[0]! : output).ToJsonString());
+            activity.SetTag(OutputMessages, null);
+        }
+
+        // About 60 tool schemas on every request; Langfuse has no view for them.
+        activity.SetTag("gen_ai.tool.definitions", null);
+
+        // gen_ai.usage.input_tokens counts the cached part too. Langfuse prices each key on its
+        // own, so the keys must not overlap.
+        if (ReadCount(activity, "gen_ai.usage.input_tokens") is { } inputTokens)
+        {
+            var cacheRead = ReadCount(activity, "gen_ai.usage.cache_read.input_tokens") ?? 0;
+            var cacheWrite = ReadCount(activity, AnthropicUsageChatClient.CacheCreationTag) ?? 0;
+            var usage = new JsonObject
+            {
+                ["input"] = Math.Max(0, inputTokens - cacheRead - cacheWrite),
+                ["output"] = ReadCount(activity, "gen_ai.usage.output_tokens") ?? 0,
+                ["cache_read_input_tokens"] = cacheRead,
+                ["cache_creation_input_tokens"] = cacheWrite,
+            };
+            activity.SetTag("langfuse.observation.usage_details", usage.ToJsonString());
+        }
+    }
+
+    // From the OpenTelemetry GenAI shape [{role, parts:[{type, ...}]}] to [{role, content, tool_calls}].
+    // Null when the value is missing or not in that shape; the caller then leaves the span as it is.
+    internal static JsonArray? ToChatFormat(string? genAiMessagesJson)
+    {
+        if (string.IsNullOrEmpty(genAiMessagesJson))
+        {
+            return null;
+        }
+
+        JsonNode? parsed;
+        try
+        {
+            parsed = JsonNode.Parse(genAiMessagesJson);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+
+        if (parsed is not JsonArray messages)
+        {
+            return null;
+        }
+
+        var result = new JsonArray();
+        foreach (var message in messages.OfType<JsonObject>())
+        {
+            AppendChatMessages(message, result);
+        }
+
+        return result.Count > 0 ? result : null;
+    }
+
+    // One GenAI message becomes one chat message, plus one "tool" message per tool result in it.
+    private static void AppendChatMessages(JsonObject message, JsonArray result)
+    {
+        List<string> texts = [];
+        var toolCalls = new JsonArray();
+        List<JsonObject> toolResults = [];
+
+        // Any other part type is skipped. A thinking part holds no readable text, only a signature.
+        foreach (var part in (message["parts"] as JsonArray ?? []).OfType<JsonObject>())
+        {
+            switch (part["type"]?.GetValue<string>())
+            {
+                case "text":
+                    texts.Add(AsText(part["content"]));
+                    break;
+
+                case "tool_call":
+                    toolCalls.Add(new JsonObject
+                    {
+                        ["id"] = part["id"]?.DeepClone(),
+                        ["type"] = "function",
+                        ["function"] = new JsonObject
+                        {
+                            ["name"] = part["name"]?.DeepClone(),
+                            ["arguments"] = part["arguments"]?.ToJsonString() ?? "{}",
+                        },
+                    });
+                    break;
+
+                case "tool_call_response":
+                    toolResults.Add(new JsonObject
+                    {
+                        ["role"] = "tool",
+                        ["tool_call_id"] = part["id"]?.DeepClone(),
+                        ["content"] = AsText(part["response"]),
+                    });
+                    break;
+            }
+        }
+
+        if (texts.Count > 0 || toolCalls.Count > 0)
+        {
+            var chatMessage = new JsonObject
+            {
+                ["role"] = message["role"]?.GetValue<string>() ?? "unknown",
+                ["content"] = string.Join("\n", texts),
+            };
+            if (toolCalls.Count > 0)
+            {
+                chatMessage["tool_calls"] = toolCalls;
+            }
+
+            result.Add(chatMessage);
+        }
+
+        foreach (var toolResult in toolResults)
+        {
+            result.Add(toolResult);
+        }
+    }
+
+    private static string AsText(JsonNode? node) => node switch
+    {
+        null => "",
+        JsonValue value when value.TryGetValue<string>(out var text) => text,
+        _ => node.ToJsonString(),
+    };
+
+    private static long? ReadCount(Activity activity, string key) =>
+        activity.GetTagItem(key) is { } value && long.TryParse(value.ToString(), out var count) ? count : null;
+
+    private static void PropagateFromAncestor(Activity activity, string key)
+    {
+        if (activity.GetTagItem(key) != null)
         {
             return;
         }
 
-        var value = activity.Parent.GetTagItem(key)?.ToString();
-        if (!string.IsNullOrEmpty(value))
+        for (var ancestor = activity.Parent; ancestor != null; ancestor = ancestor.Parent)
         {
-            activity.SetTag(key, value);
+            var value = ancestor.GetTagItem(key)?.ToString();
+            if (!string.IsNullOrEmpty(value))
+            {
+                activity.SetTag(key, value);
+                return;
+            }
         }
     }
 
@@ -102,105 +228,5 @@ public sealed class LangfuseEnrichmentProcessor : BaseProcessor<Activity>
         {
             activity.SetTag(target, value);
         }
-    }
-
-    private static string? ExtractContent(Activity activity, string eventName)
-    {
-        string? lastContent = null;
-
-        foreach (var evt in activity.Events)
-        {
-            if (evt.Name != eventName)
-            {
-                continue;
-            }
-
-            foreach (var tag in evt.Tags)
-            {
-                if (tag.Key != "gen_ai.event.content")
-                {
-                    continue;
-                }
-
-                var json = tag.Value?.ToString();
-                if (string.IsNullOrEmpty(json))
-                {
-                    continue;
-                }
-
-                try
-                {
-                    using var doc = JsonDocument.Parse(json);
-
-                    // {"role":"user","content":"..."} or {"message":{"content":"..."}}
-                    if (doc.RootElement.TryGetProperty("content", out var c))
-                    {
-                        lastContent = c.GetString();
-                    }
-                    else if (doc.RootElement.TryGetProperty("message", out var m) &&
-                        m.TryGetProperty("content", out var mc))
-                    {
-                        lastContent = mc.GetString();
-                    }
-                }
-                catch (JsonException)
-                {
-                    lastContent = json;
-                }
-            }
-        }
-
-        return lastContent;
-    }
-
-    private static string? ExtractToolContent(Activity activity, string eventName)
-    {
-        foreach (var evt in activity.Events)
-        {
-            if (evt.Name != eventName)
-            {
-                continue;
-            }
-
-            foreach (var tag in evt.Tags)
-            {
-                if (tag.Key != "gen_ai.event.content")
-                {
-                    continue;
-                }
-
-                var json = tag.Value?.ToString();
-                if (string.IsNullOrEmpty(json))
-                {
-                    return null;
-                }
-
-                try
-                {
-                    using var doc = JsonDocument.Parse(json);
-
-                    // Tool message: {"tool_call_id":"...","content":"..."} or just content string
-                    if (doc.RootElement.TryGetProperty("content", out var c))
-                    {
-                        return c.GetString();
-                    }
-
-                    // Tool arguments: {"arguments":"..."}
-                    if (doc.RootElement.TryGetProperty("arguments", out var args))
-                    {
-                        return args.GetString();
-                    }
-
-                    // Fallback to full JSON
-                    return json;
-                }
-                catch (JsonException)
-                {
-                    return json;
-                }
-            }
-        }
-
-        return null;
     }
 }

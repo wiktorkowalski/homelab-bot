@@ -306,10 +306,12 @@ public sealed class ConversationService
         }
     }
 
-    // SK auto function invocation (KernelService) appends tool results straight into the cached
+    // The function-invocation loop (KernelService) appends tool results straight into the cached
     // history, so they are capped here, at the next Add* call, before any later request re-sends them.
-    // SK builds each tool message with the result twice: a TextContent (message.Content, also
-    // serialized into telemetry) and a FunctionResultContent (sent to the model). Both get capped.
+    // A tool message holds the result as a FunctionResultContent (sent to the model). A history
+    // built by hand can also hold it as a TextContent. Both get capped.
+    // Rewriting a stored turn is safe for the API because stored turns carry no thinking blocks:
+    // the bridge drops them when it converts a response into chat history.
     internal static int TruncateToolResults(ChatHistory history, int maxChars)
     {
         var truncated = 0;
@@ -417,7 +419,7 @@ public sealed class ConversationService
             }
         }
 
-        // An SK tool message carries the same result as text and as FunctionResultContent; count it once.
+        // A tool message can carry the same result as text and as FunctionResultContent; count it once.
         return (callChars + (hasText ? textChars : resultChars)) / 4;
     }
 
@@ -437,7 +439,7 @@ public sealed class ConversationService
     private static string Truncate(string text, int maxChars) =>
         $"{text[..maxChars]}\n[truncated: kept {maxChars} of {text.Length} chars]";
 
-    // SK stores auto-invoked results as strings already; ToString covers anything else without
+    // Auto-invoked results are stored as strings already; ToString covers anything else without
     // the serializer throwing on an odd object graph.
     private static string? ResultText(FunctionResultContent result) => result.Result?.ToString();
 }
