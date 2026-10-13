@@ -17,5 +17,6 @@ jobs:
       image-name: wiktorkowalski/homelab-bot
       dotnet-project: src/HomelabBot/HomelabBot.csproj
       deploy-compose-path: /home/ubuntu/docker/homelab-bot
+      runner-labels: '["ubuntu-24.04"]'
       deploy-runner-labels: '["self-hosted", "homelab-bot"]'
     secrets: inherit
