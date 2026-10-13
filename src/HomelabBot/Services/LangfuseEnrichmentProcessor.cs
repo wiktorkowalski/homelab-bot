@@ -42,12 +42,11 @@ public sealed class LangfuseEnrichmentProcessor : BaseProcessor<Activity>
                 CopyTag(activity, "langfuse.span.input", "langfuse.observation.input");
                 CopyTag(activity, "langfuse.span.output", "langfuse.observation.output");
             }
-            else if (activity.Source.Name == TelemetryConstants.LlmActivitySourceName)
+            else if (TelemetryConstants.IsLlmSpan(activity))
             {
                 EnrichGeneration(activity);
             }
-            else if (activity.Source.Name.StartsWith("Microsoft.SemanticKernel", StringComparison.Ordinal)
-                && activity.GetTagItem("gen_ai.operation.name")?.ToString() == "execute_tool")
+            else if (TelemetryConstants.IsToolSpan(activity))
             {
                 // Semantic Kernel writes these two tags only with its sensitive-diagnostics switch on.
                 CopyTag(activity, "gen_ai.tool.call.arguments", "langfuse.observation.input");

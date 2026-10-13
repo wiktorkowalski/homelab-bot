@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Net;
 using System.Text;
 using System.Text.Json;
@@ -183,15 +184,16 @@ internal sealed class ScriptedClaudeHandler : HttpMessageHandler
 // The LLM path as KernelService builds it, with the "Test" plugin instead of the homelab plugins.
 internal static class ClaudeTestKernel
 {
-    public static Kernel Build(IAnthropicClient client, PingPlugin plugin, ILogger logger, int maxTokens = 16000)
+    public static Kernel Build(
+        IAnthropicClient client, PingPlugin plugin, ILogger logger, int maxTokens = 16000, ReasoningEffort effort = ReasoningEffort.Medium)
     {
-        var chatClient = AnthropicChatClientFactory.Create(
-            client, ClaudeResponses.Model, maxTokens, ReasoningEffort.Medium, logger);
+        var chatClient = AnthropicChatClientFactory.Create(client, ClaudeResponses.Model, maxTokens, effort, logger);
 
         var builder = Kernel.CreateBuilder();
         builder.Services.AddSingleton(chatClient.AsChatCompletionService());
         builder.Plugins.AddFromObject(plugin, "Test");
         var kernel = builder.Build();
+        kernel.FunctionInvocationFilters.Add(new ToolSpanNameFilter());
         kernel.AutoFunctionInvocationFilters.Add(new ToolExceptionFilter(logger));
         return kernel;
     }
@@ -203,6 +205,46 @@ internal static class ClaudeTestKernel
         history.AddUserMessage("ping please");
         return history;
     }
+}
+
+// Collects the ended spans of one trace. A listener is process-wide: other test classes stop
+// spans of the same sources on other threads, so only this trace is kept, under a lock.
+internal sealed class SpanCollector : IDisposable
+{
+    private readonly List<Activity> _spans = [];
+    private readonly ActivityListener _listener;
+
+    public SpanCollector(ActivityTraceId traceId, Func<ActivitySource, bool> shouldListenTo)
+    {
+        _listener = new ActivityListener
+        {
+            ShouldListenTo = shouldListenTo,
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStopped = span =>
+            {
+                if (span.TraceId != traceId)
+                {
+                    return;
+                }
+
+                lock (_spans)
+                {
+                    _spans.Add(span);
+                }
+            },
+        };
+        ActivitySource.AddActivityListener(_listener);
+    }
+
+    public List<Activity> Snapshot()
+    {
+        lock (_spans)
+        {
+            return [.. _spans];
+        }
+    }
+
+    public void Dispose() => _listener.Dispose();
 }
 
 // A real KernelService with the plugins "Test" and "Other", its own conversation history and

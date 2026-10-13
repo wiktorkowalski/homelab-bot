@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using Anthropic.Models.Messages;
 using Microsoft.Extensions.AI;
@@ -10,6 +11,10 @@ namespace HomelabBot.Services;
 // round, and a breakpoint left on an old message would add up past the API limit of four.
 internal sealed class AnthropicRequestChatClient : DelegatingChatClient
 {
+    // OpenTelemetry GenAI name for the effort of a request. Microsoft.Extensions.AI does not set
+    // it. Langfuse lists every gen_ai.request.* attribute of a generation as a model parameter.
+    internal const string EffortTag = "gen_ai.request.reasoning.level";
+
     private static readonly JsonElement EmptyObjectSchema =
         JsonDocument.Parse("""{"type":"object","properties":{}}""").RootElement.Clone();
 
@@ -25,6 +30,7 @@ internal sealed class AnthropicRequestChatClient : DelegatingChatClient
         IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
     {
         var (shapedMessages, shapedOptions) = Shape(messages, options, _effort);
+        TagEffort(shapedOptions);
         return base.GetResponseAsync(shapedMessages, shapedOptions, cancellationToken);
     }
 
@@ -32,6 +38,7 @@ internal sealed class AnthropicRequestChatClient : DelegatingChatClient
         IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
     {
         var (shapedMessages, shapedOptions) = Shape(messages, options, _effort);
+        TagEffort(shapedOptions);
         return base.GetStreamingResponseAsync(shapedMessages, shapedOptions, cancellationToken);
     }
 
@@ -65,6 +72,24 @@ internal sealed class AnthropicRequestChatClient : DelegatingChatClient
         }
 
         return (shapedMessages, shapedOptions);
+    }
+
+    // Puts the effort on the span of the request, as the string the API receives.
+    private static void TagEffort(ChatOptions shapedOptions)
+    {
+        var sent = shapedOptions.Reasoning?.Effort switch
+        {
+            ReasoningEffort.Low => "low",
+            ReasoningEffort.Medium => "medium",
+            ReasoningEffort.High => "high",
+            ReasoningEffort.ExtraHigh => "xhigh",
+            _ => null,
+        };
+
+        if (sent is not null && Activity.Current is { } activity && TelemetryConstants.IsLlmSpan(activity))
+        {
+            activity.SetTag(EffortTag, sent);
+        }
     }
 
     // The tool list is part of the cached prefix: one changed byte or a different order is a

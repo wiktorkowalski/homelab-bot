@@ -58,8 +58,7 @@ internal sealed class AnthropicUsageChatClient : DelegatingChatClient
             cacheRead is null ? null : ToInt(cacheRead.Value),
             cacheWrite is null ? null : ToInt(cacheWrite.Value));
 
-        if (cacheWrite is not null && Activity.Current is { } activity
-            && activity.Source.Name == TelemetryConstants.LlmActivitySourceName)
+        if (cacheWrite is not null && Activity.Current is { } activity && TelemetryConstants.IsLlmSpan(activity))
         {
             activity.SetTag(CacheCreationTag, cacheWrite.Value);
         }
