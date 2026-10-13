@@ -5,10 +5,14 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Anthropic;
 using Anthropic.Models.Messages;
+using HomelabBot.Configuration;
+using HomelabBot.Data;
 using HomelabBot.Services;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.ChatCompletion;
 
@@ -198,6 +202,52 @@ internal static class ClaudeTestKernel
         history.AddSystemMessage("You are a test bot.");
         history.AddUserMessage("ping please");
         return history;
+    }
+}
+
+// A real KernelService with the plugins "Test" and "Other", its own conversation history and
+// telemetry, on a SQLite file of its own.
+internal sealed class KernelServiceHarness : IDisposable
+{
+    private readonly string _dbPath = Path.Combine(Path.GetTempPath(), $"homelab-bot-claude-{Guid.NewGuid():N}.db");
+
+    public KernelServiceHarness(IAnthropicClient client, int maxTokens = 16000)
+    {
+        // A file, not the shared in-memory connection of DatabaseFixture: ConversationService
+        // saves messages in the background while the telemetry row is written.
+        DbFactory = new DatabaseFixture.TestDbContextFactory(
+            new DbContextOptionsBuilder<HomelabDbContext>().UseSqlite($"Data Source={_dbPath}").Options);
+        using (var db = DbFactory.CreateDbContext())
+        {
+            db.Database.EnsureCreated();
+        }
+
+        Service = new KernelService(
+            new BotConfiguration { DiscordToken = "x", AnthropicApiKey = "test-key", MaxTokens = maxTokens },
+            client,
+            Logger,
+            NullLogger<TelemetryFunctionFilter>.Instance,
+            new ConversationService(DbFactory, NullLogger<ConversationService>.Instance),
+            new TelemetryService(DbFactory, NullLogger<TelemetryService>.Instance),
+            plugins =>
+            {
+                plugins.AddFromObject(Plugin, "Test");
+                plugins.AddFromObject(new PingPlugin(), "Other");
+            });
+    }
+
+    public PingPlugin Plugin { get; } = new();
+
+    public RecordingLogger<KernelService> Logger { get; } = new();
+
+    public DatabaseFixture.TestDbContextFactory DbFactory { get; }
+
+    public KernelService Service { get; }
+
+    public void Dispose()
+    {
+        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+        File.Delete(_dbPath);
     }
 }
 

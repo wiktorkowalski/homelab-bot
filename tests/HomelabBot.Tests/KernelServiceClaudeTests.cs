@@ -1,12 +1,8 @@
 using System.Text.Json.Nodes;
-using HomelabBot.Configuration;
-using HomelabBot.Data;
 using HomelabBot.Data.Entities;
 using HomelabBot.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.SemanticKernel;
 
 namespace HomelabBot.Tests;
 
@@ -16,45 +12,23 @@ public sealed class KernelServiceClaudeTests : IDisposable
 {
     private const ulong ThreadId = 4242;
 
-    private readonly string _dbPath = Path.Combine(Path.GetTempPath(), $"homelab-bot-claude-{Guid.NewGuid():N}.db");
-    private readonly DatabaseFixture.TestDbContextFactory _dbFactory;
     private readonly ScriptedClaudeHandler _handler = new();
-    private readonly PingPlugin _plugin = new();
-    private readonly RecordingLogger<KernelService> _logger = new();
-    private readonly ConversationService _conversations;
+    private readonly KernelServiceHarness _harness;
+    private readonly DatabaseFixture.TestDbContextFactory _dbFactory;
+    private readonly PingPlugin _plugin;
+    private readonly RecordingLogger<KernelService> _logger;
     private readonly KernelService _service;
 
     public KernelServiceClaudeTests()
     {
-        // A file, not the shared in-memory connection of DatabaseFixture: ConversationService
-        // saves messages in the background while the telemetry row is written.
-        _dbFactory = new DatabaseFixture.TestDbContextFactory(
-            new DbContextOptionsBuilder<HomelabDbContext>().UseSqlite($"Data Source={_dbPath}").Options);
-        using (var db = _dbFactory.CreateDbContext())
-        {
-            db.Database.EnsureCreated();
-        }
-
-        _conversations = new ConversationService(_dbFactory, NullLogger<ConversationService>.Instance);
-        _service = new KernelService(
-            new BotConfiguration { DiscordToken = "x", AnthropicApiKey = "test-key", MaxTokens = 16000 },
-            _handler.CreateClient(),
-            _logger,
-            NullLogger<TelemetryFunctionFilter>.Instance,
-            _conversations,
-            new TelemetryService(_dbFactory, NullLogger<TelemetryService>.Instance),
-            plugins =>
-            {
-                plugins.AddFromObject(_plugin, "Test");
-                plugins.AddFromObject(new PingPlugin(), "Other");
-            });
+        _harness = new KernelServiceHarness(_handler.CreateClient());
+        _dbFactory = _harness.DbFactory;
+        _plugin = _harness.Plugin;
+        _logger = _harness.Logger;
+        _service = _harness.Service;
     }
 
-    public void Dispose()
-    {
-        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
-        File.Delete(_dbPath);
-    }
+    public void Dispose() => _harness.Dispose();
 
     [Fact]
     public async Task MultiRoundToolInteraction_AnswersAndStoresUsageOfEveryRound()
