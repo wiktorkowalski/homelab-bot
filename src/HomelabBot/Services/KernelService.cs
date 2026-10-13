@@ -182,6 +182,7 @@ public sealed class KernelService
 
         _kernel = builder.Build();
         _kernel.FunctionInvocationFilters.Add(new TelemetryFunctionFilter(telemetryService, filterLogger));
+        _kernel.FunctionInvocationFilters.Add(new ToolSpanNameFilter());
         _kernel.AutoFunctionInvocationFilters.Add(new ToolExceptionFilter(logger));
         _chatService = _kernel.GetRequiredService<IChatCompletionService>();
 

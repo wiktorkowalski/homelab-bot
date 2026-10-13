@@ -415,40 +415,17 @@ public class AnthropicChatClientTests
     [Fact]
     public async Task EveryRound_GetsItsOwnChatSpan_WithUsageAndTheToolSpanBetweenThem()
     {
-        // A listener is process-wide: other test classes stop spans of the same sources on other
-        // threads, so only this trace is collected, under a lock.
         using var root = new Activity("test-root").Start();
-        var traceId = root.TraceId;
-        var spans = new List<Activity>();
-        using var listener = new ActivityListener
-        {
-            ShouldListenTo = s => s.Name == TelemetryConstants.LlmActivitySourceName || s.Name.StartsWith("Microsoft.SemanticKernel", StringComparison.Ordinal),
-            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
-            ActivityStopped = span =>
-            {
-                if (span.TraceId != traceId)
-                {
-                    return;
-                }
-
-                lock (spans)
-                {
-                    spans.Add(span);
-                }
-            },
-        };
-        ActivitySource.AddActivityListener(listener);
+        using var spans = new SpanCollector(
+            root.TraceId,
+            s => s.Name == TelemetryConstants.LlmActivitySourceName || s.Name.StartsWith("Microsoft.SemanticKernel", StringComparison.Ordinal));
         _handler
             .Enqueue(ClaudeResponses.ToolUse(input: 100, output: 20, cacheWrite: 900, cacheRead: 0))
             .Enqueue(ClaudeResponses.Text(input: 120, output: 50, cacheWrite: 0, cacheRead: 900));
 
         await _chat.GetChatMessageContentAsync(NewHistory(), AutoTools, _kernel);
 
-        List<Activity> mine;
-        lock (spans)
-        {
-            mine = [.. spans];
-        }
+        var mine = spans.Snapshot();
 
         var chats = mine.Where(s => (string?)s.GetTagItem("gen_ai.operation.name") == "chat").ToList();
         Assert.Equal(2, chats.Count);
@@ -554,6 +531,38 @@ public class AnthropicChatClientTests
         var (_, shaped) = AnthropicRequestChatClient.Shape([new ChatMessage(ChatRole.User, "hi")], options, ReasoningEffort.Low);
 
         Assert.Equal(ReasoningEffort.High, shaped.Reasoning!.Effort);
+    }
+
+    // The tag is written by this repo and the request by the SDK: both must name the same level.
+    [Theory]
+    [InlineData(ReasoningEffort.Low)]
+    [InlineData(ReasoningEffort.Medium)]
+    [InlineData(ReasoningEffort.High)]
+    [InlineData(ReasoningEffort.ExtraHigh)]
+    public async Task ChatSpan_CarriesTheEffortTheRequestWasSentWith(ReasoningEffort effort)
+    {
+        using var root = new Activity("test-root").Start();
+        using var spans = new SpanCollector(root.TraceId, s => s.Name == TelemetryConstants.LlmActivitySourceName);
+        var kernel = ClaudeTestKernel.Build(_handler.CreateClient(), _plugin, _logger, effort: effort);
+        _handler.Enqueue(ClaudeResponses.Text());
+
+        await kernel.GetRequiredService<IChatCompletionService>().GetChatMessageContentAsync(NewHistory(), NoTools, kernel);
+
+        var sent = (string?)Request(0)["output_config"]!["effort"];
+        Assert.NotNull(sent);
+        Assert.Equal(sent, Assert.Single(spans.Snapshot()).GetTagItem(AnthropicRequestChatClient.EffortTag));
+    }
+
+    [Fact]
+    public async Task EffortTag_WithoutAnLlmSpan_StaysOffTheCallersSpan()
+    {
+        using var foreign = new Activity("test-root").Start();
+        var client = new AnthropicRequestChatClient(
+            new FixedResponseClient(new ChatResponse(new ChatMessage(ChatRole.Assistant, "x"))), ReasoningEffort.Medium);
+
+        await client.GetResponseAsync([new ChatMessage(ChatRole.User, "hi")]);
+
+        Assert.Null(foreign.GetTagItem(AnthropicRequestChatClient.EffortTag));
     }
 
     private static ChatHistory NewHistory() => ClaudeTestKernel.NewHistory();

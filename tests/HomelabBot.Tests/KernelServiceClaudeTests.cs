@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json.Nodes;
 using HomelabBot.Data.Entities;
 using HomelabBot.Services;
@@ -358,6 +359,21 @@ public sealed class KernelServiceClaudeTests : IDisposable
         _handler.EnqueueStatus(401);
 
         Assert.Equal("Chat", await _service.GenerateThreadTitleAsync("hello", ThreadId));
+    }
+
+    [Fact]
+    public async Task ToolSpan_CarriesTheNameTheModelCalled()
+    {
+        using var root = new Activity("test-root").Start();
+        using var spans = new SpanCollector(
+            root.TraceId, s => s.Name.StartsWith("Microsoft.SemanticKernel", StringComparison.Ordinal));
+        _handler.Enqueue(ClaudeResponses.ToolUse()).Enqueue(ClaudeResponses.Text());
+
+        await _service.ProcessMessageAsync(ThreadId, "ping");
+
+        var tool = Assert.Single(spans.Snapshot(), TelemetryConstants.IsToolSpan);
+        Assert.Equal("execute_tool Test_Ping", tool.DisplayName);
+        Assert.Equal("Test_Ping", tool.GetTagItem("gen_ai.tool.name"));
     }
 
     private List<JsonObject> Requests() => _handler.Requests;
