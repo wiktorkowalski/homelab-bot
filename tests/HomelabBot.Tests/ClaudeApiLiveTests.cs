@@ -8,14 +8,27 @@ using Microsoft.SemanticKernel.ChatCompletion;
 namespace HomelabBot.Tests;
 
 // Calls the real Claude API and costs a few cents per run, so it is skipped unless a key is set:
+// Bot__AnthropicApiKey in the repo .env file, or
 //   ANTHROPIC_API_KEY=sk-ant-... dotnet test --filter "FullyQualifiedName~ClaudeApiLiveTests"
 // It checks what a scripted transport cannot: that the API accepts the requests this bot sends.
 public class ClaudeApiLiveTests
 {
-    private static string? ApiKey =>
+    private const string ConfigKey = "Bot__AnthropicApiKey";
+
+    // The process environment first, then the developer's .env file (found by walking up from
+    // the test output directory, the same file the bot loads). The file is read without setting
+    // environment variables, so the other secrets in it stay out of the test process.
+    private static readonly Lazy<string?> LazyApiKey = new(() =>
         Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY") is { Length: > 0 } key
             ? key
-            : Environment.GetEnvironmentVariable("Bot__AnthropicApiKey");
+            : Environment.GetEnvironmentVariable(ConfigKey) is { Length: > 0 } configured
+                ? configured
+                : DotNetEnv.Env.NoEnvVars().TraversePath().Load()
+                    .Where(pair => pair.Key == ConfigKey && pair.Value.Length > 0)
+                    .Select(pair => pair.Value)
+                    .FirstOrDefault());
+
+    private static string? ApiKey => LazyApiKey.Value;
 
     [LiveFact]
     public async Task ToolLoop_IsAcceptedByTheApi_AndRoundTwoReadsTheCache()
