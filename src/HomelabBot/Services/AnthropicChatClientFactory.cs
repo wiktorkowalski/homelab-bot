@@ -8,13 +8,25 @@ namespace HomelabBot.Services;
 
 internal static class AnthropicChatClientFactory
 {
+    // Per attempt; the SDK makes up to three. Without it the SDK derives the limit from max_tokens
+    // and, because thinking is on, from its streaming rule: about 23 minutes per attempt at the
+    // default 50000 tokens, so a hung request would block a Discord turn for over an hour.
+    internal static readonly TimeSpan RequestTimeout = TimeSpan.FromMinutes(10);
+
     // The base URL is fixed: without it the SDK takes ANTHROPIC_BASE_URL from the process
     // environment, and one stray line in the server .env would move every request, key included,
     // to another host. The SDK keeps its own HttpClient in production; tests pass a scripted one.
-    public static AnthropicClient CreateApiClient(string apiKey, HttpClient? httpClient = null) =>
-        httpClient is null
-            ? new AnthropicClient { ApiKey = apiKey, BaseUrl = EnvironmentUrl.Production }
-            : new AnthropicClient { ApiKey = apiKey, BaseUrl = EnvironmentUrl.Production, HttpClient = httpClient };
+    public static AnthropicClient CreateApiClient(string apiKey, HttpClient? httpClient = null)
+    {
+        var client = new AnthropicClient
+        {
+            ApiKey = apiKey,
+            BaseUrl = EnvironmentUrl.Production,
+            Timeout = RequestTimeout,
+        };
+
+        return httpClient is null ? client : (AnthropicClient)client.WithOptions(options => options with { HttpClient = httpClient });
+    }
 
     // Outermost first. The function-invocation loop is on top, so the clients below it run once
     // per tool round: one span, one usage record and one shaped request per billed call.

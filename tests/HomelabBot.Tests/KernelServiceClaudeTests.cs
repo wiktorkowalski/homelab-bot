@@ -207,9 +207,10 @@ public sealed class KernelServiceClaudeTests : IDisposable
         Assert.Equal(1, row.LlmRounds);
         Assert.Equal(1000, row.PromptTokens);
 
-        // The user learns that the restart did happen.
-        Assert.Contains("Test.Restart", answer, StringComparison.Ordinal);
-        Assert.Contains("container restarted", answer, StringComparison.Ordinal);
+        // The user learns that the restart did happen. The tool's own output stays out: it is
+        // data from outside and this text is stored as an assistant message.
+        Assert.EndsWith("- Test.Restart(): succeeded", answer, StringComparison.Ordinal);
+        Assert.DoesNotContain("container restarted", answer, StringComparison.Ordinal);
     }
 
     [Fact]

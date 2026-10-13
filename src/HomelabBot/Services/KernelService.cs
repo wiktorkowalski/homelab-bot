@@ -30,8 +30,8 @@ public sealed class KernelService
     // this is added on top of the caller's cap. Same size the SDK reserves for medium effort.
     private const int ThinkingHeadroomTokens = 8192;
 
-    // How much of each tool result the closing message of a failed turn keeps.
-    private const int FailedTurnToolResultChars = 300;
+    // How much of each tool call's arguments the closing message of a failed turn keeps.
+    private const int FailedTurnArgumentChars = 300;
 
     private static readonly ActivitySource ActivitySource = TelemetryConstants.ChatActivitySource;
 
@@ -381,7 +381,9 @@ public sealed class KernelService
     // ran, the history would hold no trace of that tool, and a "try again" from the user would
     // run the side effect a second time. So a failed turn ends with an assistant message that
     // names what already ran. It is text, not tool blocks: a batch that failed half way would
-    // leave a tool call without its result. Never throws: it runs on the error paths.
+    // leave a tool call without its result. It holds the call and whether it worked, never the
+    // tool's output: that is data from outside (log lines, alert texts) and must not come back
+    // as the assistant's own words. Never throws: it runs on the error paths.
     private async Task<string> CloseFailedTurnAsync(ulong threadId, int interactionId, string failure)
     {
         var text = failure;
@@ -391,7 +393,7 @@ public sealed class KernelService
             if (toolCalls.Count > 0)
             {
                 var lines = toolCalls.Select(call =>
-                    $"- {call.PluginName}.{call.FunctionName}({call.ArgumentsJson}) -> {Cap(call.Success ? call.ResultJson : call.ErrorMessage)}");
+                    $"- {call.PluginName}.{call.FunctionName}({Cap(call.ArgumentsJson)}): {(call.Success ? "succeeded" : "failed")}");
                 text = $"{failure}\nTools that already ran in this turn:\n{string.Join("\n", lines)}";
             }
         }
@@ -404,7 +406,7 @@ public sealed class KernelService
         return text;
 
         static string Cap(string? value) =>
-            value is { Length: > FailedTurnToolResultChars } ? $"{value[..FailedTurnToolResultChars]}..." : value ?? "";
+            value is { Length: > FailedTurnArgumentChars } ? $"{value[..FailedTurnArgumentChars]}..." : value ?? "";
     }
 
     // Retries empty/whitespace responses: HTTP 200 with no text, for example when thinking used
