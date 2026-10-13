@@ -10,6 +10,9 @@ namespace HomelabBot.Services;
 // round, and a breakpoint left on an old message would add up past the API limit of four.
 internal sealed class AnthropicRequestChatClient : DelegatingChatClient
 {
+    private static readonly JsonElement EmptyObjectSchema =
+        JsonDocument.Parse("""{"type":"object","properties":{}}""").RootElement.Clone();
+
     private readonly ReasoningEffort _effort;
 
     public AnthropicRequestChatClient(IChatClient innerClient, ReasoningEffort effort)
@@ -44,14 +47,16 @@ internal sealed class AnthropicRequestChatClient : DelegatingChatClient
         var shapedOptions = options?.Clone() ?? new ChatOptions();
         shapedOptions.Reasoning ??= new ReasoningOptions { Effort = effort };
 
+        var shapedMessages = messages.ToList();
         var offersTools = shapedOptions.Tools is { Count: > 0 };
         if (offersTools)
         {
             shapedOptions.Tools = OrderAndMarkTools(shapedOptions.Tools!);
         }
-
-        // The API rejects tool_use / tool_result blocks in a request that offers no tools.
-        var shapedMessages = offersTools ? messages.ToList() : FlattenToolTurns(messages);
+        else
+        {
+            DeclareToolsOfEarlierTurns(shapedMessages, shapedOptions);
+        }
 
         MarkLastContent(shapedMessages, shapedMessages.FindLastIndex(m => m.Role == ChatRole.System));
         if (offersTools && shapedMessages.Count > 0 && shapedMessages[^1].Role != ChatRole.System)
@@ -75,40 +80,32 @@ internal sealed class AnthropicRequestChatClient : DelegatingChatClient
         return ordered;
     }
 
-    private static List<ChatMessage> FlattenToolTurns(IEnumerable<ChatMessage> messages)
+    // A request without tools can still hold tool turns: an earlier turn of the thread used
+    // tools, or the function-invocation loop removed them for its last round. The API rejects
+    // tool_use / tool_result blocks when no tool is defined. So the tools those turns name are
+    // declared by name only, with tool_choice "none": the model cannot call them, their schemas
+    // stay out of the prompt, and a tool result stays a tool_result block. Turning it into
+    // plain text would hand tool output (log lines, alert texts) to the model as if the user
+    // had typed it.
+    private static void DeclareToolsOfEarlierTurns(List<ChatMessage> messages, ChatOptions options)
     {
-        var flattened = new List<ChatMessage>();
-        foreach (var message in messages)
+        var names = messages
+            .SelectMany(m => m.Contents)
+            .OfType<FunctionCallContent>()
+            .Select(call => call.Name)
+            .Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal)
+            .ToList();
+
+        if (names.Count == 0)
         {
-            if (!message.Contents.Any(c => c is FunctionCallContent or FunctionResultContent))
-            {
-                flattened.Add(message);
-                continue;
-            }
-
-            // A thinking block is only valid next to the tool_use it came with, so it goes too.
-            var contents = message.Contents
-                .Where(c => c is not TextReasoningContent)
-                .Select(c => c switch
-                {
-                    FunctionCallContent call => new TextContent($"[tool call] {call.Name} {JsonSerializer.Serialize(call.Arguments)}"),
-                    FunctionResultContent result => new TextContent($"[tool result] {ResultText(result)}"),
-                    _ => c,
-                })
-                .ToList();
-
-            flattened.Add(new ChatMessage(message.Role == ChatRole.Tool ? ChatRole.User : message.Role, contents));
+            return;
         }
 
-        return flattened;
+        options.Tools = [.. names.Select(name => (AITool)AIFunctionFactory.CreateDeclaration(
+            name, "Used earlier in this conversation. Not available now.", EmptyObjectSchema))];
+        options.ToolMode = ChatToolMode.None;
     }
-
-    private static string ResultText(FunctionResultContent result) => result.Result switch
-    {
-        null => "",
-        string text => text,
-        var other => JsonSerializer.Serialize(other),
-    };
 
     // Replaces the message with a copy whose last block carries the breakpoint. Only text and
     // tool-result blocks are copied; any other block type is left unmarked.

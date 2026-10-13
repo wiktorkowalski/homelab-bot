@@ -16,21 +16,24 @@ public sealed class LangfuseEnrichmentProcessorTests : IDisposable
     private readonly List<Activity> _spans = [];
     private readonly ActivityListener _listener;
     private readonly LangfuseEnrichmentProcessor _processor = new(NullLoggerFactory.Instance);
+    private ActivityTraceId _traceId;
 
     public LangfuseEnrichmentProcessorTests()
     {
-        // Same switches as Program.cs: without them Semantic Kernel leaves tool arguments and
-        // results off its spans.
-        AppContext.SetSwitch("Microsoft.SemanticKernel.Experimental.GenAI.EnableOTelDiagnostics", true);
-        AppContext.SetSwitch("Microsoft.SemanticKernel.Experimental.GenAI.EnableOTelDiagnosticsSensitive", true);
-
         _listener = new ActivityListener
         {
-            ShouldListenTo = s => s.Name is "HomelabBot.Chat" or AnthropicChatClientFactory.ActivitySourceName
+            ShouldListenTo = s => s.Name is "HomelabBot.Chat" or TelemetryConstants.LlmActivitySourceName
                 || s.Name.StartsWith("Microsoft.SemanticKernel", StringComparison.Ordinal),
             Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
             ActivityStopped = activity =>
             {
+                // A listener is process-wide and the processor rewrites tags, so spans of tests
+                // that run in parallel must stay untouched.
+                if (activity.TraceId != _traceId)
+                {
+                    return;
+                }
+
                 _processor.OnEnd(activity);
                 lock (_spans)
                 {
@@ -46,10 +49,10 @@ public sealed class LangfuseEnrichmentProcessorTests : IDisposable
     [Fact]
     public async Task ToolInteraction_GivesLangfuseTwoGenerationsAndOneToolWithInputOutputAndUsage()
     {
-        var traceId = await RunToolInteractionAsync();
+        await RunToolInteractionAsync();
 
-        var mine = Snapshot(traceId);
-        var generations = mine.Where(s => s.Source.Name == AnthropicChatClientFactory.ActivitySourceName).ToList();
+        var mine = Snapshot();
+        var generations = mine.Where(s => s.Source.Name == TelemetryConstants.LlmActivitySourceName).ToList();
         Assert.Equal(2, generations.Count);
 
         // A model attribute is what makes Langfuse file a span as a generation.
@@ -96,8 +99,9 @@ public sealed class LangfuseEnrichmentProcessorTests : IDisposable
     [Fact]
     public void SessionId_ComesFromAnyAncestor_NotOnlyTheParent()
     {
-        using var source = new ActivitySource("HomelabBot.Chat");
+        var source = TelemetryConstants.ChatActivitySource;
         using var root = source.StartActivity("Chat")!;
+        _traceId = root.TraceId;
         root.SetTag("langfuse.session.id", "42");
         root.SetTag("langfuse.user.id", "7");
         using var middle = source.StartActivity("SmartRecall")!;
@@ -142,7 +146,7 @@ public sealed class LangfuseEnrichmentProcessorTests : IDisposable
     [Fact]
     public void EnrichGeneration_WithoutGenAiAttributes_LeavesTheSpanAlone()
     {
-        using var source = new ActivitySource(AnthropicChatClientFactory.ActivitySourceName);
+        using var source = new ActivitySource(TelemetryConstants.LlmActivitySourceName);
         using var span = source.StartActivity("chat x")!;
 
         LangfuseEnrichmentProcessor.EnrichGeneration(span);
@@ -154,38 +158,29 @@ public sealed class LangfuseEnrichmentProcessorTests : IDisposable
 
     private static JsonNode Json(Activity span, string tag) => JsonNode.Parse((string)span.GetTagItem(tag)!)!;
 
-    private List<Activity> Snapshot(ActivityTraceId traceId)
+    private List<Activity> Snapshot()
     {
         lock (_spans)
         {
-            return _spans.Where(s => s.TraceId == traceId).OrderBy(s => s.StartTimeUtc).ToList();
+            return _spans.OrderBy(s => s.StartTimeUtc).ToList();
         }
     }
 
-    private static async Task<ActivityTraceId> RunToolInteractionAsync()
+    private async Task RunToolInteractionAsync()
     {
-        var handler = new ScriptedClaudeHandler(
-            ClaudeResponses.ToolUse(input: 100, output: 20, cacheWrite: 900, cacheRead: 0),
-            ClaudeResponses.Text(input: 120, output: 50, cacheWrite: 0, cacheRead: 900));
-        var chatClient = AnthropicChatClientFactory.Create(
-            handler.CreateClient(), ClaudeResponses.Model, 16000, ReasoningEffort.Medium, NullLogger.Instance);
-        var builder = Kernel.CreateBuilder();
-        builder.Services.AddSingleton(chatClient.AsChatCompletionService());
-        builder.Plugins.AddFromObject(new PingPlugin(), "Test");
-        var kernel = builder.Build();
-
-        var history = new ChatHistory();
-        history.AddSystemMessage("You are a test bot.");
-        history.AddUserMessage("ping please");
+        var handler = new ScriptedClaudeHandler()
+            .Enqueue(ClaudeResponses.ToolUse(input: 100, output: 20, cacheWrite: 900, cacheRead: 0))
+            .Enqueue(ClaudeResponses.Text(input: 120, output: 50, cacheWrite: 0, cacheRead: 900));
+        var kernel = ClaudeTestKernel.Build(handler.CreateClient(), new PingPlugin(), NullLogger.Instance);
 
         // The root span KernelService opens for every interaction.
-        using var source = new ActivitySource("HomelabBot.Chat");
-        using var root = source.StartActivity("Chat", ActivityKind.Server)!;
+        using var root = TelemetryConstants.ChatActivitySource.StartActivity("Chat", ActivityKind.Server)!;
+        _traceId = root.TraceId;
         root.SetTag("langfuse.session.id", "777");
 
         await kernel.GetRequiredService<IChatCompletionService>().GetChatMessageContentAsync(
-            history, new PromptExecutionSettings { FunctionChoiceBehavior = FunctionChoiceBehavior.Auto() }, kernel);
-
-        return root.TraceId;
+            ClaudeTestKernel.NewHistory(),
+            new PromptExecutionSettings { FunctionChoiceBehavior = FunctionChoiceBehavior.Auto() },
+            kernel);
     }
 }

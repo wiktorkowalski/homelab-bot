@@ -23,7 +23,7 @@ public sealed class BotConfiguration
     public string AnthropicModel { get; init; } = "claude-sonnet-5-5";
 
     // output_config.effort: how much the model thinks and spends per request. The API default is
-    // High; Medium is the documented starting point for tool loops.
+    // High; Medium is the documented starting point for tool loops. None is rejected at startup.
     public ReasoningEffort AnthropicEffort { get; init; } = ReasoningEffort.Medium;
 
     // Total attempts for a chat completion that comes back empty (1 = no retry). Transient HTTP

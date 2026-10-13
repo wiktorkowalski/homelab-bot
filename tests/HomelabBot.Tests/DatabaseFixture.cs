@@ -34,7 +34,7 @@ public class DatabaseFixture : IDisposable
         _connection.Dispose();
     }
 
-    private sealed class TestDbContextFactory : IDbContextFactory<HomelabDbContext>
+    internal sealed class TestDbContextFactory : IDbContextFactory<HomelabDbContext>
     {
         private readonly DbContextOptions<HomelabDbContext> _options;
 

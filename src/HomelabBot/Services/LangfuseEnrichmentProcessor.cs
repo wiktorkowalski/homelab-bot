@@ -42,7 +42,7 @@ public sealed class LangfuseEnrichmentProcessor : BaseProcessor<Activity>
                 CopyTag(activity, "langfuse.span.input", "langfuse.observation.input");
                 CopyTag(activity, "langfuse.span.output", "langfuse.observation.output");
             }
-            else if (activity.Source.Name == AnthropicChatClientFactory.ActivitySourceName)
+            else if (activity.Source.Name == TelemetryConstants.LlmActivitySourceName)
             {
                 EnrichGeneration(activity);
             }
@@ -126,62 +126,71 @@ public sealed class LangfuseEnrichmentProcessor : BaseProcessor<Activity>
         var result = new JsonArray();
         foreach (var message in messages.OfType<JsonObject>())
         {
-            var role = message["role"]?.GetValue<string>() ?? "unknown";
-            var texts = new List<string>();
-            var toolCalls = new JsonArray();
-            var toolResults = new List<JsonObject>();
-
-            // Any other part type is skipped. A thinking part holds no readable text, only a signature.
-            foreach (var part in (message["parts"] as JsonArray ?? []).OfType<JsonObject>())
-            {
-                switch (part["type"]?.GetValue<string>())
-                {
-                    case "text":
-                        texts.Add(AsText(part["content"]));
-                        break;
-
-                    case "tool_call":
-                        toolCalls.Add(new JsonObject
-                        {
-                            ["id"] = part["id"]?.DeepClone(),
-                            ["type"] = "function",
-                            ["function"] = new JsonObject
-                            {
-                                ["name"] = part["name"]?.DeepClone(),
-                                ["arguments"] = part["arguments"]?.ToJsonString() ?? "{}",
-                            },
-                        });
-                        break;
-
-                    case "tool_call_response":
-                        toolResults.Add(new JsonObject
-                        {
-                            ["role"] = "tool",
-                            ["tool_call_id"] = part["id"]?.DeepClone(),
-                            ["content"] = AsText(part["response"]),
-                        });
-                        break;
-                }
-            }
-
-            if (texts.Count > 0 || toolCalls.Count > 0)
-            {
-                var chatMessage = new JsonObject { ["role"] = role, ["content"] = string.Join("\n", texts) };
-                if (toolCalls.Count > 0)
-                {
-                    chatMessage["tool_calls"] = toolCalls;
-                }
-
-                result.Add(chatMessage);
-            }
-
-            foreach (var toolResult in toolResults)
-            {
-                result.Add(toolResult);
-            }
+            AppendChatMessages(message, result);
         }
 
         return result.Count > 0 ? result : null;
+    }
+
+    // One GenAI message becomes one chat message, plus one "tool" message per tool result in it.
+    private static void AppendChatMessages(JsonObject message, JsonArray result)
+    {
+        List<string> texts = [];
+        var toolCalls = new JsonArray();
+        List<JsonObject> toolResults = [];
+
+        // Any other part type is skipped. A thinking part holds no readable text, only a signature.
+        foreach (var part in (message["parts"] as JsonArray ?? []).OfType<JsonObject>())
+        {
+            switch (part["type"]?.GetValue<string>())
+            {
+                case "text":
+                    texts.Add(AsText(part["content"]));
+                    break;
+
+                case "tool_call":
+                    toolCalls.Add(new JsonObject
+                    {
+                        ["id"] = part["id"]?.DeepClone(),
+                        ["type"] = "function",
+                        ["function"] = new JsonObject
+                        {
+                            ["name"] = part["name"]?.DeepClone(),
+                            ["arguments"] = part["arguments"]?.ToJsonString() ?? "{}",
+                        },
+                    });
+                    break;
+
+                case "tool_call_response":
+                    toolResults.Add(new JsonObject
+                    {
+                        ["role"] = "tool",
+                        ["tool_call_id"] = part["id"]?.DeepClone(),
+                        ["content"] = AsText(part["response"]),
+                    });
+                    break;
+            }
+        }
+
+        if (texts.Count > 0 || toolCalls.Count > 0)
+        {
+            var chatMessage = new JsonObject
+            {
+                ["role"] = message["role"]?.GetValue<string>() ?? "unknown",
+                ["content"] = string.Join("\n", texts),
+            };
+            if (toolCalls.Count > 0)
+            {
+                chatMessage["tool_calls"] = toolCalls;
+            }
+
+            result.Add(chatMessage);
+        }
+
+        foreach (var toolResult in toolResults)
+        {
+            result.Add(toolResult);
+        }
     }
 
     private static string AsText(JsonNode? node) => node switch

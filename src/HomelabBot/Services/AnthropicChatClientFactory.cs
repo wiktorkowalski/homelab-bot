@@ -7,9 +7,6 @@ namespace HomelabBot.Services;
 
 internal static class AnthropicChatClientFactory
 {
-    // Source of the per-request "chat <model>" spans. Program.cs subscribes to it for Langfuse.
-    public const string ActivitySourceName = "HomelabBot.Llm";
-
     // Outermost first. The function-invocation loop is on top, so the three clients below it
     // run once per tool round: one span, one usage record and one shaped request per billed call.
     public static IChatClient Create(
@@ -18,7 +15,7 @@ internal static class AnthropicChatClientFactory
             .AsBuilder()
             .UseKernelFunctionInvocation()
             .Use(inner => new LoopSpanShield(inner))
-            .UseOpenTelemetry(sourceName: ActivitySourceName, configure: telemetry => telemetry.EnableSensitiveData = true)
+            .UseOpenTelemetry(sourceName: TelemetryConstants.LlmActivitySourceName, configure: telemetry => telemetry.EnableSensitiveData = true)
             .Use(inner => new AnthropicUsageChatClient(inner, logger))
             .Use(inner => new AnthropicRequestChatClient(inner, effort))
             .Build();

@@ -2,10 +2,15 @@ using System.ComponentModel;
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Anthropic;
 using Anthropic.Models.Messages;
+using HomelabBot.Services;
+using Microsoft.Extensions.AI;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.SemanticKernel;
+using Microsoft.SemanticKernel.ChatCompletion;
 
 namespace HomelabBot.Tests;
 
@@ -84,15 +89,9 @@ internal sealed class ScriptedClaudeHandler : HttpMessageHandler
 {
     private readonly Queue<Func<HttpResponseMessage>> _script = new();
 
-    public ScriptedClaudeHandler(params string[] responses)
-    {
-        foreach (var response in responses)
-        {
-            Enqueue(response);
-        }
-    }
-
     public List<string> RequestBodies { get; } = [];
+
+    public List<JsonObject> Requests => RequestBodies.Select(body => JsonNode.Parse(body)!.AsObject()).ToList();
 
     public List<Uri?> RequestUris { get; } = [];
 
@@ -156,6 +155,31 @@ internal sealed class ScriptedClaudeHandler : HttpMessageHandler
 
     private static HttpResponseMessage Json(HttpStatusCode status, string json) =>
         new(status) { Content = new StringContent(json, Encoding.UTF8, "application/json") };
+}
+
+// The LLM path as KernelService builds it, with the "Test" plugin instead of the homelab plugins.
+internal static class ClaudeTestKernel
+{
+    public static Kernel Build(IAnthropicClient client, PingPlugin plugin, ILogger logger, int maxTokens = 16000)
+    {
+        var chatClient = AnthropicChatClientFactory.Create(
+            client, ClaudeResponses.Model, maxTokens, ReasoningEffort.Medium, logger);
+
+        var builder = Kernel.CreateBuilder();
+        builder.Services.AddSingleton(chatClient.AsChatCompletionService());
+        builder.Plugins.AddFromObject(plugin, "Test");
+        var kernel = builder.Build();
+        kernel.AutoFunctionInvocationFilters.Add(new ToolExceptionFilter(logger));
+        return kernel;
+    }
+
+    public static ChatHistory NewHistory()
+    {
+        var history = new ChatHistory();
+        history.AddSystemMessage("You are a test bot.");
+        history.AddUserMessage("ping please");
+        return history;
+    }
 }
 
 internal sealed class PingPlugin

@@ -22,12 +22,7 @@ public class ClaudeApiLiveTests
     {
         var logger = new RecordingLogger<ClaudeApiLiveTests>();
         var plugin = new PingPlugin();
-        var chatClient = AnthropicChatClientFactory.Create(
-            new AnthropicClient { ApiKey = ApiKey }, ClaudeResponses.Model, maxTokens: 4096, ReasoningEffort.Medium, logger);
-        var builder = Kernel.CreateBuilder();
-        builder.Services.AddSingleton(chatClient.AsChatCompletionService());
-        builder.Plugins.AddFromObject(plugin, "Test");
-        var kernel = builder.Build();
+        var kernel = ClaudeTestKernel.Build(new AnthropicClient { ApiKey = ApiKey }, plugin, logger, maxTokens: 4096);
 
         // Long enough to pass the minimum cacheable prompt length of the model.
         var history = new ChatHistory();

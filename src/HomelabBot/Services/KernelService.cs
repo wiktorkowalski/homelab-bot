@@ -10,7 +10,6 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Options;
 using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.ChatCompletion;
-using ChatMessageContent = Microsoft.SemanticKernel.ChatMessageContent;
 
 namespace HomelabBot.Services;
 
@@ -23,6 +22,9 @@ public enum TraceType
 
 public sealed class KernelService
 {
+    private const string EmptyResponseMessage =
+        "I couldn't generate a response - the model returned nothing. Try asking again or rephrasing.";
+
     private static readonly ActivitySource ActivitySource = TelemetryConstants.ChatActivitySource;
 
     private static readonly Regex ThinkingBlockRegex = new(
@@ -156,21 +158,15 @@ public sealed class KernelService
         _maxAttempts = Math.Max(1, config.MaxResponseAttempts);
         _maxTokens = config.MaxTokens;
 
+        // Not a startup failure on purpose: without a key the bot still serves what needs no LLM
+        // (MCP tools, telemetry API, health score).
         if (string.IsNullOrWhiteSpace(config.AnthropicApiKey))
         {
             _logger.LogError("Bot:AnthropicApiKey is empty; every LLM request will fail until it is set");
         }
 
-        // None would send thinking "disabled", which this model answers with HTTP 400.
-        var effort = config.AnthropicEffort;
-        if (effort == ReasoningEffort.None)
-        {
-            _logger.LogError("Bot:AnthropicEffort None is not supported; using Medium");
-            effort = ReasoningEffort.Medium;
-        }
-
         var chatClient = AnthropicChatClientFactory.Create(
-            anthropicClient, config.AnthropicModel, config.MaxTokens, effort, logger);
+            anthropicClient, config.AnthropicModel, config.MaxTokens, config.AnthropicEffort, logger);
 
         var builder = Kernel.CreateBuilder();
         builder.Services.AddSingleton(chatClient.AsChatCompletionService());
@@ -183,7 +179,7 @@ public sealed class KernelService
 
         _logger.LogInformation(
             "Kernel initialized with Claude API model {Model} (effort {Effort}) and {PluginCount} plugins",
-            config.AnthropicModel, effort, _kernel.Plugins.Count);
+            config.AnthropicModel, config.AnthropicEffort, _kernel.Plugins.Count);
     }
 
     public async Task<string> GenerateThreadTitleAsync(
@@ -308,50 +304,41 @@ public sealed class KernelService
 
             sw.Stop();
 
+            string responseText;
+            string? problem = null;
             if (GetRefusal(response) is { } refusal)
             {
                 _logger.LogWarning(
                     "Claude declined the request for thread {ThreadId} (category={Category}): {Explanation}",
                     threadId, refusal.Category, refusal.Explanation);
-
-                var declined = RefusalMessage(refusal.Category);
-
-                // Same reason as the empty case below: the turn must end with an assistant reply.
-                _conversationService.AddAssistantMessage(threadId, declined);
-
-                await _telemetryService.LogInteractionCompleteAsync(
-                    interaction.Id, declined, ResolveUsage(usageScope, response), sw.ElapsedMilliseconds, ct);
-                activity?.SetTag("langfuse.observation.level", "WARNING");
-                activity?.SetTag("langfuse.observation.status_message", $"refusal: {refusal.Category}");
-                activity?.SetTag("langfuse.trace.output", declined);
-                return declined;
+                responseText = RefusalMessage(refusal.Category);
+                problem = $"refusal: {refusal.Category}";
             }
-
-            if (IsEmptyResponse(response))
+            else if (IsEmptyResponse(response))
             {
                 // The retry helper already logged the give-up at Error level (stop reason + tokens).
-                const string fallback =
-                    "I couldn't generate a response - the model returned nothing. Try asking again or rephrasing.";
-
-                // Close the turn so a failed response doesn't leave the user message (and any
-                // tool turns the model ran) dangling without an assistant reply, which would break
-                // user/assistant alternation on the next request.
-                _conversationService.AddAssistantMessage(threadId, fallback);
-
-                await _telemetryService.LogInteractionCompleteAsync(
-                    interaction.Id, fallback, ResolveUsage(usageScope, response), sw.ElapsedMilliseconds, ct);
-                activity?.SetTag("langfuse.observation.level", "WARNING");
-                activity?.SetTag("langfuse.trace.output", fallback);
-                return fallback;
+                responseText = EmptyResponseMessage;
+                problem = "empty response";
+            }
+            else
+            {
+                responseText = StripThinkingBlocks(response!.Content!);
             }
 
-            var responseText = StripThinkingBlocks(response!.Content!);
+            // Also when there is no real answer: without an assistant reply the user message (and
+            // any tool turns the model ran) stays open and breaks user/assistant alternation on
+            // the next request.
             _conversationService.AddAssistantMessage(threadId, responseText);
 
             await _telemetryService.LogInteractionCompleteAsync(
                 interaction.Id, responseText, ResolveUsage(usageScope, response), sw.ElapsedMilliseconds, ct);
 
-            // Set trace output
+            if (problem is not null)
+            {
+                activity?.SetTag("langfuse.observation.level", "WARNING");
+                activity?.SetTag("langfuse.observation.status_message", problem);
+            }
+
             activity?.SetTag("langfuse.trace.output", responseText);
 
             return responseText;
@@ -431,8 +418,8 @@ public sealed class KernelService
                 return response;
             }
 
+            // Token counts are not repeated here: the usage client logged them for this round.
             var stopReason = GetStopReason(response);
-            var (promptTokens, completionTokens) = ExtractTokenUsage(response);
 
             // The model ran tools (side effects already happened) then returned empty. Retrying
             // would trim those tool turns and re-run them, so a "restart container"/"send alert"
@@ -440,16 +427,16 @@ public sealed class KernelService
             if (ToolsExecuted(history, baseline))
             {
                 logger.LogError(
-                    "Empty response after tool execution from {Model} for thread {ThreadId} (stopReason={StopReason}, promptTokens={PromptTokens}, completionTokens={CompletionTokens}); not retrying to avoid re-running tools",
-                    modelId, threadId, stopReason, promptTokens, completionTokens);
+                    "Empty response after tool execution from {Model} for thread {ThreadId} (stopReason={StopReason}); not retrying to avoid re-running tools",
+                    modelId, threadId, stopReason);
                 return response;
             }
 
             if (attempt >= maxAttempts)
             {
                 logger.LogError(
-                    "Exhausted {MaxAttempts} attempts, still empty response from {Model} for thread {ThreadId} (stopReason={StopReason}, promptTokens={PromptTokens}, completionTokens={CompletionTokens})",
-                    maxAttempts, modelId, threadId, stopReason, promptTokens, completionTokens);
+                    "Exhausted {MaxAttempts} attempts, still empty response from {Model} for thread {ThreadId} (stopReason={StopReason})",
+                    maxAttempts, modelId, threadId, stopReason);
                 return response;
             }
 
@@ -589,39 +576,23 @@ public sealed class KernelService
         return selected.Count > 0 ? selected : kernel.Plugins.SelectMany(p => p).ToList();
     }
 
-    internal static (int? PromptTokens, int? CompletionTokens) ExtractTokenUsage(ChatMessageContent? response)
-    {
-        if (response?.Metadata is null)
-        {
-            return (null, null);
-        }
-
-        // The bridge reports the whole prompt here, cached part included.
-        if (response.Metadata.TryGetValue("Usage", out var usage) && usage is UsageDetails details)
-        {
-            return ((int?)details.InputTokenCount, (int?)details.OutputTokenCount);
-        }
-
-        return (null, null);
-    }
+    // What the loop reports for one call: the sum of its rounds, cached part of the prompt included.
+    internal static (int? PromptTokens, int? CompletionTokens) ExtractTokenUsage(ChatMessageContent? response) =>
+        response?.Metadata?.GetValueOrDefault("Usage") is UsageDetails details
+            ? ((int?)details.InputTokenCount, (int?)details.OutputTokenCount)
+            : (null, null);
 
     // Per-round totals when the usage client captured every round. When some round had no
     // readable usage the sum undercounts, so never store less than the final response reports.
     internal static LlmTokenUsage ResolveUsage(
         LlmTokenUsage scopeUsage, int missedRounds, ChatMessageContent? response, ILogger logger)
     {
-        if (scopeUsage.Rounds > 0 && missedRounds == 0)
+        if (missedRounds == 0)
         {
             return scopeUsage;
         }
 
         var (finalPrompt, finalCompletion) = ExtractTokenUsage(response);
-
-        if (missedRounds == 0)
-        {
-            logger.LogDebug("No per-round usage captured; falling back to final response usage");
-            return new LlmTokenUsage { PromptTokens = finalPrompt, CompletionTokens = finalCompletion };
-        }
 
         logger.LogDebug(
             "{MissedRounds} of {TotalRounds} LLM rounds had no readable usage; storing the larger of round sum and final response usage",

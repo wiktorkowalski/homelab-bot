@@ -17,7 +17,7 @@ public sealed class KernelServiceClaudeTests : IDisposable
     private const ulong ThreadId = 4242;
 
     private readonly string _dbPath = Path.Combine(Path.GetTempPath(), $"homelab-bot-claude-{Guid.NewGuid():N}.db");
-    private readonly FileDbContextFactory _dbFactory;
+    private readonly DatabaseFixture.TestDbContextFactory _dbFactory;
     private readonly ScriptedClaudeHandler _handler = new();
     private readonly PingPlugin _plugin = new();
     private readonly RecordingLogger<KernelService> _logger = new();
@@ -28,7 +28,8 @@ public sealed class KernelServiceClaudeTests : IDisposable
     {
         // A file, not the shared in-memory connection of DatabaseFixture: ConversationService
         // saves messages in the background while the telemetry row is written.
-        _dbFactory = new FileDbContextFactory(_dbPath);
+        _dbFactory = new DatabaseFixture.TestDbContextFactory(
+            new DbContextOptionsBuilder<HomelabDbContext>().UseSqlite($"Data Source={_dbPath}").Options);
         using (var db = _dbFactory.CreateDbContext())
         {
             db.Database.EnsureCreated();
@@ -203,7 +204,7 @@ public sealed class KernelServiceClaudeTests : IDisposable
     }
 
     [Fact]
-    public async Task AllowToolUseFalse_OnAThreadWithAToolTurn_SendsTextOnly()
+    public async Task AllowToolUseFalse_OnAThreadWithAToolTurn_KeepsTheToolTurnAndForbidsCalls()
     {
         _handler.Enqueue(ClaudeResponses.ToolUse()).Enqueue(ClaudeResponses.Text("checked")).Enqueue(ClaudeResponses.Text("[SILENT]"));
         await _service.ProcessMessageAsync(ThreadId, "investigate");
@@ -214,10 +215,11 @@ public sealed class KernelServiceClaudeTests : IDisposable
 
         Assert.Equal("[SILENT]", answer);
         var request = Requests()[2];
-        Assert.Null(request["tools"]);
-        Assert.Null(request["tool_choice"]);
+        Assert.Equal(["Test_Ping"], request["tools"]!.AsArray().Select(t => (string?)t!["name"]));
+        Assert.Equal("none", (string?)request["tool_choice"]!["type"]);
         var blockTypes = request["messages"]!.AsArray().SelectMany(m => m!["content"]!.AsArray()).Select(b => (string?)b!["type"]);
-        Assert.All(blockTypes, type => Assert.Equal("text", type));
+        Assert.Equal(["text", "tool_use", "tool_result", "text", "text"], blockTypes);
+        Assert.Equal(1, _plugin.Calls);
     }
 
     [Fact]
@@ -299,7 +301,7 @@ public sealed class KernelServiceClaudeTests : IDisposable
         Assert.Equal("Chat", await _service.GenerateThreadTitleAsync("hello", ThreadId));
     }
 
-    private List<JsonObject> Requests() => _handler.RequestBodies.Select(b => JsonNode.Parse(b)!.AsObject()).ToList();
+    private List<JsonObject> Requests() => _handler.Requests;
 
     private async Task<LlmInteraction> SingleInteractionAsync()
     {
@@ -311,17 +313,5 @@ public sealed class KernelServiceClaudeTests : IDisposable
     {
         await using var db = _dbFactory.CreateDbContext();
         return await db.ToolCallLogs.OrderBy(t => t.Id).ToListAsync();
-    }
-
-    private sealed class FileDbContextFactory : IDbContextFactory<HomelabDbContext>
-    {
-        private readonly DbContextOptions<HomelabDbContext> _options;
-
-        public FileDbContextFactory(string path)
-        {
-            _options = new DbContextOptionsBuilder<HomelabDbContext>().UseSqlite($"Data Source={path}").Options;
-        }
-
-        public HomelabDbContext CreateDbContext() => new(_options);
     }
 }

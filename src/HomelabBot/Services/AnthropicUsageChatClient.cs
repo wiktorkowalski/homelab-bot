@@ -4,9 +4,9 @@ using Microsoft.Extensions.AI;
 
 namespace HomelabBot.Services;
 
-// Reads the native usage of every Claude response so tool rounds are counted, not only the final
-// one. It sits below the function-invocation loop, which sends one request per tool round but
-// only surfaces the last response to the caller.
+// Reads the native usage of every Claude response. It sits below the function-invocation loop,
+// which sends one request per tool round and reports usage only when the whole loop returns: a
+// round that was billed before an exception, a cancel or an empty-response retry is counted here.
 internal sealed class AnthropicUsageChatClient : DelegatingChatClient
 {
     // OpenTelemetry GenAI name for cache writes. Microsoft.Extensions.AI sets the cache-read tag
@@ -59,7 +59,7 @@ internal sealed class AnthropicUsageChatClient : DelegatingChatClient
             cacheWrite is null ? null : ToInt(cacheWrite.Value));
 
         if (cacheWrite is not null && Activity.Current is { } activity
-            && activity.Source.Name == AnthropicChatClientFactory.ActivitySourceName)
+            && activity.Source.Name == TelemetryConstants.LlmActivitySourceName)
         {
             activity.SetTag(CacheCreationTag, cacheWrite.Value);
         }

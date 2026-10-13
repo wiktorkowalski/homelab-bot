@@ -1,3 +1,4 @@
+using HomelabBot.Helpers;
 using Microsoft.SemanticKernel;
 
 namespace HomelabBot.Services;
@@ -25,7 +26,7 @@ internal sealed class ToolExceptionFilter : IAutoFunctionInvocationFilter
         {
             _logger.LogWarning(
                 ex, "Tool {Plugin}.{Function} threw; the model gets the error text", context.Function.PluginName, context.Function.Name);
-            context.Result = new FunctionResult(context.Function, $"Error: {ex.Message}");
+            context.Result = new FunctionResult(context.Function, ToolResult.Failure(ex.Message));
         }
     }
 }

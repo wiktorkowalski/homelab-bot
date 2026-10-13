@@ -8,6 +8,7 @@ using HomelabBot.Mcp;
 using HomelabBot.Plugins;
 using HomelabBot.Services;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Options;
 using OpenTelemetry;
 using OpenTelemetry.Exporter;
@@ -37,6 +38,9 @@ try
     builder.Services.AddOptions<BotConfiguration>()
         .Bind(builder.Configuration.GetSection(BotConfiguration.SectionName))
         .ValidateDataAnnotations()
+        .Validate(
+            bot => bot.AnthropicEffort != ReasoningEffort.None,
+            "Bot:AnthropicEffort None turns thinking off, which the model rejects with HTTP 400. Use Low, Medium, High or ExtraHigh.")
         .ValidateOnStart();
 
     builder.Services.AddOptions<MikroTikConfiguration>()
@@ -122,7 +126,7 @@ try
                 tracing
                     .SetSampler(new AlwaysOnSampler())
                     .AddSource("HomelabBot.Chat")
-                    .AddSource(AnthropicChatClientFactory.ActivitySourceName)
+                    .AddSource(TelemetryConstants.LlmActivitySourceName)
                     .AddSource("Microsoft.SemanticKernel*")
                     .AddProcessor(sp => new LangfuseEnrichmentProcessor(sp.GetRequiredService<ILoggerFactory>()))
                     .AddOtlpExporter(options =>
@@ -178,6 +182,8 @@ try
     builder.Services.AddSingleton<TelemetryService>();
 
     // Claude API. The SDK keeps its defaults: 2 retries on 408/409/429/5xx and connection errors.
+    // It also keeps its own HttpClient: a factory client would add a 100 s timeout and, with the
+    // resilience handler, a second retry layer.
     builder.Services.AddSingleton<IAnthropicClient>(sp => new AnthropicClient
     {
         ApiKey = sp.GetRequiredService<IOptions<BotConfiguration>>().Value.AnthropicApiKey,

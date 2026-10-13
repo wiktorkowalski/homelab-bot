@@ -1,7 +1,8 @@
 namespace HomelabBot.Services;
 
-// Collects usage of every billed LLM request during one interaction. SK auto function invocation
-// sends one request per tool round but only surfaces the last response's usage to the caller.
+// Collects usage of every billed LLM request during one interaction. The function-invocation
+// loop sends one request per tool round and reports usage only when it returns, so rounds billed
+// before a failure, a cancel or a retry would be lost without it.
 internal sealed class TokenUsageScope : IDisposable
 {
     private static readonly AsyncLocal<TokenUsageScope?> CurrentScope = new();

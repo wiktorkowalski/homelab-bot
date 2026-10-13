@@ -73,6 +73,37 @@ public class KernelServiceRetryTests
         Assert.Contains("category: cyber", KernelService.RefusalMessage("cyber"), StringComparison.Ordinal);
     }
 
+    // --- ResolveUsage ---
+
+    [Fact]
+    public void ResolveUsage_AllRoundsCaptured_ReturnsRoundSum()
+    {
+        var scopeUsage = new LlmTokenUsage { PromptTokens = 2020, CompletionTokens = 70, CachedPromptTokens = 900, Rounds = 2 };
+
+        var usage = KernelService.ResolveUsage(scopeUsage, 0, FinalResponse(1020, 50), NullLogger.Instance);
+
+        Assert.Same(scopeUsage, usage);
+    }
+
+    [Fact]
+    public void ResolveUsage_NoRounds_NoResponse_ReturnsNone()
+    {
+        Assert.Same(LlmTokenUsage.None, KernelService.ResolveUsage(LlmTokenUsage.None, 0, null, NullLogger.Instance));
+    }
+
+    [Fact]
+    public void ResolveUsage_MissedRounds_StoresLargerOfSumAndFinalResponse()
+    {
+        var scopeUsage = new LlmTokenUsage { PromptTokens = 900, CompletionTokens = 80, CachedPromptTokens = 500, Rounds = 1 };
+
+        var usage = KernelService.ResolveUsage(scopeUsage, 1, FinalResponse(1100, 50), NullLogger.Instance);
+
+        Assert.Equal(1100, usage.PromptTokens);
+        Assert.Equal(80, usage.CompletionTokens);
+        Assert.Equal(500, usage.CachedPromptTokens);
+        Assert.Equal(2, usage.Rounds);
+    }
+
     // --- TelemetryText ---
 
     [Fact]
@@ -146,7 +177,7 @@ public class KernelServiceRetryTests
     {
         var history = NewHistory();
         var calls = 0;
-        var logger = new ListLogger();
+        var logger = new RecordingLogger<KernelService>();
         Task<ChatMessageContent> Invoke(CancellationToken _)
         {
             calls++;
@@ -192,7 +223,7 @@ public class KernelServiceRetryTests
     {
         var history = NewHistory();
         var calls = 0;
-        var logger = new ListLogger();
+        var logger = new RecordingLogger<KernelService>();
         Task<ChatMessageContent> Invoke(CancellationToken _)
         {
             calls++;
@@ -214,7 +245,7 @@ public class KernelServiceRetryTests
     {
         var history = NewHistory();
         var calls = 0;
-        var logger = new ListLogger();
+        var logger = new RecordingLogger<KernelService>();
         Task<ChatMessageContent> Invoke(CancellationToken _)
         {
             calls++;
@@ -282,30 +313,24 @@ public class KernelServiceRetryTests
         return history;
     }
 
+    // The bridge puts the usage of the last round into Metadata["Usage"].
+    private static ChatMessageContent FinalResponse(int promptTokens, int completionTokens) =>
+        new(AuthorRole.Assistant, "done")
+        {
+            Metadata = new Dictionary<string, object?>
+            {
+                ["Usage"] = new Microsoft.Extensions.AI.UsageDetails
+                {
+                    InputTokenCount = promptTokens,
+                    OutputTokenCount = completionTokens,
+                },
+            },
+        };
+
     // rawClaudeJson: the Messages API response the bridge keeps as InnerContent.
     private static ChatMessageContent Msg(string? content, string? rawClaudeJson = null) =>
         new(AuthorRole.Assistant, content)
         {
             InnerContent = rawClaudeJson is null ? null : ClaudeResponses.Parse(rawClaudeJson),
         };
-
-    private sealed class ListLogger : ILogger
-    {
-        public List<(LogLevel Level, string Message)> Entries { get; } = [];
-
-        public IDisposable? BeginScope<TState>(TState state)
-            where TState : notnull => null;
-
-        public bool IsEnabled(LogLevel logLevel) => true;
-
-        public void Log<TState>(
-            LogLevel logLevel,
-            EventId eventId,
-            TState state,
-            Exception? exception,
-            Func<TState, Exception?, string> formatter)
-        {
-            Entries.Add((logLevel, formatter(state, exception)));
-        }
-    }
 }

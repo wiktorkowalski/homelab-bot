@@ -23,13 +23,7 @@ public class AnthropicChatClientTests
 
     public AnthropicChatClientTests()
     {
-        var chatClient = AnthropicChatClientFactory.Create(
-            _handler.CreateClient(), ClaudeResponses.Model, maxTokens: 16000, ReasoningEffort.Medium, _logger);
-
-        var builder = Kernel.CreateBuilder();
-        builder.Services.AddSingleton(chatClient.AsChatCompletionService());
-        builder.Plugins.AddFromObject(_plugin, "Test");
-        _kernel = builder.Build();
+        _kernel = ClaudeTestKernel.Build(_handler.CreateClient(), _plugin, _logger);
         _chat = _kernel.GetRequiredService<IChatCompletionService>();
     }
 
@@ -154,25 +148,31 @@ public class AnthropicChatClientTests
     }
 
     [Fact]
-    public async Task NoToolsOffered_HistoryWithAToolTurn_IsSentAsPlainText()
+    public async Task NoToolsOffered_HistoryWithAToolTurn_DeclaresThatToolByNameOnly_AndForbidsCalls()
     {
         _handler.Enqueue(ClaudeResponses.ToolUse()).Enqueue(ClaudeResponses.Text()).Enqueue(ClaudeResponses.Text("summary"));
         var history = NewHistory();
         history.Add(await _chat.GetChatMessageContentAsync(history, AutoTools, _kernel));
         history.AddUserMessage("summarize, no tools");
 
-        await _chat.GetChatMessageContentAsync(history, NoTools, _kernel);
+        var response = await _chat.GetChatMessageContentAsync(history, NoTools, _kernel);
 
-        // The API answers 400 to tool_use / tool_result blocks in a request without tools.
+        // The API answers 400 to tool_use / tool_result blocks in a request that defines no tool.
+        Assert.Equal("summary", response.Content);
         var request = Request(2);
-        Assert.Null(request["tools"]);
-        var blocks = request["messages"]!.AsArray().SelectMany(m => m!["content"]!.AsArray()).ToList();
-        Assert.All(blocks, b => Assert.Equal("text", (string?)b!["type"]));
-        Assert.Contains(blocks, b => ((string?)b!["text"])!.StartsWith("[tool call] Test_Ping", StringComparison.Ordinal));
-        Assert.Contains(blocks, b => (string?)b!["text"] == "[tool result] pong");
-        Assert.Equal(
-            ["user", "assistant", "user", "assistant", "user"],
-            request["messages"]!.AsArray().Select(m => (string?)m!["role"]));
+        var tool = request["tools"]!.AsArray().Single()!;
+        Assert.Equal("Test_Ping", (string?)tool["name"]);
+        Assert.Empty(tool["input_schema"]!["properties"]!.AsObject());
+        Assert.Null(tool["cache_control"]);
+        Assert.Equal("none", (string?)request["tool_choice"]!["type"]);
+
+        // The tool turn keeps its structure: a tool result must not become user text.
+        var messages = request["messages"]!.AsArray();
+        Assert.Equal(["user", "assistant", "user", "assistant", "user"], messages.Select(m => (string?)m!["role"]));
+        Assert.Equal("tool_use", (string?)messages[1]!["content"]!.AsArray().Single()!["type"]);
+        Assert.Equal("tool_result", (string?)messages[2]!["content"]!.AsArray().Single()!["type"]);
+        Assert.Equal(1, CountBreakpoints(request));
+        Assert.Equal(1, _plugin.Calls);
     }
 
     [Fact]
@@ -227,7 +227,6 @@ public class AnthropicChatClientTests
     [Fact]
     public async Task ToolThatThrows_TellsTheModelWhy_AndTheLoopGoesOn()
     {
-        _kernel.AutoFunctionInvocationFilters.Add(new ToolExceptionFilter(_logger));
         _handler.Enqueue(ClaudeResponses.ToolUse(tools: ["Test_Explode"])).Enqueue(ClaudeResponses.Text("it failed"));
 
         var response = await _chat.GetChatMessageContentAsync(NewHistory(), AutoTools, _kernel);
@@ -419,7 +418,7 @@ public class AnthropicChatClientTests
         var spans = new List<Activity>();
         using var listener = new ActivityListener
         {
-            ShouldListenTo = s => s.Name == AnthropicChatClientFactory.ActivitySourceName || s.Name.StartsWith("Microsoft.SemanticKernel", StringComparison.Ordinal),
+            ShouldListenTo = s => s.Name == TelemetryConstants.LlmActivitySourceName || s.Name.StartsWith("Microsoft.SemanticKernel", StringComparison.Ordinal),
             Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
             ActivityStopped = spans.Add,
         };
@@ -481,13 +480,7 @@ public class AnthropicChatClientTests
         Assert.Equal(ReasoningEffort.High, shaped.Reasoning!.Effort);
     }
 
-    private static ChatHistory NewHistory()
-    {
-        var history = new ChatHistory();
-        history.AddSystemMessage("You are a test bot.");
-        history.AddUserMessage("ping please");
-        return history;
-    }
+    private static ChatHistory NewHistory() => ClaudeTestKernel.NewHistory();
 
     private static bool HasBreakpoint(AIContent content) =>
         content.AdditionalProperties?.Values.Any(v => v is Anthropic.Models.Messages.CacheControlEphemeral) == true;
@@ -499,7 +492,7 @@ public class AnthropicChatClientTests
         _ => 0,
     };
 
-    private JsonObject Request(int index) => JsonNode.Parse(_handler.RequestBodies[index])!.AsObject();
+    private JsonObject Request(int index) => _handler.Requests[index];
 
     private sealed class CountingFilter : IFunctionInvocationFilter
     {
