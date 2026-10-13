@@ -105,6 +105,29 @@ internal sealed class AnthropicRequestChatClient : DelegatingChatClient
         options.Tools = [.. names.Select(name => (AITool)AIFunctionFactory.CreateDeclaration(
             name, "Used earlier in this conversation. Not available now.", EmptyObjectSchema))];
         options.ToolMode = ChatToolMode.None;
+
+        // The last round of the loop still carries the thinking blocks of its earlier rounds.
+        // A thinking block is only valid with the tool list it was produced with, and that list
+        // is now different, so the API would reject the request. Every tool call has its result
+        // by now, so the blocks can go.
+        for (var i = messages.Count - 1; i >= 0; i--)
+        {
+            var message = messages[i];
+            if (!message.Contents.Any(content => content is TextReasoningContent))
+            {
+                continue;
+            }
+
+            var kept = message.Contents.Where(content => content is not TextReasoningContent).ToList();
+            if (kept.Count == 0)
+            {
+                messages.RemoveAt(i);
+            }
+            else
+            {
+                messages[i] = new ChatMessage(message.Role, kept) { AuthorName = message.AuthorName };
+            }
+        }
     }
 
     // Replaces the message with a copy whose last block carries the breakpoint. Only text and

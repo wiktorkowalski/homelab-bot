@@ -43,7 +43,11 @@ public sealed class KernelServiceClaudeTests : IDisposable
             NullLogger<TelemetryFunctionFilter>.Instance,
             _conversations,
             new TelemetryService(_dbFactory, NullLogger<TelemetryService>.Instance),
-            plugins => plugins.AddFromObject(_plugin, "Test"));
+            plugins =>
+            {
+                plugins.AddFromObject(_plugin, "Test");
+                plugins.AddFromObject(new PingPlugin(), "Other");
+            });
     }
 
     public void Dispose()
@@ -93,7 +97,8 @@ public sealed class KernelServiceClaudeTests : IDisposable
         foreach (var request in Requests())
         {
             Assert.Equal(ClaudeResponses.Model, (string?)request["model"]);
-            Assert.Equal(2048, (int?)request["max_tokens"]);
+            // The caller caps the reply; thinking gets its own room on top.
+            Assert.Equal(2048 + 8192, (int?)request["max_tokens"]);
             Assert.Equal("You are a test bot.", (string?)request["system"]!.AsArray().Single()!["text"]);
             Assert.Equal("auto", (string?)request["tool_choice"]!["type"]);
             Assert.Equal("medium", (string?)request["output_config"]!["effort"]);
@@ -201,6 +206,72 @@ public sealed class KernelServiceClaudeTests : IDisposable
         Assert.False(row.Success);
         Assert.Equal(1, row.LlmRounds);
         Assert.Equal(1000, row.PromptTokens);
+
+        // The user learns that the restart did happen.
+        Assert.Contains("Test.Restart", answer, StringComparison.Ordinal);
+        Assert.Contains("container restarted", answer, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task FailureAfterAToolRan_IsRememberedOnTheNextTurn()
+    {
+        _handler.Enqueue(ClaudeResponses.ToolUse(tools: "Test_Restart")).EnqueueStatus(500, times: 3).Enqueue(ClaudeResponses.Text("already done"));
+        var failure = await _service.ProcessMessageAsync(ThreadId, "restart it");
+
+        await _service.ProcessMessageAsync(ThreadId, "try again");
+
+        // Without the closing message the model would see two user messages and no sign of the
+        // restart, and would restart the container a second time.
+        var messages = Requests()[^1]["messages"]!.AsArray();
+        Assert.Equal(["user", "assistant", "user"], messages.Select(m => (string?)m!["role"]));
+        var remembered = (string?)messages[1]!["content"]!.AsArray().Single()!["text"];
+        Assert.Equal(failure, remembered);
+        Assert.Contains("Test.Restart", remembered, StringComparison.Ordinal);
+        Assert.Equal(1, _plugin.RestartCalls);
+    }
+
+    [Fact]
+    public async Task FailureBeforeAnyTool_StillClosesTheTurn()
+    {
+        _handler.EnqueueStatus(400).Enqueue(ClaudeResponses.Text("ok"));
+        var failure = await _service.ProcessMessageAsync(ThreadId, "hi");
+
+        await _service.ProcessMessageAsync(ThreadId, "again");
+
+        Assert.DoesNotContain("Tools that already ran", failure, StringComparison.Ordinal);
+        Assert.Equal(["user", "assistant", "user"], Requests()[^1]["messages"]!.AsArray().Select(m => (string?)m!["role"]));
+    }
+
+    [Fact]
+    public async Task CancelAfterAToolRan_Rethrows_AndIsRememberedOnTheNextTurn()
+    {
+        using var caller = new CancellationTokenSource();
+        _handler.Enqueue(ClaudeResponses.ToolUse(tools: "Test_Restart")).EnqueueCallerCancel(caller).Enqueue(ClaudeResponses.Text("ok"));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => _service.ProcessMessageAsync(ThreadId, "restart it", ct: caller.Token));
+
+        await _service.ProcessMessageAsync(ThreadId, "what happened?");
+        var messages = Requests()[^1]["messages"]!.AsArray();
+        Assert.Equal(["user", "assistant", "user"], messages.Select(m => (string?)m!["role"]));
+        var remembered = (string?)messages[1]!["content"]!.AsArray().Single()!["text"];
+        Assert.StartsWith("The request was cancelled", remembered, StringComparison.Ordinal);
+        Assert.Contains("Test.Restart", remembered, StringComparison.Ordinal);
+        Assert.Equal(1, _plugin.RestartCalls);
+    }
+
+    [Fact]
+    public async Task RefusalAfterAToolCall_DoesNotRunTheTool_AndIsReported()
+    {
+        _handler.Enqueue(ClaudeResponses.RefusalAfterToolUse("Test_Restart"));
+
+        var answer = await _service.ProcessMessageAsync(ThreadId, "restart it");
+
+        Assert.Equal(KernelService.RefusalMessage("cyber"), answer);
+        Assert.Equal(0, _plugin.RestartCalls);
+        Assert.Single(_handler.RequestBodies);
+        Assert.Single(_logger.Entries, e => e.Level == LogLevel.Warning && e.Message.Contains("declined", StringComparison.Ordinal));
+        Assert.Empty(await ToolCallsAsync());
     }
 
     [Fact]
@@ -229,7 +300,20 @@ public sealed class KernelServiceClaudeTests : IDisposable
 
         await _service.ProcessMessageAsync(ThreadId, "hi", pluginAllowList: ["Test"]);
 
-        Assert.Equal(3, Requests()[0]["tools"]!.AsArray().Count);
+        // The kernel also has the plugin "Other"; none of its tools may be sent.
+        Assert.Equal(
+            ["Test_Explode", "Test_Ping", "Test_Restart", "Test_TimeOut"],
+            Requests()[0]["tools"]!.AsArray().Select(t => (string?)t!["name"]));
+    }
+
+    [Fact]
+    public async Task NoAllowList_SendsTheToolsOfEveryPlugin()
+    {
+        _handler.Enqueue(ClaudeResponses.Text());
+
+        await _service.ProcessMessageAsync(ThreadId, "hi");
+
+        Assert.Equal(8, Requests()[0]["tools"]!.AsArray().Count);
     }
 
     [Fact]

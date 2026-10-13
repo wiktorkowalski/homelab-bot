@@ -46,6 +46,17 @@ internal static class ClaudeResponses
          "usage":{{Usage(input, output, cacheWrite, cacheRead)}}}
         """;
 
+    // The classifier stopped the model after it had already written a tool call.
+    public static string RefusalAfterToolUse(string tool) =>
+        $$$"""
+        {"id":"msg_refusal_tool","type":"message","role":"assistant","model":"{{{Model}}}",
+         "content":[{"type":"thinking","thinking":"","signature":"{{{Signature}}}"},
+                    {"type":"tool_use","id":"toolu_1","name":"{{{tool}}}","input":{},"caller":{"type":"direct"}}],
+         "stop_reason":"refusal","stop_sequence":null,
+         "stop_details":{"type":"refusal","category":"cyber","explanation":"declined by policy"},
+         "usage":{{{Usage(30, 12, null, null)}}}}
+        """;
+
     // A null category leaves stop_details out of the response.
     public static string Refusal(string? category = "cyber")
     {
@@ -122,6 +133,17 @@ internal sealed class ScriptedClaudeHandler : HttpMessageHandler
         return this;
     }
 
+    // The caller gives up while this request is on the wire.
+    public ScriptedClaudeHandler EnqueueCallerCancel(CancellationTokenSource caller)
+    {
+        _script.Enqueue(() =>
+        {
+            caller.Cancel();
+            throw new OperationCanceledException(caller.Token);
+        });
+        return this;
+    }
+
     public ScriptedClaudeHandler EnqueueConnectionFailure(int times = 1)
     {
         for (var i = 0; i < times; i++)
@@ -132,11 +154,8 @@ internal sealed class ScriptedClaudeHandler : HttpMessageHandler
         return this;
     }
 
-    public AnthropicClient CreateClient() => new()
-    {
-        ApiKey = "test-key",
-        HttpClient = new HttpClient(this),
-    };
+    // The production client, on this transport.
+    public AnthropicClient CreateClient() => AnthropicChatClientFactory.CreateApiClient("test-key", new HttpClient(this));
 
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
@@ -209,6 +228,11 @@ internal sealed class PingPlugin
     [KernelFunction("Explode")]
     [Description("Always throws.")]
     public string Explode() => throw new InvalidOperationException("docker socket unreachable");
+
+    // What an HttpClient timeout inside a tool looks like: a cancellation the caller did not ask for.
+    [KernelFunction("TimeOut")]
+    [Description("Always times out.")]
+    public string TimeOut() => throw new TaskCanceledException("docker request timed out");
 }
 
 internal sealed class RecordingLogger<T> : ILogger<T>

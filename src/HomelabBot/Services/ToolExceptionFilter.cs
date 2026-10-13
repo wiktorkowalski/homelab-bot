@@ -22,11 +22,17 @@ internal sealed class ToolExceptionFilter : IAutoFunctionInvocationFilter
         {
             await next(context);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex)
         {
+            // Cancellation is not let through: a tool's own timeout is an OperationCanceledException
+            // too, and nothing here can tell it from a cancel of the caller. When the caller did
+            // cancel, the next LLM request throws on the same token, so the turn still ends.
             _logger.LogWarning(
                 ex, "Tool {Plugin}.{Function} threw; the model gets the error text", context.Function.PluginName, context.Function.Name);
-            context.Result = new FunctionResult(context.Function, ToolResult.Failure(ex.Message));
+
+            // Semantic Kernel wraps a cancelled tool; the reason is in the inner exception.
+            var reason = ex.InnerException is { } inner ? $"{ex.Message} ({inner.Message})" : ex.Message;
+            context.Result = new FunctionResult(context.Function, ToolResult.Failure(reason));
         }
     }
 }

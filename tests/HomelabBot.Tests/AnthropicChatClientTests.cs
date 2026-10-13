@@ -129,7 +129,7 @@ public class AnthropicChatClientTests
         await _chat.GetChatMessageContentAsync(NewHistory(), AutoTools, _kernel);
 
         var names = Request(0)["tools"]!.AsArray().Select(t => (string?)t!["name"]).ToList();
-        Assert.Equal(["Test_Explode", "Test_Ping", "Test_Restart"], names);
+        Assert.Equal(["Test_Explode", "Test_Ping", "Test_Restart", "Test_TimeOut"], names);
     }
 
     [Fact]
@@ -415,22 +415,41 @@ public class AnthropicChatClientTests
     [Fact]
     public async Task EveryRound_GetsItsOwnChatSpan_WithUsageAndTheToolSpanBetweenThem()
     {
+        // A listener is process-wide: other test classes stop spans of the same sources on other
+        // threads, so only this trace is collected, under a lock.
+        using var root = new Activity("test-root").Start();
+        var traceId = root.TraceId;
         var spans = new List<Activity>();
         using var listener = new ActivityListener
         {
             ShouldListenTo = s => s.Name == TelemetryConstants.LlmActivitySourceName || s.Name.StartsWith("Microsoft.SemanticKernel", StringComparison.Ordinal),
             Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
-            ActivityStopped = spans.Add,
+            ActivityStopped = span =>
+            {
+                if (span.TraceId != traceId)
+                {
+                    return;
+                }
+
+                lock (spans)
+                {
+                    spans.Add(span);
+                }
+            },
         };
         ActivitySource.AddActivityListener(listener);
-        using var root = new Activity("test-root").Start();
         _handler
             .Enqueue(ClaudeResponses.ToolUse(input: 100, output: 20, cacheWrite: 900, cacheRead: 0))
             .Enqueue(ClaudeResponses.Text(input: 120, output: 50, cacheWrite: 0, cacheRead: 900));
 
         await _chat.GetChatMessageContentAsync(NewHistory(), AutoTools, _kernel);
 
-        var mine = spans.Where(s => s.TraceId == root.TraceId).ToList();
+        List<Activity> mine;
+        lock (spans)
+        {
+            mine = [.. spans];
+        }
+
         var chats = mine.Where(s => (string?)s.GetTagItem("gen_ai.operation.name") == "chat").ToList();
         Assert.Equal(2, chats.Count);
         Assert.All(chats, s => Assert.Equal(ClaudeResponses.Model, s.GetTagItem("gen_ai.request.model")));
@@ -468,6 +487,63 @@ public class AnthropicChatClientTests
         Assert.True(HasBreakpoint(messages[1].Contents[0]));
         Assert.Equal(ReasoningEffort.Low, shaped.Reasoning!.Effort);
         Assert.Equal(["a_tool", "b_tool"], shaped.Tools!.Select(t => t.Name));
+    }
+
+    [Fact]
+    public void Shape_LastRoundOfTheLoop_KeepsToolBlocksButDropsThinkingBlocks()
+    {
+        // What the loop sends when it hits its round limit: the tools are gone, the messages
+        // still hold the thinking blocks of the rounds before.
+        var assistant = new ChatMessage(ChatRole.Assistant,
+        [
+            new TextReasoningContent(string.Empty) { ProtectedData = ClaudeResponses.Signature },
+            new Microsoft.Extensions.AI.FunctionCallContent("toolu_1", "Test_Ping"),
+        ]);
+        var tool = new ChatMessage(ChatRole.Tool, [new Microsoft.Extensions.AI.FunctionResultContent("toolu_1", "pong")]);
+
+        var (messages, shaped) = AnthropicRequestChatClient.Shape(
+            [new ChatMessage(ChatRole.User, "hi"), assistant, tool], new ChatOptions(), ReasoningEffort.Medium);
+
+        // A thinking block is bound to the tool list it was produced with; the list is now the
+        // name-only declarations, so a replayed block would be rejected.
+        Assert.Equal(["Test_Ping"], shaped.Tools!.Select(t => t.Name));
+        Assert.Equal(ChatToolMode.None, shaped.ToolMode);
+        Assert.DoesNotContain(messages.SelectMany(m => m.Contents), c => c is TextReasoningContent);
+        Assert.IsType<Microsoft.Extensions.AI.FunctionCallContent>(messages[1].Contents.Single());
+        Assert.IsType<Microsoft.Extensions.AI.FunctionResultContent>(messages[2].Contents.Single());
+        Assert.Equal(2, assistant.Contents.Count);
+    }
+
+    [Fact]
+    public async Task ToolThatTimesOut_TellsTheModelWhy_LikeAnyOtherFailure()
+    {
+        _handler.Enqueue(ClaudeResponses.ToolUse(tools: ["Test_TimeOut"])).Enqueue(ClaudeResponses.Text("it timed out"));
+
+        var response = await _chat.GetChatMessageContentAsync(NewHistory(), AutoTools, _kernel);
+
+        Assert.Equal("it timed out", response.Content);
+        var result = Request(1)["messages"]!.AsArray()[2]!["content"]!.AsArray().Single()!;
+        Assert.Equal(
+            "Error: The invocation of function 'TimeOut' was canceled. (docker request timed out)",
+            (string?)result["content"]);
+    }
+
+    [Fact]
+    public async Task RefusalAfterAToolCall_EndsTheLoop_AndTheToolDoesNotRun()
+    {
+        _handler.Enqueue(ClaudeResponses.RefusalAfterToolUse("Test_Restart")).Enqueue(ClaudeResponses.Text("must not be asked for"));
+
+        var response = await _chat.GetChatMessageContentAsync(NewHistory(), AutoTools, _kernel);
+
+        Assert.Equal(0, _plugin.RestartCalls);
+        Assert.Single(_handler.RequestBodies);
+        Assert.Equal(("cyber", "declined by policy"), KernelService.GetRefusal(response));
+    }
+
+    [Fact]
+    public void ApiClient_AlwaysTargetsThePublicApi()
+    {
+        Assert.Equal("https://api.anthropic.com", AnthropicChatClientFactory.CreateApiClient("k").BaseUrl.TrimEnd('/'));
     }
 
     [Fact]

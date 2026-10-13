@@ -25,6 +25,14 @@ public sealed class KernelService
     private const string EmptyResponseMessage =
         "I couldn't generate a response - the model returned nothing. Try asking again or rephrasing.";
 
+    // Thinking is always on and counts toward max_tokens. A caller that caps the reply (1024 for
+    // a short JSON answer) would leave thinking almost nothing and get an empty or cut reply, so
+    // this is added on top of the caller's cap. Same size the SDK reserves for medium effort.
+    private const int ThinkingHeadroomTokens = 8192;
+
+    // How much of each tool result the closing message of a failed turn keeps.
+    private const int FailedTurnToolResultChars = 300;
+
     private static readonly ActivitySource ActivitySource = TelemetryConstants.ChatActivitySource;
 
     private static readonly Regex ThinkingBlockRegex = new(
@@ -284,7 +292,7 @@ public sealed class KernelService
             // No sampling parameters: the model rejects a non-default temperature / top_p / top_k.
             ExtensionData = new Dictionary<string, object>
             {
-                ["max_tokens"] = maxTokens ?? _maxTokens,
+                ["max_tokens"] = maxTokens is { } replyCap ? replyCap + ThinkingHeadroomTokens : _maxTokens,
             },
         };
 
@@ -350,6 +358,7 @@ public sealed class KernelService
             // Rounds before the cancel were billed; record them even though the caller's token is dead.
             await _telemetryService.TryLogInteractionCancelledAsync(
                 interaction.Id, sw.ElapsedMilliseconds, ResolveUsage(usageScope, null));
+            await CloseFailedTurnAsync(threadId, interaction.Id, "The request was cancelled before I could answer.");
             throw;
         }
         catch (Exception ex)
@@ -360,12 +369,42 @@ public sealed class KernelService
             _logger.LogError(ex, "Error processing message for thread {ThreadId}", threadId);
             activity?.SetTag("langfuse.observation.level", "ERROR");
             activity?.SetTag("langfuse.observation.status_message", ex.Message);
-            return $"Error processing your request: {ex.Message}";
+            return await CloseFailedTurnAsync(threadId, interaction.Id, $"Error processing your request: {ex.Message}");
         }
         finally
         {
             _telemetryService.SetActiveInteraction(null);
         }
+    }
+
+    // The loop adds tool turns to the history only when it returns. When it throws after a tool
+    // ran, the history would hold no trace of that tool, and a "try again" from the user would
+    // run the side effect a second time. So a failed turn ends with an assistant message that
+    // names what already ran. It is text, not tool blocks: a batch that failed half way would
+    // leave a tool call without its result. Never throws: it runs on the error paths.
+    private async Task<string> CloseFailedTurnAsync(ulong threadId, int interactionId, string failure)
+    {
+        var text = failure;
+        try
+        {
+            var toolCalls = await _telemetryService.GetToolCallsAsync(interactionId);
+            if (toolCalls.Count > 0)
+            {
+                var lines = toolCalls.Select(call =>
+                    $"- {call.PluginName}.{call.FunctionName}({call.ArgumentsJson}) -> {Cap(call.Success ? call.ResultJson : call.ErrorMessage)}");
+                text = $"{failure}\nTools that already ran in this turn:\n{string.Join("\n", lines)}";
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not read the tool calls of failed interaction {InteractionId}", interactionId);
+        }
+
+        _conversationService.AddAssistantMessage(threadId, text);
+        return text;
+
+        static string Cap(string? value) =>
+            value is { Length: > FailedTurnToolResultChars } ? $"{value[..FailedTurnToolResultChars]}..." : value ?? "";
     }
 
     // Retries empty/whitespace responses: HTTP 200 with no text, for example when thinking used

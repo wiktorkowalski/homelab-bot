@@ -22,7 +22,7 @@ public class ClaudeApiLiveTests
     {
         var logger = new RecordingLogger<ClaudeApiLiveTests>();
         var plugin = new PingPlugin();
-        var kernel = ClaudeTestKernel.Build(new AnthropicClient { ApiKey = ApiKey }, plugin, logger, maxTokens: 4096);
+        var kernel = ClaudeTestKernel.Build(AnthropicChatClientFactory.CreateApiClient(ApiKey!), plugin, logger, maxTokens: 4096);
 
         // Long enough to pass the minimum cacheable prompt length of the model.
         var history = new ChatHistory();
