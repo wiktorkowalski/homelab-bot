@@ -11,6 +11,7 @@ namespace HomelabBot.Tests;
 // Calls the real Claude API and costs a few cents per run, so it is skipped unless a key is set:
 // Bot__AnthropicApiKey in the repo .env file, or
 //   ANTHROPIC_API_KEY=sk-ant-... dotnet test --filter "FullyQualifiedName~ClaudeApiLiveTests"
+// In CI it runs only in the manual workflow .github/workflows/live-tests.yml.
 // It checks what a scripted transport cannot: that the API accepts the requests this bot sends.
 public class ClaudeApiLiveTests
 {
