@@ -359,8 +359,6 @@ public class HomeLabCommands : ApplicationCommandModule
             _logger.LogInformation("LogsAnalyze command invoked by {User} for {Container}",
                 ctx.User.Username, container ?? "all");
 
-            var threadId = (ulong)DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-
             string prompt;
             if (!string.IsNullOrWhiteSpace(container))
             {
@@ -405,10 +403,7 @@ public class HomeLabCommands : ApplicationCommandModule
                     """;
             }
 
-            var response = await _kernelService.ProcessMessageAsync(
-                threadId, prompt, ctx.User.Id, TraceType.Chat);
-
-            _conversationService.ClearHistory(threadId);
+            var response = await _kernelService.ProcessOneShotAsync(prompt, ctx.User.Id, TraceType.Chat);
 
             await EditResponseWithContentOrSplitAsync(ctx, response,
                 "Log analysis complete:");
@@ -449,15 +444,11 @@ public class HomeLabCommands : ApplicationCommandModule
     {
         await ctx.DeferAsync();
 
-        // Use a unique thread ID so systemPromptOverride is always applied
-        var threadId = (ulong)DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-
         try
         {
             _logger.LogInformation("Healthcheck command invoked by {User}", ctx.User.Username);
 
-            var response = await _kernelService.ProcessMessageAsync(
-                threadId,
+            var response = await _kernelService.ProcessOneShotAsync(
                 HealthcheckPrompts.Investigation,
                 ctx.User.Id,
                 TraceType.Scheduled,
@@ -471,10 +462,6 @@ public class HomeLabCommands : ApplicationCommandModule
             _logger.LogError(ex, "Error in healthcheck command");
             await ctx.EditResponseAsync(new DiscordWebhookBuilder()
                 .WithContent($"Error running healthcheck: {ex.Message}"));
-        }
-        finally
-        {
-            _conversationService.ClearHistory(threadId);
         }
     }
 
@@ -507,8 +494,6 @@ public class HomeLabCommands : ApplicationCommandModule
     {
         await ctx.DeferAsync();
 
-        var threadId = (ulong)DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-
         try
         {
             _logger.LogInformation("Recall command invoked by {User} for '{Query}'", ctx.User.Username, query);
@@ -534,8 +519,7 @@ public class HomeLabCommands : ApplicationCommandModule
                 Focus on practical info the user can act on now. Be concise.
                 """;
 
-            var response = await _kernelService.ProcessMessageAsync(
-                threadId, prompt, ctx.User.Id, TraceType.Chat);
+            var response = await _kernelService.ProcessOneShotAsync(prompt, ctx.User.Id, TraceType.Chat);
 
             await EditResponseWithContentOrSplitAsync(ctx, response,
                 $"Recall results for \"{query}\":");
@@ -545,10 +529,6 @@ public class HomeLabCommands : ApplicationCommandModule
             _logger.LogError(ex, "Error in recall command");
             await ctx.EditResponseAsync(new DiscordWebhookBuilder()
                 .WithContent($"Error searching conversations: {ex.Message}"));
-        }
-        finally
-        {
-            _conversationService.ClearHistory(threadId);
         }
     }
 
@@ -828,7 +808,7 @@ public class HomeLabCommands : ApplicationCommandModule
                 - Monitoring: {(data.Monitoring != null ? $"{data.Monitoring.UpTargets}/{data.Monitoring.TotalTargets} targets up" : "unavailable")}
                 """;
 
-            return await _kernelService.ProcessMessageAsync(threadId: 0, userMessage: prompt);
+            return await _kernelService.ProcessOneShotAsync(prompt);
         }
         catch (Exception ex)
         {

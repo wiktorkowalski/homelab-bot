@@ -31,6 +31,34 @@ public sealed class KernelServiceClaudeTests : IDisposable
 
     public void Dispose() => _harness.Dispose();
 
+    [Fact]
+    public async Task OneShot_AnswersOnAFreshThread_AndFreesItsHistory()
+    {
+        _handler.Enqueue(ClaudeResponses.Text("first")).Enqueue(ClaudeResponses.Text("second"));
+
+        await _service.ProcessOneShotAsync("summarize A");
+        var answer = await _service.ProcessOneShotAsync("summarize B");
+
+        Assert.Equal("second", answer);
+        Assert.Single(_handler.Requests[1]["messages"]!.AsArray());
+        Assert.Equal(0, _harness.Conversations.CachedHistoryCount);
+    }
+
+    [Fact]
+    public async Task LockThatClearsOnRelease_DropsTheHistoryBeforeTheNextWaiterGetsIt()
+    {
+        var conversations = _harness.Conversations;
+        await conversations.GetOrCreateHistoryAsync(ThreadId, "system");
+        var first = await conversations.LockThreadAsync(ThreadId, clearHistoryOnRelease: true);
+        var second = conversations.LockThreadAsync(ThreadId);
+
+        first.Dispose();
+        using (await second)
+        {
+            Assert.Equal(0, conversations.CachedHistoryCount);
+        }
+    }
+
     // A scheduled run has nobody watching and its prompt can carry text from outside. Even when
     // the model asks for a tool that changes state, the tool must not run.
     [Fact]

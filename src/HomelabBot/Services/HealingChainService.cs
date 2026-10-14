@@ -144,8 +144,7 @@ public sealed class HealingChainService
         {
             // The prompt holds all the data and asks for JSON only: tool schemas are pure cost, and
             // a tool call would run outside the risky-step gate of ExecuteChainAsync.
-            var response = await _kernelService.ProcessMessageAsync(
-                threadId: (ulong)Random.Shared.NextInt64(),
+            var response = await _kernelService.ProcessOneShotAsync(
                 userMessage: prompt,
                 traceType: TraceType.Scheduled,
                 maxTokens: 1024,

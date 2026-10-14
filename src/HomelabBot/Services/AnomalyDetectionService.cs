@@ -555,8 +555,10 @@ public sealed class AnomalyDetectionService : BackgroundService
         var anomalies = new List<Anomaly>();
         try
         {
+            // Traefik keeps exporting a replaced certificate until it restarts, so take the newest
+            // certificate per name set: the old serial alone looks expired.
             var minExpiry = await _prometheus.QueryScalarAsync(
-                "min(traefik_tls_certs_not_after - time())", ct);
+                "min(max by (cn, sans) (traefik_tls_certs_not_after) - time())", ct);
 
             if (minExpiry == null)
             {
