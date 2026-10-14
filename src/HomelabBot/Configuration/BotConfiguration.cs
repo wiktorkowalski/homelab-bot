@@ -9,6 +9,10 @@ namespace HomelabBot.Configuration;
 public static class HomelabOwner
 {
     public const ulong DiscordUserId = 170921674840080384;
+
+    // The conversation of the owner's DMs. It is never reset. A user id is a snowflake like the
+    // channel and message ids used for other conversations, so it cannot collide with one.
+    public const ulong DmThreadId = DiscordUserId;
 }
 
 public sealed class BotConfiguration

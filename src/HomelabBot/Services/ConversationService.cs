@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Globalization;
 using HomelabBot.Data;
 using HomelabBot.Data.Entities;
 using HomelabBot.Models;
@@ -29,9 +30,15 @@ public sealed class ConversationService
     // during the turn that produced it; later turns only need the gist.
     internal const int MaxToolResultChars = 8_000;
 
+    // A message the bot sent to the owner, stored in the owner's DM thread. The model gets it as a
+    // user message with this marker: it is not the owner's text and not the model's own answer.
+    internal const string BotMessageRole = "notification";
+
     // Ceiling on how many keyword-matched conversations get loaded and scored in memory.
     private const int MaxScoredConversations = 200;
     private const string LikeEscapeChar = "\\";
+
+    private readonly ConcurrentDictionary<ulong, SemaphoreSlim> _threadLocks = new();
 
     public ConversationService(
         IDbContextFactory<HomelabDbContext> dbFactory,
@@ -49,22 +56,31 @@ public sealed class ConversationService
         }
 
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
-        var conversation = await db.Conversations
-            .Include(c => c.Messages.OrderBy(m => m.Timestamp))
-            .FirstOrDefaultAsync(c => c.ThreadId == threadId, ct);
+        var conversation = await db.Conversations.FirstOrDefaultAsync(c => c.ThreadId == threadId, ct);
 
         var history = new ChatHistory();
         history.AddSystemMessage(systemPrompt);
 
         if (conversation is not null)
         {
-            foreach (var msg in conversation.Messages)
+            // The owner's DM thread is never reset, so read only the newest rows the window can hold.
+            var rows = await db.ConversationMessages
+                .AsNoTracking()
+                .Where(m => m.ConversationId == conversation.Id)
+                .OrderByDescending(m => m.Timestamp)
+                .ThenByDescending(m => m.Id)
+                .Take(HistoryLimit.Messages)
+                .ToListAsync(ct);
+            rows.Reverse();
+
+            // The cut can land inside a turn; history must not open with an answer.
+            foreach (var msg in rows)
             {
-                if (msg.Role == "user")
+                if (msg.Role is "user" or BotMessageRole)
                 {
                     history.AddUserMessage(msg.Content);
                 }
-                else if (msg.Role == "assistant")
+                else if (msg.Role == "assistant" && history.Count > 1)
                 {
                     history.AddAssistantMessage(msg.Content);
                 }
@@ -75,7 +91,7 @@ public sealed class ConversationService
 
             _logger.LogInformation(
                 "Loaded {Count} messages for thread {ThreadId}, kept {KeptCount} in history",
-                conversation.Messages.Count, threadId, history.Count - 1);
+                rows.Count, threadId, history.Count - 1);
         }
         else
         {
@@ -94,54 +110,42 @@ public sealed class ConversationService
         return history;
     }
 
-    public ChatHistory GetOrCreateHistory(ulong threadId, string systemPrompt)
+    // One writer per thread at a time. KernelService holds it for a whole turn: the tool loop
+    // appends to the cached history while it runs, and a message added in between would split a
+    // tool call from its result. Not reentrant: nothing that runs inside a turn may take it again.
+    public async Task<IDisposable> LockThreadAsync(ulong threadId, CancellationToken ct = default)
     {
-        return GetOrCreateHistoryAsync(threadId, systemPrompt).GetAwaiter().GetResult();
+        var gate = _threadLocks.GetOrAdd(threadId, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(ct);
+        return new ThreadLock(gate);
     }
 
-    public async Task AddUserMessageAsync(ulong threadId, string message, CancellationToken ct = default)
+    // Adds a message the bot already sent to the owner, so the owner can ask about it. It waits
+    // for a running turn on the thread to end, then becomes one user message of its own.
+    public async Task RecordBotMessageAsync(ulong threadId, string text, CancellationToken ct = default)
     {
-        if (_histories.TryGetValue(threadId, out var history))
+        var record = FormatBotMessage(DateTime.UtcNow, text);
+
+        using (await LockThreadAsync(threadId, ct))
         {
-            history.AddUserMessage(message);
-            TrimHistoryIfNeeded(history);
+            await AppendAsync(threadId, AuthorRole.User, BotMessageRole, record, ct);
         }
 
-        await PersistMessageAsync(threadId, "user", message, ct);
+        _logger.LogInformation("Recorded a sent bot message ({Chars} chars) in thread {ThreadId}", record.Length, threadId);
     }
 
-    public void AddUserMessage(ulong threadId, string message)
+    // The stored text is the text the model sees, so a reload builds the same request bytes.
+    internal static string FormatBotMessage(DateTime sentAtUtc, string text)
     {
-        if (_histories.TryGetValue(threadId, out var history))
-        {
-            history.AddUserMessage(message);
-            TrimHistoryIfNeeded(history);
-        }
-
-        _ = PersistMessageAsync(threadId, "user", message);
+        var record = $"[Bot message sent to the owner at {sentAtUtc.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture)} UTC]\n{text}";
+        return record.Length > MaxToolResultChars ? Truncate(record, MaxToolResultChars) : record;
     }
 
-    public async Task AddAssistantMessageAsync(ulong threadId, string message, CancellationToken ct = default)
-    {
-        if (_histories.TryGetValue(threadId, out var history))
-        {
-            history.AddAssistantMessage(message);
-            TrimHistoryIfNeeded(history);
-        }
+    public Task AddUserMessageAsync(ulong threadId, string message, CancellationToken ct = default) =>
+        AppendAsync(threadId, AuthorRole.User, "user", message, ct);
 
-        await PersistMessageAsync(threadId, "assistant", message, ct);
-    }
-
-    public void AddAssistantMessage(ulong threadId, string message)
-    {
-        if (_histories.TryGetValue(threadId, out var history))
-        {
-            history.AddAssistantMessage(message);
-            TrimHistoryIfNeeded(history);
-        }
-
-        _ = PersistMessageAsync(threadId, "assistant", message);
-    }
+    public Task AddAssistantMessageAsync(ulong threadId, string message, CancellationToken ct = default) =>
+        AppendAsync(threadId, AuthorRole.Assistant, "assistant", message, ct);
 
     public async Task UpdateTitleAsync(ulong threadId, string title, CancellationToken ct = default)
     {
@@ -253,6 +257,17 @@ public sealed class ConversationService
         {
             _logger.LogInformation("Cleared conversation history for thread {ThreadId}", threadId);
         }
+    }
+
+    private async Task AppendAsync(ulong threadId, AuthorRole role, string storedRole, string message, CancellationToken ct)
+    {
+        if (_histories.TryGetValue(threadId, out var history))
+        {
+            history.AddMessage(role, message);
+            TrimHistoryIfNeeded(history);
+        }
+
+        await PersistMessageAsync(threadId, storedRole, message, ct);
     }
 
     private async Task PersistMessageAsync(ulong threadId, string role, string content, CancellationToken ct = default)
@@ -461,4 +476,13 @@ public sealed class ConversationService
     // Auto-invoked results are stored as strings already; ToString covers anything else without
     // the serializer throwing on an odd object graph.
     private static string? ResultText(FunctionResultContent result) => result.Result?.ToString();
+
+    private sealed class ThreadLock : IDisposable
+    {
+        private SemaphoreSlim? _gate;
+
+        public ThreadLock(SemaphoreSlim gate) => _gate = gate;
+
+        public void Dispose() => Interlocked.Exchange(ref _gate, null)?.Release();
+    }
 }

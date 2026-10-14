@@ -21,24 +21,6 @@ internal static class NotificationPrompts
         Be thorough but concise. Report what you found and what you recommend.
         """;
 
-    internal const string EndOfCycleLearning = """
-        Review the conversation above from today's notification cycle.
-        Extract notification preference updates based on the owner's responses:
-
-        1. Issues the owner dismissed as unimportant (e.g., "this is fine", "don't worry about this", ignored after investigating)
-        2. Issues the owner explicitly wants to always be notified about
-        3. Any other notification preferences expressed
-
-        For each preference, output a line in this exact format:
-        SUPPRESS: <issue type> — <reason>
-        ALWAYS: <issue type> — <reason>
-
-        If no clear preferences were expressed, output:
-        NO_UPDATES
-
-        Be conservative — only extract preferences that were clearly expressed or strongly implied by the conversation.
-        """;
-
     // Plugins this path is allowed to call. Every tool schema is re-sent and billed on every
     // round, and telemetry over 25 investigations shows only Docker, Prometheus, Loki,
     // Alertmanager and Investigation ever get called. TrueNAS and MikroTik stay because the
@@ -51,7 +33,6 @@ internal static class NotificationPrompts
 
     internal const string TagNotify = "[NOTIFY]";
     internal const string TagSilent = "[SILENT]";
-    internal const string TagNoUpdates = "NO_UPDATES";
     internal const int MaxTokens = 4096;
 
     internal static string BuildDecisionOnlyPrompt(string summary, string rawData, string preferences)

@@ -22,7 +22,6 @@ public sealed class SmartNotificationService
     private readonly Lock _cycleLock = new();
 
     private string _currentCycleDate = "";
-    private bool _hasConversation;
 
     public SmartNotificationService(
         KernelService kernelService,
@@ -39,7 +38,7 @@ public sealed class SmartNotificationService
 
         lock (_cycleLock)
         {
-            // Use yesterday so the first StartNewCycleAsync call always rotates to today,
+            // Use yesterday so the first StartNewCycle call always rotates to today,
             // ensuring cleanup of any orphaned conversation from a previous process.
             _currentCycleDate = DateTime.UtcNow.AddDays(-1).ToString("yyyy-MM-dd");
         }
@@ -56,12 +55,10 @@ public sealed class SmartNotificationService
         }
     }
 
-    // Start a new daily cycle. Runs end-of-cycle learning on the previous conversation,
-    // then resets context for the new day.
-    public async Task StartNewCycleAsync(CancellationToken ct)
+    // Start a new daily cycle: the evaluations of the new day get a fresh context. The owner's
+    // DMs have their own thread (HomelabOwner.DmThreadId), which is never reset.
+    public void StartNewCycle()
     {
-        string previousDate;
-        bool hadConversation;
         ulong previousThreadId;
 
         lock (_cycleLock)
@@ -72,17 +69,8 @@ public sealed class SmartNotificationService
                 return;
             }
 
-            previousDate = _currentCycleDate;
-            hadConversation = _hasConversation;
             previousThreadId = GenerateDailyThreadId(_currentCycleDate);
-
             _currentCycleDate = today;
-            _hasConversation = false;
-        }
-
-        if (hadConversation && previousThreadId != 0)
-        {
-            await RunEndOfCycleLearningAsync(previousThreadId, previousDate, ct);
         }
 
         if (previousThreadId != 0)
@@ -170,17 +158,6 @@ public sealed class SmartNotificationService
         _logger.LogInformation("Stored suppression preference for issue type '{IssueType}'", issueType);
     }
 
-    /// <summary>
-    /// Record that the owner replied in DMs (for end-of-cycle learning).
-    /// </summary>
-    public void MarkConversationActive()
-    {
-        lock (_cycleLock)
-        {
-            _hasConversation = true;
-        }
-    }
-
     private async Task<bool> SendNotificationAsync(string report, NotificationCandidate candidate)
     {
         var userId = HomelabOwner.DiscordUserId;
@@ -212,62 +189,6 @@ public sealed class SmartNotificationService
 
         _logger.LogInformation("Sent smart notification for {Source}", candidate.Source);
         return true;
-    }
-
-    private async Task RunEndOfCycleLearningAsync(ulong threadId, string cycleDate, CancellationToken ct)
-    {
-        _logger.LogInformation("Running end-of-cycle learning for {Date}", cycleDate);
-
-        try
-        {
-            var analysis = await _kernelService.ProcessMessageAsync(
-                threadId: threadId,
-                userMessage: NotificationPrompts.EndOfCycleLearning,
-                traceType: TraceType.Scheduled,
-                maxTokens: 1024,
-                allowToolUse: false,
-                ct: ct);
-
-            if (analysis.Contains(NotificationPrompts.TagNoUpdates, StringComparison.OrdinalIgnoreCase))
-            {
-                _logger.LogInformation("No notification preference updates from cycle conversation");
-                return;
-            }
-
-            foreach (var line in analysis.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-            {
-                await TryStoreLearningPreferenceAsync(line, "SUPPRESS:", "suppress",
-                    "Owner considers this non-actionable", 0.8);
-                await TryStoreLearningPreferenceAsync(line, "ALWAYS:", "always",
-                    "Owner wants to always be notified", 0.9);
-            }
-
-            _logger.LogInformation("End-of-cycle learning completed for {Date}", cycleDate);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to run end-of-cycle learning");
-        }
-    }
-
-    private async Task TryStoreLearningPreferenceAsync(
-        string line, string prefix, string topicSegment, string factTemplate, double confidence)
-    {
-        if (!line.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-        {
-            return;
-        }
-
-        var content = line[prefix.Length..].Trim();
-        var parts = content.Split('—', 2);
-        var issueType = NormalizeIssueType(parts[0].Trim());
-        var reason = parts.Length > 1 ? parts[1].Trim() : "Inferred from conversation";
-
-        await _knowledgeService.RememberFactAsync(
-            topic: $"notification_preference:{topicSegment}:{issueType}",
-            fact: $"{factTemplate}: {reason}",
-            source: "cycle_analysis",
-            confidence: confidence);
     }
 
     private async Task<List<Knowledge>> LoadNotificationPreferencesAsync()

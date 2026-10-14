@@ -85,6 +85,28 @@ public class ClaudeApiLiveTests
         Assert.Contains("restarted", response.Content, StringComparison.OrdinalIgnoreCase);
     }
 
+    // A recorded bot message is a user-role history entry, so the owner's next DM follows it as a
+    // second user message in a row, at the start of the thread and after an answer.
+    [LiveFact]
+    public async Task ConsecutiveUserMessages_AreAcceptedByTheApi()
+    {
+        var kernel = ClaudeTestKernel.Build(
+            AnthropicChatClientFactory.CreateApiClient(ApiKey!), new PingPlugin(), new RecordingLogger<ClaudeApiLiveTests>(), maxTokens: 4096);
+        var history = new ChatHistory();
+        history.AddSystemMessage("You are a test bot for a homelab. Answer in one short sentence.");
+        history.AddUserMessage("[Bot message sent to the owner at 2026-10-14 06:00 UTC]\nDisk usage on the NAS pool is 81%.");
+        history.AddUserMessage("[Bot message sent to the owner at 2026-10-14 07:00 UTC]\nContainer grafana restarted 3 times.");
+        history.AddAssistantMessage("Noted.");
+        history.AddUserMessage("[Bot message sent to the owner at 2026-10-14 08:00 UTC]\nBackup job finished.");
+        history.AddUserMessage("Which container did you tell me about?");
+
+        var response = await kernel.GetRequiredService<IChatCompletionService>().GetChatMessageContentAsync(
+            history, new PromptExecutionSettings { FunctionChoiceBehavior = FunctionChoiceBehavior.None(functions: []) }, kernel);
+
+        Assert.Equal("end_turn", KernelService.GetStopReason(response));
+        Assert.Contains("grafana", response.Content, StringComparison.OrdinalIgnoreCase);
+    }
+
     // The bot's own path: system prompt, stored history with its trimming, telemetry rows.
     [LiveFact]
     public async Task KernelService_ToolTurn_ThenEditedHistory_ThenNoToolsWithAReplyCap()
