@@ -81,7 +81,7 @@ public sealed class RunbookPlugin
                 ? r.LastExecutedAt.Value.ToString("yyyy-MM-dd HH:mm")
                 : "never";
             sb.AppendLine($"{status} **{r.Name}** (ID: {r.Id})");
-            sb.AppendLine($"  Trigger: `{r.TriggerCondition}` | Trust: {r.TrustLevel} | Runs: {r.ExecutionCount} | Last: {lastRun}");
+            sb.AppendLine($"  Trigger: `{r.TriggerCondition}` | Trust: {EffectiveTrustLevel(r)} | Runs: {r.ExecutionCount} | Last: {lastRun}");
         }
 
         return sb.ToString();
@@ -97,7 +97,7 @@ public sealed class RunbookPlugin
         // Load runbook in a short-lived context
         string runbookName;
         string stepsJson;
-        TrustLevel trustLevel;
+        TrustLevel storedTrustLevel;
 
         await using (var db = await _dbFactory.CreateDbContextAsync())
         {
@@ -114,7 +114,7 @@ public sealed class RunbookPlugin
 
             runbookName = runbook.Name;
             stepsJson = runbook.StepsJson;
-            trustLevel = runbook.TrustLevel;
+            storedTrustLevel = runbook.TrustLevel;
         }
 
         if (!TryParseSteps(stepsJson, out var steps, out var error))
@@ -122,8 +122,12 @@ public sealed class RunbookPlugin
             return $"Error: runbook **{runbookName}** has invalid steps — {error}";
         }
 
+        var trustLevel = EffectiveTrustLevel(storedTrustLevel, steps);
         if (trustLevel == TrustLevel.Risky)
         {
+            _logger.LogInformation(
+                "Runbook {RunbookId} waits for confirmation (stored trust {StoredTrust}, effective {EffectiveTrust})",
+                runbookId, storedTrustLevel, trustLevel);
             return $"⚠️ Runbook **{runbookName}** has TrustLevel=Risky and requires manual confirmation. " +
                    "Please review the steps and confirm execution.";
         }
@@ -222,7 +226,7 @@ public sealed class RunbookPlugin
         }
 
         var sb = new StringBuilder();
-        sb.AppendLine($"**Dry-run: {runbook.Name}** (Trust: {runbook.TrustLevel})\n");
+        sb.AppendLine($"**Dry-run: {runbook.Name}** (Trust: {EffectiveTrustLevel(runbook.TrustLevel, steps)})\n");
 
         var allValid = true;
         foreach (var step in steps.OrderBy(s => s.Order))
@@ -284,6 +288,32 @@ public sealed class RunbookPlugin
         }
 
         return TrustLevel.ReadOnly;
+    }
+
+    // Every trust decision and display goes through here, never the stored column alone: a runbook
+    // stored before a tool got its [ChangesState] mark keeps its old, lower level.
+    internal static TrustLevel EffectiveTrustLevel(Runbook runbook)
+    {
+        List<RunbookStep>? steps;
+        try
+        {
+            steps = JsonSerializer.Deserialize<List<RunbookStep>>(runbook.StepsJson);
+        }
+        catch (JsonException)
+        {
+            steps = null;
+        }
+
+        // A gate that cannot read the steps stays closed.
+        return steps is null ? TrustLevel.Risky : EffectiveTrustLevel(runbook.TrustLevel, steps);
+    }
+
+    // The enum runs from least to most restrictive, so the larger level wins: a level the owner
+    // stored by hand (e.g. a seeded Risky runbook with read steps) is never lowered by the steps.
+    internal static TrustLevel EffectiveTrustLevel(TrustLevel stored, List<RunbookStep> steps)
+    {
+        var computed = DetermineTrustLevel(steps);
+        return computed > stored ? computed : stored;
     }
 
     private static string FormatExecutionResult(string name, bool success, List<RunbookStepResult> results)

@@ -134,6 +134,44 @@ public class KernelToolSurfaceTests
         Assert.Equal(expected, RunbookPlugin.DetermineTrustLevel([step]));
     }
 
+    // Runbooks stored before the marks keep an old level; the steps raise it, a stricter stored level holds.
+    [Theory]
+    [InlineData(TrustLevel.ReadOnly, "SendNotification", TrustLevel.Risky)]
+    [InlineData(TrustLevel.Conservative, "RestartContainer", TrustLevel.Risky)]
+    [InlineData(TrustLevel.Risky, "ListContainers", TrustLevel.Risky)]
+    [InlineData(TrustLevel.Conservative, "ListContainers", TrustLevel.Conservative)]
+    [InlineData(TrustLevel.ReadOnly, "ListContainers", TrustLevel.ReadOnly)]
+    public void RunbookEffectiveTrustLevel_IsTheStricterOfStoredAndSteps(TrustLevel stored, string function, TrustLevel expected)
+    {
+        var runbook = new Runbook
+        {
+            Name = "test",
+            TriggerCondition = "alertname=Test",
+            StepsJson = $$"""[{"Order":1,"Description":"step","PluginName":"Any","FunctionName":"{{function}}"}]""",
+            TrustLevel = stored,
+        };
+
+        Assert.Equal(expected, RunbookPlugin.EffectiveTrustLevel(runbook));
+    }
+
+    // Pattern runbooks are stored with no steps; nothing in them changes state.
+    [Fact]
+    public void RunbookEffectiveTrustLevel_NoSteps_KeepsTheStoredLevel()
+    {
+        var runbook = new Runbook { Name = "pattern", TriggerCondition = "nginx down", StepsJson = "[]" };
+
+        Assert.Equal(TrustLevel.ReadOnly, RunbookPlugin.EffectiveTrustLevel(runbook));
+    }
+
+    // The gate cannot read the steps, so it stays closed.
+    [Fact]
+    public void RunbookEffectiveTrustLevel_UnreadableSteps_IsRisky()
+    {
+        var runbook = new Runbook { Name = "broken", TriggerCondition = "nginx down", StepsJson = "{not json" };
+
+        Assert.Equal(TrustLevel.Risky, RunbookPlugin.EffectiveTrustLevel(runbook));
+    }
+
     // Removing a mark by mistake would give scheduled runs that tool again.
     [Fact]
     public void ToolsThatChangeState_AreMarked()
