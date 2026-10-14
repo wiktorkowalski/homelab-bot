@@ -18,6 +18,8 @@ public sealed class DiscordBotService : BackgroundService
     // A quoted alert or report can be long; the start says which message it was.
     private const int MaxQuoteChars = 2000;
 
+    private const string NoTextDmReply = "I can read text only, not attachments or stickers. Please write your question as a message.";
+
     private readonly ILogger<DiscordBotService> _logger;
     private readonly BotConfiguration _config;
     private readonly KernelService _kernelService;
@@ -566,6 +568,19 @@ public sealed class DiscordBotService : BackgroundService
         var content = e.Message.Content.Trim();
         if (string.IsNullOrWhiteSpace(content))
         {
+            // An attachment or a sticker alone: the model gets text only. Say so instead of staying silent.
+            _logger.LogInformation(
+                "DM from owner has no text ({AttachmentCount} attachments); asking for text", e.Message.Attachments.Count);
+            try
+            {
+                await e.Channel.SendMessageAsync(NoTextDmReply);
+                _ = RecordForOwnerAsync(NoTextDmReply);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Could not answer a DM from owner that has no text");
+            }
+
             return;
         }
 
