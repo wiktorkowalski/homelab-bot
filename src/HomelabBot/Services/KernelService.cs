@@ -1,7 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text.Json;
-using System.Text.RegularExpressions;
 using Anthropic;
 using Anthropic.Models.Messages;
 using HomelabBot.Configuration;
@@ -34,10 +33,6 @@ public sealed class KernelService
     private const int FailedTurnArgumentChars = 300;
 
     private static readonly ActivitySource ActivitySource = TelemetryConstants.ChatActivitySource;
-
-    private static readonly Regex ThinkingBlockRegex = new(
-        @"<(think|thinking|reasoning|reflection)>[\s\S]*?</\1>",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     private static readonly Dictionary<TraceType, (string Name, string[] Tags)> TraceConfig = new()
     {
@@ -227,7 +222,7 @@ public sealed class KernelService
             history.AddUserMessage(userMessage);
 
             var response = await _chatService.GetChatMessageContentAsync(history, cancellationToken: ct);
-            var title = StripThinkingBlocks(response.Content ?? "").Trim().Trim('"', '\'', '.');
+            var title = (response.Content ?? "").Trim().Trim('"', '\'', '.');
             if (string.IsNullOrEmpty(title) || title.Length < 3)
             {
                 title = "Chat";
@@ -340,7 +335,7 @@ public sealed class KernelService
             }
             else
             {
-                responseText = StripThinkingBlocks(response!.Content!);
+                responseText = response!.Content!.Trim();
             }
 
             // Also when there is no real answer: without an assistant reply the user message (and
@@ -526,23 +521,9 @@ public sealed class KernelService
         return false;
     }
 
-    // Empty when missing, blank, or only a <think> block (which strips to nothing downstream).
-    internal static bool IsEmptyResponse(ChatMessageContent? response)
-    {
-        if (response is null)
-        {
-            return true;
-        }
-
-        var content = response.Content;
-        if (string.IsNullOrWhiteSpace(content))
-        {
-            return true;
-        }
-
-        // A response that is nothing but a <think> block collapses to empty once stripped.
-        return string.IsNullOrWhiteSpace(StripThinkingBlocks(content));
-    }
+    // Thinking arrives as separate blocks, which the bridge drops, so it never reaches Content.
+    internal static bool IsEmptyResponse(ChatMessageContent? response) =>
+        string.IsNullOrWhiteSpace(response?.Content);
 
     // The raw Claude message of the last round; the bridge keeps it as InnerContent.
     internal static string GetStopReason(ChatMessageContent? response) =>
@@ -694,15 +675,5 @@ public sealed class KernelService
             .ToList();
 
         return parts.Count > 0 ? string.Join("\n", parts) : message.Content;
-    }
-
-    internal static string StripThinkingBlocks(string text)
-    {
-        if (string.IsNullOrEmpty(text))
-        {
-            return text;
-        }
-
-        return ThinkingBlockRegex.Replace(text, "").Trim();
     }
 }
