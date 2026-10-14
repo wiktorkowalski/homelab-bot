@@ -14,6 +14,8 @@ namespace HomelabBot.Services;
 
 public sealed class HealingChainService
 {
+    private const int AnswerHeadLength = 300;
+
     private readonly IDbContextFactory<HomelabDbContext> _dbFactory;
     private readonly KernelService _kernelService;
     private readonly RunbookCompilerService _runbookCompiler;
@@ -140,15 +142,27 @@ public sealed class HealingChainService
 
         try
         {
+            // The prompt holds all the data and asks for JSON only: tool schemas are pure cost, and
+            // a tool call would run outside the risky-step gate of ExecuteChainAsync.
             var response = await _kernelService.ProcessMessageAsync(
                 threadId: (ulong)Random.Shared.NextInt64(),
                 userMessage: prompt,
                 traceType: TraceType.Scheduled,
                 maxTokens: 1024,
                 systemPromptOverride: "You are a recovery planning assistant. Output only valid JSON arrays of recovery steps. No explanation, no markdown fences.",
+                allowToolUse: false,
                 ct: ct);
 
-            return ParseStepsFromResponse(response);
+            var steps = ParseStepsFromResponse(response);
+            if (steps is null)
+            {
+                _logger.LogWarning(
+                    "Healing plan for '{Symptom}' is not a step list. Answer starts with: {AnswerHead}",
+                    symptom,
+                    response.Length > AnswerHeadLength ? response[..AnswerHeadLength] : response);
+            }
+
+            return steps;
         }
         catch (Exception ex)
         {
