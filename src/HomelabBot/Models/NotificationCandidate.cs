@@ -10,6 +10,10 @@ public sealed class NotificationCandidate
 
     public string? IssueType { get; init; }
 
+    // The kinds of finding inside the issue type (e.g. anomaly types). "Normal, ignore in future"
+    // suppresses these kinds only; empty means the button suppresses the whole issue type.
+    public IReadOnlyList<string> Kinds { get; init; } = [];
+
     // If true, RawData already contains a fully investigated report.
     // The LLM will only decide whether to notify, not re-investigate.
     public bool AlreadyInvestigated { get; init; }

@@ -170,6 +170,26 @@ public sealed class KnowledgeService
         await db.SaveChangesAsync();
     }
 
+    // The prefix scopes the delete, so an id from a button can only touch rows of its own feature.
+    // Returns the invalidated row, or null when no valid row with that id and prefix exists.
+    public async Task<Knowledge?> InvalidateByIdAsync(int id, string topicPrefix)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync();
+
+        var match = await db.Knowledge
+            .Where(k => k.Id == id && k.IsValid && (k.Topic == topicPrefix || k.Topic.StartsWith(topicPrefix + ":")))
+            .FirstOrDefaultAsync();
+
+        if (match == null)
+        {
+            return null;
+        }
+
+        match.IsValid = false;
+        await db.SaveChangesAsync();
+        return match;
+    }
+
     public async Task<string> GenerateKnowledgePromptAsync(IEnumerable<string>? relevantTopics = null)
     {
         await using var db = await _dbFactory.CreateDbContextAsync();

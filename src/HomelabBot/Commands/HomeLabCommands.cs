@@ -1,5 +1,6 @@
 using DSharpPlus.Entities;
 using DSharpPlus.SlashCommands;
+using HomelabBot.Configuration;
 using HomelabBot.Models;
 using HomelabBot.Plugins;
 using HomelabBot.Services;
@@ -18,6 +19,7 @@ public class HomeLabCommands : ApplicationCommandModule
     private readonly SecurityAuditService _securityAuditService;
     private readonly AutoRemediationService _autoRemediationService;
     private readonly InvestigationService _memoryService;
+    private readonly SmartNotificationService _smartNotification;
     private readonly ILogger<HomeLabCommands> _logger;
 
     public HomeLabCommands(
@@ -31,6 +33,7 @@ public class HomeLabCommands : ApplicationCommandModule
         SecurityAuditService securityAuditService,
         AutoRemediationService autoRemediationService,
         InvestigationService memoryService,
+        SmartNotificationService smartNotification,
         ILogger<HomeLabCommands> logger)
     {
         _dockerPlugin = dockerPlugin;
@@ -43,6 +46,7 @@ public class HomeLabCommands : ApplicationCommandModule
         _securityAuditService = securityAuditService;
         _autoRemediationService = autoRemediationService;
         _memoryService = memoryService;
+        _smartNotification = smartNotification;
         _logger = logger;
     }
 
@@ -760,6 +764,40 @@ public class HomeLabCommands : ApplicationCommandModule
             _logger.LogError(ex, "Error in pattern command");
             await ctx.EditResponseAsync(new DiscordWebhookBuilder()
                 .WithContent($"Error: {ex.Message}"));
+        }
+    }
+
+    [SlashCommand("preferences", "List and remove notification preferences")]
+    public async Task PreferencesCommand(InteractionContext ctx)
+    {
+        // Ephemeral: the list and its Remove buttons are for the owner only.
+        await ctx.DeferAsync(ephemeral: true);
+
+        try
+        {
+            if (ctx.User.Id != HomelabOwner.DiscordUserId)
+            {
+                _logger.LogInformation("Preferences command refused for {User}: not the owner", ctx.User.Username);
+                await ctx.EditResponseAsync(new DiscordWebhookBuilder()
+                    .WithContent("Only the owner can manage notification preferences."));
+                return;
+            }
+
+            _logger.LogInformation("Preferences command invoked by {User}", ctx.User.Username);
+
+            var preferences = await _smartNotification.ListPreferencesAsync();
+
+            // Facts can come from the model, so they must not ping anyone.
+            await ctx.EditResponseAsync(new DiscordWebhookBuilder()
+                .WithContent(NotificationPreferencesView.Content(preferences))
+                .AddComponents(NotificationPreferencesView.Components(preferences))
+                .AddMentions(Mentions.None));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in preferences command");
+            await ctx.EditResponseAsync(new DiscordWebhookBuilder()
+                .WithContent($"Error listing preferences: {ex.Message}"));
         }
     }
 

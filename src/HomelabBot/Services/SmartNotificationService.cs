@@ -13,6 +13,15 @@ public sealed class SmartNotificationService
     private const string TopicPrefixAlways = "notification_preference:always:";
     internal const string TopicPrefix = "notification_preference";
     internal const string ButtonPrefixNormal = "notif_normal_";
+    internal const string ButtonPrefixRemovePreference = "notif_pref_remove_";
+
+    // Discord rejects a component custom_id longer than this.
+    internal const int MaxCustomIdLength = 100;
+
+    // Separators inside a "Normal" button id: <issueType>:<kind>,<kind>. An id without ':' comes
+    // from an old button or a source without kinds, and suppresses the whole issue type.
+    private const char KindSeparator = ':';
+    private const char KindListSeparator = ',';
 
     // Retired: no longer sent, but old DMs still carry it and a click must get an answer.
     internal const string ButtonPrefixInvestigate = "notif_investigate_";
@@ -95,9 +104,10 @@ public sealed class SmartNotificationService
 
         if (!candidate.NeverSuppress
             && candidate.IssueType != null
-            && IsIssueSuppressed(candidate.IssueType, preferences))
+            && IsIssueSuppressed(candidate.IssueType, candidate.Kinds, preferences))
         {
-            _logger.LogInformation("Issue type '{IssueType}' is suppressed, skipping", candidate.IssueType);
+            _logger.LogInformation("Issue type '{IssueType}' with kinds [{Kinds}] is suppressed, skipping",
+                candidate.IssueType, string.Join(", ", candidate.Kinds));
             return false;
         }
 
@@ -152,18 +162,107 @@ public sealed class SmartNotificationService
     // Lets a caller skip expensive work whose result would be suppressed anyway. A failed load
     // returns no preferences, so the work still runs.
     public async Task<bool> IsSuppressedAsync(string issueType) =>
-        IsIssueSuppressed(issueType, await LoadNotificationPreferencesAsync());
+        IsIssueSuppressed(issueType, [], await LoadNotificationPreferencesAsync());
 
-    // Handle "Normal, ignore in future" button press.
-    public async Task HandleSuppressFeedbackAsync(string issueType, string description)
+    // Handle "Normal, ignore in future" button press. The payload is the button id after the
+    // prefix. Returns what is now suppressed, in words for the owner.
+    public async Task<string> HandleSuppressFeedbackAsync(string buttonPayload, string description)
     {
-        await _knowledgeService.RememberFactAsync(
-            topic: $"{TopicPrefixSuppress}{issueType}",
-            fact: $"Owner marked as normal/ignorable: {description}",
-            source: "user_feedback",
-            confidence: 1.0);
+        var separatorAt = buttonPayload.IndexOf(KindSeparator, StringComparison.Ordinal);
+        var issueType = NormalizeKey(separatorAt < 0 ? buttonPayload : buttonPayload[..separatorAt]);
+        var kindList = separatorAt < 0 ? "" : buttonPayload[separatorAt..].TrimStart(KindSeparator);
+        List<string> kinds =
+            [.. kindList
+                .Split(KindListSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(NormalizeKey)
+                .Distinct(StringComparer.Ordinal)];
 
-        _logger.LogInformation("Stored suppression preference for issue type '{IssueType}'", issueType);
+        // One row per kind: a later finding with only some of these kinds is suppressed too.
+        string[] topics = kinds.Count == 0
+            ? [$"{TopicPrefixSuppress}{issueType}"]
+            : [.. kinds.Select(kind => $"{TopicPrefixSuppress}{issueType}{KindSeparator}{kind}")];
+
+        foreach (var topic in topics)
+        {
+            await _knowledgeService.RememberFactAsync(
+                topic: topic,
+                fact: $"Owner marked as normal/ignorable: {description}",
+                source: "user_feedback",
+                confidence: 1.0);
+        }
+
+        _logger.LogInformation("Stored suppression preference for issue type '{IssueType}' with kinds [{Kinds}]",
+            issueType, string.Join(", ", kinds));
+
+        return kinds.Count == 0
+            ? $"all {issueType} notifications"
+            : $"{issueType} notifications about {string.Join(", ", kinds)}";
+    }
+
+    // The preferences that affect notifications: what the suppression check and the LLM prompt see.
+    public Task<List<Knowledge>> ListPreferencesAsync() => _knowledgeService.RecallAsync(TopicPrefix);
+
+    // Returns the removed row, or null when the id is not a valid notification preference.
+    public async Task<Knowledge?> RemovePreferenceAsync(int id)
+    {
+        var removed = await _knowledgeService.InvalidateByIdAsync(id, TopicPrefix);
+        if (removed != null)
+        {
+            _logger.LogInformation("Removed notification preference {Topic} (knowledge {KnowledgeId})", removed.Topic, id);
+        }
+
+        return removed;
+    }
+
+    // A source without kinds, or a kind list too long for Discord, gets a whole-class button.
+    internal static string BuildFeedbackButtonId(string issueType, IEnumerable<string> kinds)
+    {
+        var wholeClass = $"{ButtonPrefixNormal}{NormalizeKey(issueType)}";
+        var normalized = kinds.Select(NormalizeKey).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToList();
+        if (normalized.Count == 0)
+        {
+            return wholeClass;
+        }
+
+        var id = $"{wholeClass}{KindSeparator}{string.Join(KindListSeparator, normalized)}";
+        return id.Length <= MaxCustomIdLength ? id : wholeClass;
+    }
+
+    // A whole-class row (also every row stored before kinds existed) suppresses every finding of
+    // the issue type. Kind rows suppress a finding only when every one of its kinds is suppressed.
+    internal static bool IsIssueSuppressed(string issueType, IReadOnlyCollection<string> kinds, List<Knowledge> preferences)
+    {
+        var classTopic = $"{TopicPrefixSuppress}{NormalizeKey(issueType)}";
+        var active = preferences
+            .Where(p => p.Confidence >= 0.5)
+            .Select(p => p.Topic)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        if (active.Contains(classTopic))
+        {
+            return true;
+        }
+
+        return kinds.Count > 0 && kinds.All(kind => active.Contains($"{classTopic}{KindSeparator}{NormalizeKey(kind)}"));
+    }
+
+    internal static string DescribePreference(Knowledge pref)
+    {
+        if (pref.Topic.StartsWith(TopicPrefixSuppress, StringComparison.OrdinalIgnoreCase))
+        {
+            return $"SUPPRESS {pref.Topic[TopicPrefixSuppress.Length..]}";
+        }
+
+        if (pref.Topic.StartsWith(TopicPrefixAlways, StringComparison.OrdinalIgnoreCase))
+        {
+            return $"ALWAYS {pref.Topic[TopicPrefixAlways.Length..]}";
+        }
+
+        const string prefPrefix = $"{TopicPrefix}:";
+        var key = pref.Topic.StartsWith(prefPrefix, StringComparison.OrdinalIgnoreCase)
+            ? pref.Topic[prefPrefix.Length..]
+            : pref.Topic;
+        return $"PREF {key}";
     }
 
     private async Task<bool> SendNotificationAsync(string report, NotificationCandidate candidate)
@@ -174,7 +273,13 @@ public sealed class SmartNotificationService
             return false;
         }
 
-        var issueType = NormalizeIssueType(candidate.IssueType ?? candidate.Source);
+        var buttonId = BuildFeedbackButtonId(candidate.IssueType ?? candidate.Source, candidate.Kinds);
+        if (candidate.Kinds.Count > 0 && !buttonId.Contains(KindSeparator, StringComparison.Ordinal))
+        {
+            _logger.LogInformation(
+                "Kinds [{Kinds}] do not fit a Discord button id; the feedback button suppresses the whole issue type",
+                string.Join(", ", candidate.Kinds));
+        }
 
         try
         {
@@ -188,7 +293,7 @@ public sealed class SmartNotificationService
 
         try
         {
-            await _discordBot.SendDmNotificationFeedbackAsync(userId, issueType);
+            await _discordBot.SendDmNotificationFeedbackAsync(userId, buttonId);
         }
         catch (Exception ex)
         {
@@ -212,14 +317,6 @@ public sealed class SmartNotificationService
         }
     }
 
-    private static bool IsIssueSuppressed(string issueType, List<Knowledge> preferences)
-    {
-        var expectedTopic = $"{TopicPrefixSuppress}{NormalizeIssueType(issueType)}";
-        return preferences.Any(p =>
-            p.Topic.Equals(expectedTopic, StringComparison.OrdinalIgnoreCase) &&
-            p.Confidence >= 0.5);
-    }
-
     private static string FormatPreferences(List<Knowledge> preferences)
     {
         if (preferences.Count == 0)
@@ -230,18 +327,15 @@ public sealed class SmartNotificationService
         var sb = new StringBuilder();
         foreach (var pref in preferences)
         {
-            var type = pref.Topic.StartsWith(TopicPrefixSuppress)
-                ? "SUPPRESS" : pref.Topic.StartsWith(TopicPrefixAlways)
-                    ? "ALWAYS" : "PREF";
-            var key = pref.Topic.Split(':').LastOrDefault() ?? pref.Topic;
-            sb.AppendLine($"- {type} {key}: {pref.Fact}");
+            sb.AppendLine($"- {DescribePreference(pref)}: {pref.Fact}");
         }
 
         return sb.ToString();
     }
 
-    private static string NormalizeIssueType(string issueType) =>
-        issueType.ToLowerInvariant().Replace(' ', '_');
+    // The separators are replaced too, so a kind can never split a button id or a topic.
+    private static string NormalizeKey(string key) =>
+        key.Trim().ToLowerInvariant().Replace(' ', '_').Replace(KindSeparator, '_').Replace(KindListSeparator, '_');
 
     internal static ulong GenerateDailyThreadId(string dateString)
     {
