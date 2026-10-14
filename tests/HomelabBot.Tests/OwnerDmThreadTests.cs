@@ -160,6 +160,44 @@ public sealed class OwnerDmThreadTests : IDisposable
             DiscordBotService.EmbedText(embed));
     }
 
+    [Fact]
+    public void WithQuote_PutsTheRepliedMessageBeforeTheOwnersText()
+    {
+        var embed = new DiscordEmbedBuilder().WithTitle("🔥 HighDiskUsage").WithDescription("Pool tank is at 91%.").Build();
+
+        var text = DiscordBotService.WithQuote("what does this mean?", DiscordBotService.QuoteText("", [embed]));
+
+        Assert.Equal(
+            $"{DiscordBotService.QuoteStart}\n🔥 HighDiskUsage\nPool tank is at 91%.\n{DiscordBotService.QuoteEnd}\nwhat does this mean?",
+            text);
+    }
+
+    [Fact]
+    public void WithQuote_CapsALongQuote_AndKeepsTheOwnersTextWhole()
+    {
+        var text = DiscordBotService.WithQuote("why?", new string('x', 10_000));
+
+        Assert.True(text.Length < 2_100, $"length {text.Length}");
+        Assert.EndsWith($"...\n{DiscordBotService.QuoteEnd}\nwhy?", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void WithQuote_WithNothingToQuote_IsTheOwnersText() =>
+        Assert.Equal("hi", DiscordBotService.WithQuote("hi", DiscordBotService.QuoteText(null, [])));
+
+    [Fact]
+    public async Task QuotedReply_ReachesTheRequest()
+    {
+        _handler.Enqueue(ClaudeResponses.Text("that was the disk alert"));
+
+        await _harness.Service.ProcessMessageAsync(
+            ThreadId, DiscordBotService.WithQuote("what does this mean?", "Pool tank is at 91%."));
+
+        var texts = MessageTexts(_handler.Requests[0]);
+        Assert.StartsWith(DiscordBotService.QuoteStart, texts[^1].Text, StringComparison.Ordinal);
+        Assert.Contains("Pool tank is at 91%.", texts[^1].Text, StringComparison.Ordinal);
+    }
+
     private static List<(string Role, string Text)> MessageTexts(JsonObject request) =>
         request["messages"]!.AsArray()
             .Select(m =>

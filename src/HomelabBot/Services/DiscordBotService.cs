@@ -4,6 +4,7 @@ using DSharpPlus.EventArgs;
 using DSharpPlus.SlashCommands;
 using HomelabBot.Commands;
 using HomelabBot.Configuration;
+using HomelabBot.Models;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 
@@ -11,6 +12,12 @@ namespace HomelabBot.Services;
 
 public sealed class DiscordBotService : BackgroundService
 {
+    internal const string QuoteStart = "[Quote of the message the owner replied to]";
+    internal const string QuoteEnd = "[End of quote]";
+
+    // A quoted alert or report can be long; the start says which message it was.
+    private const int MaxQuoteChars = 2000;
+
     private readonly ILogger<DiscordBotService> _logger;
     private readonly BotConfiguration _config;
     private readonly KernelService _kernelService;
@@ -463,8 +470,9 @@ public sealed class DiscordBotService : BackgroundService
 
     private async Task OnMessageCreated(DiscordClient client, MessageCreateEventArgs e)
     {
-        // Ignore bots and system messages
-        if (e.Author.IsBot || e.Message.MessageType != MessageType.Default)
+        // Ignore bots and system messages. A Discord reply is a normal message with a link to the
+        // message it answers.
+        if (e.Author.IsBot || e.Message.MessageType is not (MessageType.Default or MessageType.Reply))
         {
             return;
         }
@@ -562,6 +570,11 @@ public sealed class DiscordBotService : BackgroundService
 
         _logger.LogInformation("Processing DM from owner on thread {ThreadId}", HomelabOwner.DmThreadId);
 
+        if (e.Message.ReferencedMessage is { } replied)
+        {
+            content = WithQuote(content, QuoteText(replied.Content, replied.Embeds));
+        }
+
         try
         {
             await e.Channel.TriggerTypingAsync();
@@ -603,12 +616,27 @@ public sealed class DiscordBotService : BackgroundService
         }
     }
 
-    // The text an embed shows: title, fields, description. Colors and timestamps are left out.
-    internal static string EmbedText(DiscordEmbed embed)
+    // The owner replied to an earlier message: the model gets that message as a quote before the
+    // owner's text, so "what does this mean?" has something to point at.
+    internal static string WithQuote(string ownerText, string? quotedText)
     {
-        string?[] parts = [embed.Title, .. (embed.Fields ?? []).Select(f => $"{f.Name}: {f.Value}"), embed.Description];
-        return string.Join("\n", parts.Where(p => !string.IsNullOrWhiteSpace(p)));
+        if (string.IsNullOrWhiteSpace(quotedText))
+        {
+            return ownerText;
+        }
+
+        return $"{QuoteStart}\n{ConversationSearchResult.Truncate(quotedText, MaxQuoteChars)}\n{QuoteEnd}\n{ownerText}";
     }
+
+    internal static string QuoteText(string? content, IEnumerable<DiscordEmbed> embeds) =>
+        JoinLines([content, .. embeds.Select(EmbedText)]);
+
+    // The text an embed shows: title, fields, description. Colors and timestamps are left out.
+    internal static string EmbedText(DiscordEmbed embed) =>
+        JoinLines([embed.Title, .. (embed.Fields ?? []).Select(f => $"{f.Name}: {f.Value}"), embed.Description]);
+
+    private static string JoinLines(string?[] parts) =>
+        string.Join("\n", parts.Where(p => !string.IsNullOrWhiteSpace(p)));
 
     private static async Task SendResponseAsync(DiscordChannel channel, string response)
     {
