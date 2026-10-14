@@ -299,4 +299,81 @@ public class AutoRemediationServiceTests : IClassFixture<DatabaseFixture>, IDisp
             Assert.Equal(2, updated.FailureCount);
         }
     }
+
+    [Fact]
+    public async Task ApprovedRemediation_ReportsTheStateAfterTheRestart()
+    {
+        var svc = CreateService(new AutoRemediationConfiguration { VerificationDelaySeconds = 0 });
+        _dockerPlugin.GetContainerStatus("nginx").Returns("Status: exited", "Status: running");
+        _dockerPlugin.RestartContainer("nginx").Returns("Restarted container 'nginx'.");
+        var actionId = AddPendingAction("nginx");
+
+        var report = await svc.RecordUserConfirmationAsync(actionId, approved: true, CancellationToken.None);
+
+        Assert.Contains("nginx", report, StringComparison.Ordinal);
+        Assert.Contains("Status: running", report, StringComparison.Ordinal);
+        Assert.StartsWith("✅", report, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ApprovedRemediation_ThatDoesNotBringTheContainerBack_SaysSo()
+    {
+        var svc = CreateService(new AutoRemediationConfiguration { VerificationDelaySeconds = 0 });
+        _dockerPlugin.GetContainerStatus("nginx").Returns("Status: exited");
+        _dockerPlugin.RestartContainer("nginx").Returns("Restarted container 'nginx'.");
+        var actionId = AddPendingAction("nginx");
+
+        var report = await svc.RecordUserConfirmationAsync(actionId, approved: true, CancellationToken.None);
+
+        Assert.StartsWith("❌", report, StringComparison.Ordinal);
+        Assert.Contains("Status: exited", report, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task SecondApproval_DoesNotRestartAgain()
+    {
+        var svc = CreateService(new AutoRemediationConfiguration { VerificationDelaySeconds = 0 });
+        _dockerPlugin.GetContainerStatus("nginx").Returns("Status: running");
+        _dockerPlugin.RestartContainer("nginx").Returns("Restarted container 'nginx'.");
+        var actionId = AddPendingAction("nginx");
+
+        await svc.RecordUserConfirmationAsync(actionId, approved: true, CancellationToken.None);
+        var second = await svc.RecordUserConfirmationAsync(actionId, approved: true, CancellationToken.None);
+
+        await _dockerPlugin.Received(1).RestartContainer("nginx");
+        Assert.Contains("already", second, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ApprovalDuringARunningRestart_DoesNotRestartAgain()
+    {
+        var svc = CreateService(new AutoRemediationConfiguration { VerificationDelaySeconds = 0 });
+        var restart = new TaskCompletionSource<string>();
+        _dockerPlugin.GetContainerStatus("nginx").Returns("Status: running");
+        _dockerPlugin.RestartContainer("nginx").Returns(restart.Task);
+        var actionId = AddPendingAction("nginx");
+
+        var first = svc.RecordUserConfirmationAsync(actionId, approved: true, CancellationToken.None);
+        var second = svc.RecordUserConfirmationAsync(actionId, approved: true, CancellationToken.None);
+        restart.SetResult("Restarted container 'nginx'.");
+        var reports = await Task.WhenAll(first, second);
+
+        await _dockerPlugin.Received(1).RestartContainer("nginx");
+        Assert.Contains("already", reports[1], StringComparison.OrdinalIgnoreCase);
+    }
+
+    private int AddPendingAction(string container)
+    {
+        using var db = _fixture.DbContextFactory.CreateDbContext();
+        var action = new RemediationAction
+        {
+            ContainerName = container,
+            ActionType = "restart",
+            Trigger = "pattern",
+            BeforeState = "Status: exited",
+        };
+        db.RemediationActions.Add(action);
+        db.SaveChanges();
+        return action.Id;
+    }
 }

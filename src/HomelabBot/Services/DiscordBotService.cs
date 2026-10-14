@@ -428,14 +428,11 @@ public sealed class DiscordBotService : BackgroundService
                     InteractionResponseType.DeferredChannelMessageWithSource,
                     new DiscordInteractionResponseBuilder().AsEphemeral());
 
-                await _autoRemediationService.RecordUserConfirmationAsync(actionId, isApproval, default);
-
-                var responseText = isApproval
-                    ? "Remediation approved and executing..."
-                    : "Remediation rejected.";
+                var report = await _autoRemediationService.RecordUserConfirmationAsync(actionId, isApproval, default);
 
                 await e.Interaction.EditOriginalResponseAsync(
-                    new DiscordWebhookBuilder().WithContent(responseText));
+                    new DiscordWebhookBuilder().WithContent(report));
+                RecordForOwner(e.User.Id, report);
             }
             else
             {

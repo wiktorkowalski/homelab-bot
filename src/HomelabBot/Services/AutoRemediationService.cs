@@ -121,50 +121,72 @@ public sealed class AutoRemediationService
         return await ExecuteRemediationAsync(containerName, bestRunbook, ct);
     }
 
-    public async Task RecordUserConfirmationAsync(int actionId, bool approved, CancellationToken ct)
+    // Runs an approved action and returns what the owner should read: the button only said
+    // "approved", and the outcome was stored without anyone seeing it.
+    public async Task<string> RecordUserConfirmationAsync(int actionId, bool approved, CancellationToken ct)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
+
+        // Claim the answer in one conditional write before anything runs. DSharpPlus runs button
+        // handlers in parallel, and a second click during the restart must find the row taken.
+        var claimed = await db.RemediationActions
+            .Where(a => a.Id == actionId && !a.ConfirmedByUser)
+            .ExecuteUpdateAsync(s => s.SetProperty(a => a.ConfirmedByUser, true), ct);
+
         var action = await db.RemediationActions.FindAsync([actionId], ct);
         if (action == null)
         {
             _logger.LogWarning("Remediation action {ActionId} not found", actionId);
-            return;
+            return "This remediation no longer exists.";
         }
 
-        action.ConfirmedByUser = true;
-
-        if (approved)
+        if (claimed == 0)
         {
-            try
-            {
-                var beforeState = await _dockerPlugin.GetContainerStatus(action.ContainerName);
-                action.BeforeState = beforeState;
+            _logger.LogInformation("Remediation action {ActionId} was already answered", actionId);
+            return $"This remediation for **{action.ContainerName}** was already answered.";
+        }
 
-                var result = action.ActionType == "start"
-                    ? await _dockerPlugin.StartContainer(action.ContainerName)
-                    : await _dockerPlugin.RestartContainer(action.ContainerName);
+        if (!approved)
+        {
+            return $"Remediation for **{action.ContainerName}** rejected.";
+        }
 
-                _logger.LogInformation("User-approved remediation executed for {Container}: {Result}",
-                    action.ContainerName, result);
+        string report;
+        try
+        {
+            var beforeState = await _dockerPlugin.GetContainerStatus(action.ContainerName);
+            action.BeforeState = beforeState;
 
-                RecordCooldown(action.ContainerName);
+            var result = action.ActionType == "start"
+                ? await _dockerPlugin.StartContainer(action.ContainerName)
+                : await _dockerPlugin.RestartContainer(action.ContainerName);
 
-                // Wait and check state
-                await Task.Delay(TimeSpan.FromSeconds(_config.VerificationDelaySeconds), ct);
-                var afterState = await _dockerPlugin.GetContainerStatus(action.ContainerName);
-                action.AfterState = afterState;
-                action.Success = !afterState.Contains("not running", StringComparison.OrdinalIgnoreCase)
-                    && !afterState.Contains("exited", StringComparison.OrdinalIgnoreCase);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to execute approved remediation for {Container}", action.ContainerName);
-                action.Success = false;
-                action.AfterState = $"Error: {ex.Message}";
-            }
+            _logger.LogInformation("User-approved remediation executed for {Container}: {Result}",
+                action.ContainerName, result);
+
+            RecordCooldown(action.ContainerName);
+
+            // Wait and check state
+            await Task.Delay(TimeSpan.FromSeconds(_config.VerificationDelaySeconds), ct);
+            var afterState = await _dockerPlugin.GetContainerStatus(action.ContainerName);
+            action.AfterState = afterState;
+            action.Success = !afterState.Contains("not running", StringComparison.OrdinalIgnoreCase)
+                && !afterState.Contains("exited", StringComparison.OrdinalIgnoreCase);
+
+            report = action.Success
+                ? $"✅ {action.ActionType} of **{action.ContainerName}** done. State after {_config.VerificationDelaySeconds} s:\n{afterState}"
+                : $"❌ {action.ActionType} of **{action.ContainerName}** did not bring it back. State after {_config.VerificationDelaySeconds} s:\n{afterState}";
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to execute approved remediation for {Container}", action.ContainerName);
+            action.Success = false;
+            action.AfterState = $"Error: {ex.Message}";
+            report = $"❌ {action.ActionType} of **{action.ContainerName}** failed: {ex.Message}";
         }
 
         await db.SaveChangesAsync(ct);
+        return report;
     }
 
     public async Task RecordFeedbackAsync(int actionId, bool success, CancellationToken ct)
