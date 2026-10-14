@@ -11,7 +11,7 @@ using Microsoft.Extensions.Options;
 
 namespace HomelabBot.Services;
 
-public sealed class DiscordBotService : BackgroundService
+public class DiscordBotService : BackgroundService
 {
     internal const string QuoteStart = "[Quote of the message the owner replied to]";
     internal const string QuoteEnd = "[End of quote]";
@@ -755,7 +755,7 @@ public sealed class DiscordBotService : BackgroundService
         SendDmMessageAsync(
             userId, new DiscordMessageBuilder().WithEmbed(embed).AddComponents(components), EmbedText(embed));
 
-    public async Task SendDmSplitAsync(ulong userId, string content)
+    public virtual async Task SendDmSplitAsync(ulong userId, string content)
     {
         var dm = await GetDmChannelAsync(userId);
         if (dm == null)
@@ -778,7 +778,7 @@ public sealed class DiscordBotService : BackgroundService
     }
 
     // Buttons only, nothing the owner would ask about: not recorded.
-    public Task SendDmNotificationFeedbackAsync(ulong userId, string buttonId) =>
+    public virtual Task SendDmNotificationFeedbackAsync(ulong userId, string buttonId) =>
         SendDmMessageAsync(
             userId,
             new DiscordMessageBuilder()
