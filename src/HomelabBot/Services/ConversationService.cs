@@ -34,7 +34,7 @@ public sealed class ConversationService
     // user message with this marker: it is not the owner's text and not the model's own answer.
     internal const string BotMessageRole = "notification";
 
-    // Ceiling on how many keyword-matched conversations get loaded and scored in memory.
+    // Ceiling on how many keyword-matched conversation rows get loaded and ranked.
     private const int MaxScoredConversations = 200;
     private const int MaxRelevantMessages = 5;
     private const string LikeEscapeChar = "\\";
