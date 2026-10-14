@@ -32,7 +32,7 @@ internal static class SecurityAuditPrompts
         - Check router CPU/memory for signs of compromise
 
         ### 3. TLS/CERTIFICATE HEALTH
-        - Query Traefik certificate expiry (traefik_tls_certs_not_after via Prometheus)
+        - Query Traefik certificate expiry: max by (cn, sans) (traefik_tls_certs_not_after) via Prometheus. A replaced certificate stays in the metric until Traefik restarts; only the newest per cn/sans counts
         - Flag any certificates expiring within 14 days
         - Check for services without TLS
 
