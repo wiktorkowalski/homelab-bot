@@ -54,7 +54,7 @@ internal static class HealthcheckPrompts
         ### 6. TRAEFIK — via Prometheus
         - Total requests 24h (traefik_service_requests_total)
         - 5xx errors by service
-        - Certificate expiry (traefik_tls_certs_not_after) — days until expiry
+        - Certificate expiry: max by (cn, sans) (traefik_tls_certs_not_after) — days until expiry. Traefik keeps exporting a replaced certificate until it restarts; only the newest per cn/sans counts
         - Top 5 services by request count
         Flag: any service >5% error rate, cert expiring within 14 days.
 
