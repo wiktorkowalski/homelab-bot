@@ -164,6 +164,7 @@ internal sealed class ScriptedClaudeHandler : HttpMessageHandler
 
                 // Keeps the SDK retry backoff out of the test run time.
                 response.Headers.TryAddWithoutValidation("retry-after-ms", "1");
+                response.Headers.TryAddWithoutValidation("request-id", "req_test");
                 return Task.FromResult(response);
             });
         }
@@ -193,7 +194,8 @@ internal sealed class ScriptedClaudeHandler : HttpMessageHandler
     }
 
     // The production client, on this transport.
-    public AnthropicClient CreateClient() => AnthropicChatClientFactory.CreateApiClient("test-key", new HttpClient(this));
+    public AnthropicClient CreateClient(ILogger? logger = null) =>
+        AnthropicChatClientFactory.CreateApiClient("test-key", new HttpClient(this), logger);
 
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
@@ -292,8 +294,8 @@ internal sealed class KernelServiceHarness : IDisposable
         int maxTokens = 16000,
         Func<IDbContextFactory<HomelabDbContext>, IDbContextFactory<HomelabDbContext>>? telemetryDb = null)
     {
-        // A file, not the shared in-memory connection of DatabaseFixture: ConversationService
-        // saves messages in the background while the telemetry row is written.
+        // A file of its own, not the shared in-memory connection of DatabaseFixture: each test
+        // starts from an empty database, and the row asserts expect only that test's rows.
         DbFactory = new DatabaseFixture.TestDbContextFactory(
             new DbContextOptionsBuilder<HomelabDbContext>().UseSqlite($"Data Source={_dbPath}").Options);
         using (var db = DbFactory.CreateDbContext())

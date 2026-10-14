@@ -3,6 +3,7 @@ using System.Text;
 using HomelabBot.Configuration;
 using HomelabBot.Data.Entities;
 using HomelabBot.Models;
+using Microsoft.Extensions.Options;
 
 namespace HomelabBot.Services;
 
@@ -21,13 +22,14 @@ public sealed class SmartNotificationService
     private readonly ILogger<SmartNotificationService> _logger;
     private readonly Lock _cycleLock = new();
 
-    private string _currentCycleDate = "";
+    private string _currentCycleDate;
 
     public SmartNotificationService(
         KernelService kernelService,
         ConversationService conversationService,
         DiscordBotService discordBot,
         KnowledgeService knowledgeService,
+        IOptionsMonitor<DailySummaryConfiguration> dailySummaryConfig,
         ILogger<SmartNotificationService> logger)
     {
         _kernelService = kernelService;
@@ -36,12 +38,11 @@ public sealed class SmartNotificationService
         _knowledgeService = knowledgeService;
         _logger = logger;
 
-        lock (_cycleLock)
-        {
-            // Use yesterday so the first StartNewCycle call always rotates to today,
-            // ensuring cleanup of any orphaned conversation from a previous process.
-            _currentCycleDate = DateTime.UtcNow.AddDays(-1).ToString("yyyy-MM-dd");
-        }
+        // After a restart, continue the cycle of the last daily run: its thread is reloaded from
+        // the database. A cycle runs from one daily run to the next, not from midnight.
+        var config = dailySummaryConfig.CurrentValue;
+        var lastRunUtc = DateTime.UtcNow + ScheduleHelper.CalculateDelayUntilNextRun(config.ScheduleTime, config.TimeZone) - TimeSpan.FromDays(1);
+        _currentCycleDate = lastRunUtc.ToString("yyyy-MM-dd");
     }
 
     public ulong CurrentDailyThreadId
@@ -235,7 +236,7 @@ public sealed class SmartNotificationService
     private static string NormalizeIssueType(string issueType) =>
         issueType.ToLowerInvariant().Replace(' ', '_');
 
-    private static ulong GenerateDailyThreadId(string dateString)
+    internal static ulong GenerateDailyThreadId(string dateString)
     {
         var hash = SHA256.HashData(Encoding.UTF8.GetBytes($"daily_notification_{dateString}"));
         return BitConverter.ToUInt64(hash, 0);

@@ -3,6 +3,7 @@ using HomelabBot.Data.Entities;
 using HomelabBot.Models;
 using HomelabBot.Services;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
@@ -168,6 +169,48 @@ public class HealingChainServiceTests : IClassFixture<DatabaseFixture>, IDisposa
         await using var read = await _fixture.DbContextFactory.CreateDbContextAsync();
         Assert.Equal(HealingChainStatus.Failed, (await read.HealingChains.SingleAsync(c => c.Id == chain.Id)).Status);
     }
+
+    [Fact]
+    public async Task PlanAndExecute_AsksForThePlanWithoutTools_AndRunsIt()
+    {
+        var handler = new ScriptedClaudeHandler();
+        using var harness = new KernelServiceHarness(handler.CreateClient());
+        handler.Enqueue(ClaudeResponses.Text(
+            """[{"Order":1,"Description":"ping","PluginName":"Test","FunctionName":"Ping","Parameters":{}}]"""));
+        var service = CreatePlanningService(harness, NullLogger<HealingChainService>.Instance);
+
+        var result = await service.PlanAndExecuteAsync("plex down", "plex", CancellationToken.None, similarIncidents: []);
+
+        var request = Assert.Single(handler.Requests);
+        Assert.Null(request["tools"]);
+        Assert.Null(request["tool_choice"]);
+        Assert.True(result!.Success);
+        Assert.Equal(1, harness.Plugin.Calls);
+    }
+
+    [Fact]
+    public async Task PlanAndExecute_AnswerIsNotAStepList_LogsTheAnswerHead()
+    {
+        var handler = new ScriptedClaudeHandler();
+        using var harness = new KernelServiceHarness(handler.CreateClient());
+        handler.Enqueue(ClaudeResponses.Text("no plan, sorry"));
+        var logger = new RecordingLogger<HealingChainService>();
+        var service = CreatePlanningService(harness, logger);
+
+        var result = await service.PlanAndExecuteAsync("plex down", "plex", CancellationToken.None, similarIncidents: []);
+
+        Assert.False(result!.Success);
+        Assert.Contains(logger.Entries, e => e.Level == LogLevel.Warning && e.Message.Contains("no plan, sorry", StringComparison.Ordinal));
+    }
+
+    private static HealingChainService CreatePlanningService(KernelServiceHarness harness, ILogger<HealingChainService> logger) =>
+        new(
+            harness.DbFactory,
+            harness.Service,
+            new RunbookCompilerService(harness.DbFactory, NullLogger<RunbookCompilerService>.Instance),
+            new IncidentSimilarityService(harness.DbFactory, NullLogger<IncidentSimilarityService>.Instance),
+            Options.Create(new HealingChainConfiguration()),
+            logger);
 
     private static List<RunbookStep>? InvokeParseSteps(string response) =>
         HealingChainService.ParseStepsFromResponse(response);
