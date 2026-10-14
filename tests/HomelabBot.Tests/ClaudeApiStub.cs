@@ -48,6 +48,26 @@ internal static class ClaudeResponses
          "usage":{{Usage(input, output, cacheWrite, cacheRead)}}}
         """;
 
+    // One final message with several text blocks, for example around a server tool or a citation.
+    public static string TextBlocks(params string[] texts) =>
+        $$"""
+        {"id":"msg_texts","type":"message","role":"assistant","model":"{{Model}}",
+         "content":[{"type":"thinking","thinking":"private reasoning","signature":"{{Signature}}"},
+                    {{string.Join(",", texts.Select(t => $$"""{"type":"text","text":{{JsonSerializer.Serialize(t)}}}"""))}}],
+         "stop_reason":"end_turn","stop_sequence":null,
+         "usage":{{Usage(120, 50, 0, 900)}}}
+        """;
+
+    // A tool round where the model writes a line of text before the tool call.
+    public static string TextThenToolUse(string text, string tool = "Test_Ping") =>
+        $$$"""
+        {"id":"msg_text_tool","type":"message","role":"assistant","model":"{{{Model}}}",
+         "content":[{"type":"text","text":{{{JsonSerializer.Serialize(text)}}}},
+                    {"type":"tool_use","id":"toolu_1","name":"{{{tool}}}","input":{},"caller":{"type":"direct"}}],
+         "stop_reason":"tool_use","stop_sequence":null,
+         "usage":{{{Usage(100, 20, 900, 0)}}}}
+        """;
+
     // The classifier stopped the model after it had already written a tool call.
     public static string RefusalAfterToolUse(string tool) =>
         $$$"""
@@ -276,8 +296,12 @@ internal sealed class KernelServiceHarness : IDisposable
     private readonly string _dbPath = Path.Combine(Path.GetTempPath(), $"homelab-bot-claude-{Guid.NewGuid():N}.db");
 
     // morePlugins runs after DbFactory and Conversations exist, so a plugin can be built on them.
+    // telemetryDb wraps the database of the telemetry service only, so a test can fail its writes.
     public KernelServiceHarness(
-        IAnthropicClient client, int maxTokens = 16000, Action<IKernelBuilderPlugins, KernelServiceHarness>? morePlugins = null)
+        IAnthropicClient client,
+        int maxTokens = 16000,
+        Action<IKernelBuilderPlugins, KernelServiceHarness>? morePlugins = null,
+        Func<IDbContextFactory<HomelabDbContext>, IDbContextFactory<HomelabDbContext>>? telemetryDb = null)
     {
         // A file of its own, not the shared in-memory connection of DatabaseFixture: each test
         // starts from an empty database, and the row asserts expect only that test's rows.
@@ -295,7 +319,7 @@ internal sealed class KernelServiceHarness : IDisposable
             Logger,
             NullLogger<TelemetryFunctionFilter>.Instance,
             Conversations,
-            new TelemetryService(DbFactory, NullLogger<TelemetryService>.Instance),
+            new TelemetryService(telemetryDb?.Invoke(DbFactory) ?? DbFactory, NullLogger<TelemetryService>.Instance),
             plugins =>
             {
                 plugins.AddFromObject(Plugin, "Test");
@@ -318,6 +342,34 @@ internal sealed class KernelServiceHarness : IDisposable
     {
         Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
         File.Delete(_dbPath);
+    }
+}
+
+// The caller gives up while the first context is opened: what a cancel during the telemetry
+// write at the start of a turn looks like. Later contexts open as usual.
+internal sealed class CancelOnFirstContextFactory : IDbContextFactory<HomelabDbContext>
+{
+    private readonly IDbContextFactory<HomelabDbContext> _inner;
+    private readonly CancellationTokenSource _caller;
+    private int _created;
+
+    public CancelOnFirstContextFactory(IDbContextFactory<HomelabDbContext> inner, CancellationTokenSource caller)
+    {
+        _inner = inner;
+        _caller = caller;
+    }
+
+    public HomelabDbContext CreateDbContext() => _inner.CreateDbContext();
+
+    public Task<HomelabDbContext> CreateDbContextAsync(CancellationToken cancellationToken = default)
+    {
+        if (Interlocked.Increment(ref _created) == 1)
+        {
+            _caller.Cancel();
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+
+        return _inner.CreateDbContextAsync(cancellationToken);
     }
 }
 

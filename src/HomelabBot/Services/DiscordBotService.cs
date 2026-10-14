@@ -18,6 +18,8 @@ public sealed class DiscordBotService : BackgroundService
     // A quoted alert or report can be long; the start says which message it was.
     private const int MaxQuoteChars = 2000;
 
+    private const string NoTextDmReply = "I can read text only, not attachments or stickers. Please write your question as a message.";
+
     private readonly ILogger<DiscordBotService> _logger;
     private readonly BotConfiguration _config;
     private readonly KernelService _kernelService;
@@ -522,9 +524,6 @@ public sealed class DiscordBotService : BackgroundService
                 conversationId = newThread.Id;
             }
 
-            // Show typing indicator
-            await responseChannel.TriggerTypingAsync();
-
             // Strip bot mention from message
             var content = e.Message.Content;
             foreach (var mention in e.Message.MentionedUsers.Where(u => u.Id == client.CurrentUser.Id))
@@ -540,8 +539,12 @@ public sealed class DiscordBotService : BackgroundService
                 return;
             }
 
-            // Process with Semantic Kernel
-            var response = await _kernelService.ProcessMessageAsync(conversationId, content, e.Author.Id);
+            // Stopped before the send: a trigger right after the reply would show "typing" for 10 s more.
+            string response;
+            await using (TypingIndicator.Start(responseChannel.TriggerTypingAsync, _logger))
+            {
+                response = await _kernelService.ProcessMessageAsync(conversationId, content, e.Author.Id);
+            }
 
             // Send response (split if too long)
             await SendResponseAsync(responseChannel, response);
@@ -565,6 +568,19 @@ public sealed class DiscordBotService : BackgroundService
         var content = e.Message.Content.Trim();
         if (string.IsNullOrWhiteSpace(content))
         {
+            // An attachment or a sticker alone: the model gets text only. Say so instead of staying silent.
+            _logger.LogInformation(
+                "DM from owner has no text ({AttachmentCount} attachments); asking for text", e.Message.Attachments.Count);
+            try
+            {
+                await e.Channel.SendMessageAsync(NoTextDmReply);
+                _ = RecordForOwnerAsync(NoTextDmReply);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Could not answer a DM from owner that has no text");
+            }
+
             return;
         }
 
@@ -577,10 +593,13 @@ public sealed class DiscordBotService : BackgroundService
 
         try
         {
-            await e.Channel.TriggerTypingAsync();
-
-            var response = await _kernelService.ProcessMessageAsync(
-                HomelabOwner.DmThreadId, content, e.Author.Id);
+            // Stopped before the send: a trigger right after the reply would show "typing" for 10 s more.
+            string response;
+            await using (TypingIndicator.Start(e.Channel.TriggerTypingAsync, _logger))
+            {
+                response = await _kernelService.ProcessMessageAsync(
+                    HomelabOwner.DmThreadId, content, e.Author.Id);
+            }
 
             await SendToChannelSplitAsync(e.Channel, response);
         }

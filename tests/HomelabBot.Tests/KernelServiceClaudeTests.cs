@@ -111,6 +111,27 @@ public sealed class KernelServiceClaudeTests : IDisposable
     }
 
     [Fact]
+    public async Task FinalMessageWithSeveralTextBlocks_AnswersWithAllOfThem()
+    {
+        _handler.Enqueue(ClaudeResponses.TextBlocks("First part.", "Second part."));
+
+        var answer = await _service.ProcessMessageAsync(ThreadId, "hi");
+
+        Assert.Equal("First part.\nSecond part.", answer);
+        Assert.Equal(answer, (await SingleInteractionAsync()).Response);
+    }
+
+    [Fact]
+    public async Task TextBeforeAToolCall_IsNotTakenAsTheAnswer()
+    {
+        _handler.Enqueue(ClaudeResponses.TextThenToolUse("Let me check.")).Enqueue(ClaudeResponses.Text("All good."));
+
+        var answer = await _service.ProcessMessageAsync(ThreadId, "check it");
+
+        Assert.Equal("All good.", answer);
+    }
+
+    [Fact]
     public async Task Refusal_IsReportedOnce_NotRetried_AndClosesTheTurn()
     {
         _handler.Enqueue(ClaudeResponses.Refusal("cyber")).Enqueue(ClaudeResponses.Text("next answer"));
@@ -263,6 +284,25 @@ public sealed class KernelServiceClaudeTests : IDisposable
         Assert.StartsWith("The request was cancelled", remembered, StringComparison.Ordinal);
         Assert.Contains("Test.Restart", remembered, StringComparison.Ordinal);
         Assert.Equal(1, _plugin.RestartCalls);
+    }
+
+    [Fact]
+    public async Task CancelWhileTheTurnStarts_Rethrows_AndClosesTheTurn()
+    {
+        using var caller = new CancellationTokenSource();
+        var handler = new ScriptedClaudeHandler().Enqueue(ClaudeResponses.Text("ok"));
+        using var harness = new KernelServiceHarness(
+            handler.CreateClient(), telemetryDb: db => new CancelOnFirstContextFactory(db, caller));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => harness.Service.ProcessMessageAsync(ThreadId, "hi", ct: caller.Token));
+
+        await harness.Service.ProcessMessageAsync(ThreadId, "again");
+        var messages = Assert.Single(handler.Requests)["messages"]!.AsArray();
+        Assert.Equal(["user", "assistant", "user"], messages.Select(m => (string?)m!["role"]));
+        var remembered = (string?)messages[1]!["content"]!.AsArray().Single()!["text"];
+        Assert.StartsWith("The request was cancelled", remembered, StringComparison.Ordinal);
+        Assert.DoesNotContain("Tools that already ran", remembered, StringComparison.Ordinal);
     }
 
     [Fact]
