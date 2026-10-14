@@ -94,6 +94,7 @@ public sealed class RunbookPlugin
     }
 
     [KernelFunction]
+    [ChangesState]
     [Description("Execute a runbook by ID. ReadOnly/Conservative steps auto-execute. Risky runbooks require manual confirmation.")]
     public async Task<string> ExecuteRunbook(
         [Description("Runbook ID to execute")] int runbookId,

@@ -47,7 +47,7 @@ public sealed class KernelService
     };
 
     private readonly Kernel _kernel;
-    private readonly ConcurrentDictionary<string, IReadOnlyList<KernelFunction>> _functionCache = new();
+    private readonly ConcurrentDictionary<(bool ReadOnly, string Plugins), IReadOnlyList<KernelFunction>> _functionCache = new();
     private readonly ILogger<KernelService> _logger;
     private readonly ConversationService _conversationService;
     private readonly TelemetryService _telemetryService;
@@ -296,7 +296,7 @@ public sealed class KernelService
             // None() still advertises every kernel function (SK only sets tool_choice=none), so
             // the empty list is what actually keeps the schemas out of the request.
             FunctionChoiceBehavior = allowToolUse
-                ? FunctionChoiceBehavior.Auto(ResolveFunctions(pluginAllowList))
+                ? FunctionChoiceBehavior.Auto(ResolveFunctions(pluginAllowList, readOnly: traceType == TraceType.Scheduled))
                 : FunctionChoiceBehavior.None(functions: []),
 
             // No sampling parameters: the model rejects a non-default temperature / top_p / top_k.
@@ -574,20 +574,23 @@ public sealed class KernelService
     }
 
     // Null exposes every plugin (SK's own default). A named subset keeps the tool schemas out of
-    // the prompt entirely, which is billed on every round of every call.
-    private IReadOnlyList<KernelFunction>? ResolveFunctions(IReadOnlyList<string>? pluginAllowList)
+    // the prompt entirely, which is billed on every round of every call. A scheduled run has no
+    // person watching, and its prompts can hold text from outside (alert texts, log lines), so it
+    // never gets a tool that changes state.
+    private IReadOnlyList<KernelFunction>? ResolveFunctions(IReadOnlyList<string>? pluginAllowList, bool readOnly)
     {
-        if (pluginAllowList is null || pluginAllowList.Count == 0)
+        var allowList = pluginAllowList ?? [];
+        if (allowList.Count == 0 && !readOnly)
         {
             return null;
         }
 
         return _functionCache.GetOrAdd(
-            string.Join(",", pluginAllowList),
-            _ => LogAndSelectFunctions(pluginAllowList));
+            (readOnly, string.Join(",", allowList)),
+            _ => LogAndSelectFunctions(allowList, readOnly));
     }
 
-    private IReadOnlyList<KernelFunction> LogAndSelectFunctions(IReadOnlyList<string> pluginAllowList)
+    private IReadOnlyList<KernelFunction> LogAndSelectFunctions(IReadOnlyList<string> pluginAllowList, bool readOnly)
     {
         // One bad name out of seven drops that plugin's tools just as silently as a fully wrong
         // list, so report the names, not just the count.
@@ -606,25 +609,33 @@ public sealed class KernelService
                 matched == 0 ? ", falling back to all" : "");
         }
 
-        var selected = SelectFunctions(_kernel, pluginAllowList);
+        var selected = SelectFunctions(_kernel, pluginAllowList, readOnly);
 
         _logger.LogInformation(
-            "Tool surface for this call: {FunctionCount} functions from {MatchedCount}/{PluginCount} plugins",
-            selected.Count, matched, _kernel.Plugins.Count);
+            "Tool surface for this call: {FunctionCount} functions from {SelectedCount}/{PluginCount} plugins, read-only {ReadOnly}",
+            selected.Count, selected.Select(f => f.PluginName).Distinct(StringComparer.Ordinal).Count(), _kernel.Plugins.Count, readOnly);
 
         return selected;
     }
 
-    // A typo in the allow-list would otherwise leave the model with no tools at all, which reads
-    // as the model refusing to investigate rather than as a config error.
-    internal static List<KernelFunction> SelectFunctions(Kernel kernel, IReadOnlyList<string> pluginAllowList)
+    // An empty list means every plugin. A typo in the allow-list would otherwise leave the model
+    // with no tools at all, which reads as the model refusing to investigate rather than as a
+    // config error, so it falls back to every plugin too. Read-only applies after the fallback,
+    // so a typo cannot reopen a tool that changes state.
+    internal static List<KernelFunction> SelectFunctions(
+        Kernel kernel, IReadOnlyList<string> pluginAllowList, bool readOnly = false)
     {
-        var selected = kernel.Plugins
-            .Where(p => pluginAllowList.Contains(p.Name, StringComparer.Ordinal))
-            .SelectMany(p => p)
-            .ToList();
+        var all = kernel.Plugins.SelectMany(p => p).ToList();
+        var selected = pluginAllowList.Count == 0
+            ? all
+            : all.Where(f => pluginAllowList.Contains(f.PluginName, StringComparer.Ordinal)).ToList();
 
-        return selected.Count > 0 ? selected : kernel.Plugins.SelectMany(p => p).ToList();
+        if (selected.Count == 0)
+        {
+            selected = all;
+        }
+
+        return readOnly ? selected.Where(f => !ChangesStateAttribute.IsOn(f)).ToList() : selected;
     }
 
     // What the loop reports for one call: the sum of its rounds, cached part of the prompt included.

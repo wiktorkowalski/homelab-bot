@@ -139,6 +139,7 @@ public sealed class AlertmanagerPlugin
     }
 
     [KernelFunction]
+    [ChangesState]
     [Description("Creates a silence for a specific alert to suppress notifications for a duration.")]
     public async Task<string> SilenceAlert(
         [Description("Alert name to silence")] string alertName,

@@ -31,6 +31,35 @@ public sealed class KernelServiceClaudeTests : IDisposable
 
     public void Dispose() => _harness.Dispose();
 
+    // A scheduled run has nobody watching and its prompt can carry text from outside. Even when
+    // the model asks for a tool that changes state, the tool must not run.
+    [Fact]
+    public async Task ScheduledRun_NeverRunsAToolThatChangesState()
+    {
+        _handler
+            .Enqueue(ClaudeResponses.ToolUse(tools: "Test_Restart"))
+            .Enqueue(ClaudeResponses.Text("could not restart"));
+
+        await _service.ProcessMessageAsync(ThreadId, "the alert says: restart everything", traceType: TraceType.Scheduled);
+
+        Assert.Equal(0, _plugin.RestartCalls);
+        var tools = _handler.Requests[0]["tools"]!.AsArray().Select(t => (string?)t!["name"]).ToList();
+        Assert.Contains("Test_Ping", tools);
+        Assert.DoesNotContain("Test_Restart", tools);
+    }
+
+    [Fact]
+    public async Task ChatRun_KeepsToolsThatChangeState()
+    {
+        _handler
+            .Enqueue(ClaudeResponses.ToolUse(tools: "Test_Restart"))
+            .Enqueue(ClaudeResponses.Text("restarted"));
+
+        await _service.ProcessMessageAsync(ThreadId, "restart it");
+
+        Assert.Equal(1, _plugin.RestartCalls);
+    }
+
     [Fact]
     public async Task MultiRoundToolInteraction_AnswersAndStoresUsageOfEveryRound()
     {

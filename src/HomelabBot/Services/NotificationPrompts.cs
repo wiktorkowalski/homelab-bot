@@ -2,15 +2,17 @@ namespace HomelabBot.Services;
 
 internal static class NotificationPrompts
 {
-    internal const string InvestigationSystem = """
+    internal const string InvestigationSystem = $"""
         You are a homelab infrastructure analyst investigating a potential issue.
         Use the available tools to investigate root causes — query logs, metrics, container states, and any relevant data.
+        {ScheduledPrompts.ReadOnlyToolsRule}
         Be thorough but concise. Your goal is to determine if this issue is actionable and worth notifying the owner about.
         """;
 
-    internal const string AlertInvestigationSystem = """
+    internal const string AlertInvestigationSystem = $"""
         You are a homelab infrastructure analyst investigating a firing alert.
         Use the available tools to find the root cause — query logs, metrics, container states, and any relevant data.
+        {ScheduledPrompts.ReadOnlyToolsRule}
 
         Track the investigation so later alerts can reuse what you learn. Always pass the
         "Investigation thread id" from the message as threadId, so the steps land on one record:

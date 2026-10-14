@@ -1,3 +1,5 @@
+using System.Reflection;
+using HomelabBot.Plugins;
 using HomelabBot.Services;
 using Microsoft.SemanticKernel;
 
@@ -5,6 +7,19 @@ namespace HomelabBot.Tests;
 
 public class KernelToolSurfaceTests
 {
+    private static Kernel CreateKernelWithPingPlugin()
+    {
+        var builder = Kernel.CreateBuilder();
+        builder.Plugins.AddFromObject(new PingPlugin(), "Test");
+        return builder.Build();
+    }
+
+    private static IEnumerable<MethodInfo> PluginTools() =>
+        typeof(KernelService).Assembly.GetTypes()
+            .Where(t => t.Namespace == "HomelabBot.Plugins")
+            .SelectMany(t => t.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly))
+            .Where(m => m.IsDefined(typeof(KernelFunctionAttribute)));
+
     private static Kernel CreateKernel()
     {
         var builder = Kernel.CreateBuilder();
@@ -74,6 +89,69 @@ public class KernelToolSurfaceTests
         // here because ProcessMessageAsync relies on the empty-list form to send no schemas.
         Assert.Equal(5, bare.Functions?.Count);
         Assert.Null(empty.Functions);
+    }
+
+    [Fact]
+    public void SelectFunctions_ReadOnly_DropsToolsThatChangeState()
+    {
+        var selected = KernelService.SelectFunctions(CreateKernelWithPingPlugin(), ["Test"], readOnly: true);
+
+        Assert.Contains(selected, f => f.Name == "Ping");
+        Assert.DoesNotContain(selected, f => f.Name == "Restart");
+    }
+
+    [Fact]
+    public void SelectFunctions_ReadOnly_AlsoFiltersTheFallbackOfAWrongAllowList()
+    {
+        var selected = KernelService.SelectFunctions(CreateKernelWithPingPlugin(), ["Tset"], readOnly: true);
+
+        Assert.Contains(selected, f => f.Name == "Ping");
+        Assert.DoesNotContain(selected, f => f.Name == "Restart");
+    }
+
+    [Fact]
+    public void SelectFunctions_ReadOnly_WithNoAllowList_KeepsEveryReadTool()
+    {
+        var selected = KernelService.SelectFunctions(CreateKernelWithPingPlugin(), [], readOnly: true);
+
+        Assert.Contains(selected, f => f.Name == "Ping");
+        Assert.DoesNotContain(selected, f => f.Name == "Restart");
+    }
+
+    // Removing a mark by mistake would give scheduled runs that tool again.
+    [Fact]
+    public void ToolsThatChangeState_AreMarked()
+    {
+        string[] expected =
+        [
+            "AlertmanagerPlugin.SilenceAlert", "DockerPlugin.RestartContainer", "DockerPlugin.StartContainer",
+            "DockerPlugin.StopContainer", "HomeAssistantPlugin.TriggerAutomation", "HomeAssistantPlugin.TurnOff",
+            "HomeAssistantPlugin.TurnOn", "MikroTikPlugin.WakeOnLan", "NtfyPlugin.SendNotification",
+            "NtfyPlugin.SendNotificationWithActions", "RunbookPlugin.ExecuteRunbook",
+        ];
+
+        var marked = PluginTools()
+            .Where(m => m.IsDefined(typeof(ChangesStateAttribute)))
+            .Select(m => $"{m.DeclaringType!.Name}.{m.Name}")
+            .Order(StringComparer.Ordinal);
+
+        Assert.Equal(expected, marked);
+    }
+
+    // A new tool named like an action must be marked, or carry a name that does not look like one.
+    [Fact]
+    public void ToolsNamedLikeAnAction_AreMarked()
+    {
+        string[] actionVerbs = ["Start", "Stop", "Restart", "Silence", "Wake", "Turn", "Trigger", "Send", "Execute", "Delete", "Set", "Kill", "Remove"];
+
+        var unmarked = PluginTools()
+            .Where(m => actionVerbs.Any(v => m.Name.StartsWith(v, StringComparison.Ordinal)))
+            .Where(m => !m.IsDefined(typeof(ChangesStateAttribute)))
+            .Select(m => $"{m.DeclaringType!.Name}.{m.Name}")
+            .ToList();
+
+        // Starts a record of the bot's own, nothing outside it.
+        Assert.Equal(["InvestigationPlugin.StartInvestigation"], unmarked);
     }
 
     [Fact]
