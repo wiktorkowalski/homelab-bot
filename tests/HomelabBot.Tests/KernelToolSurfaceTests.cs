@@ -1,4 +1,6 @@
 using System.Reflection;
+using HomelabBot.Data.Entities;
+using HomelabBot.Models;
 using HomelabBot.Plugins;
 using HomelabBot.Services;
 using Microsoft.SemanticKernel;
@@ -118,6 +120,20 @@ public class KernelToolSurfaceTests
         Assert.DoesNotContain(selected, f => f.Name == "Restart");
     }
 
+    // A matching runbook runs on its own unless it is Risky, so every marked tool makes it Risky.
+    [Theory]
+    [InlineData("RestartContainer", TrustLevel.Risky)]
+    [InlineData("SendNotification", TrustLevel.Risky)]
+    [InlineData("ExecuteRunbook", TrustLevel.Risky)]
+    [InlineData("RememberFact", TrustLevel.Risky)]
+    [InlineData("ListContainers", TrustLevel.ReadOnly)]
+    public void RunbookTrustLevel_FollowsTheMarks(string function, TrustLevel expected)
+    {
+        var step = new RunbookStep { Description = "step", PluginName = "Any", FunctionName = function };
+
+        Assert.Equal(expected, RunbookPlugin.DetermineTrustLevel([step]));
+    }
+
     // Removing a mark by mistake would give scheduled runs that tool again.
     [Fact]
     public void ToolsThatChangeState_AreMarked()
@@ -126,8 +142,10 @@ public class KernelToolSurfaceTests
         [
             "AlertmanagerPlugin.SilenceAlert", "DockerPlugin.RestartContainer", "DockerPlugin.StartContainer",
             "DockerPlugin.StopContainer", "HomeAssistantPlugin.TriggerAutomation", "HomeAssistantPlugin.TurnOff",
-            "HomeAssistantPlugin.TurnOn", "MikroTikPlugin.WakeOnLan", "NtfyPlugin.SendNotification",
-            "NtfyPlugin.SendNotificationWithActions", "RunbookPlugin.ExecuteRunbook",
+            "HomeAssistantPlugin.TurnOn", "KnowledgePlugin.InvalidateKnowledge", "KnowledgePlugin.LearnCorrection",
+            "KnowledgePlugin.RememberFact", "KnowledgePlugin.StoreAlias", "MikroTikPlugin.WakeOnLan",
+            "NtfyPlugin.SendNotification", "NtfyPlugin.SendNotificationWithActions", "RunbookPlugin.CreateRunbook",
+            "RunbookPlugin.ExecuteRunbook",
         ];
 
         var marked = PluginTools()
@@ -142,7 +160,11 @@ public class KernelToolSurfaceTests
     [Fact]
     public void ToolsNamedLikeAnAction_AreMarked()
     {
-        string[] actionVerbs = ["Start", "Stop", "Restart", "Silence", "Wake", "Turn", "Trigger", "Send", "Execute", "Delete", "Set", "Kill", "Remove"];
+        string[] actionVerbs =
+        [
+            "Start", "Stop", "Restart", "Silence", "Wake", "Turn", "Trigger", "Send", "Execute", "Delete", "Set", "Kill",
+            "Remove", "Create", "Remember", "Store", "Learn", "Invalidate", "Update", "Save",
+        ];
 
         var unmarked = PluginTools()
             .Where(m => actionVerbs.Any(v => m.Name.StartsWith(v, StringComparison.Ordinal)))
