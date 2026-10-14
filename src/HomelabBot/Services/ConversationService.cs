@@ -34,8 +34,9 @@ public sealed class ConversationService
     // user message with this marker: it is not the owner's text and not the model's own answer.
     internal const string BotMessageRole = "notification";
 
-    // Ceiling on how many keyword-matched conversations get loaded and scored in memory.
+    // Ceiling on how many keyword-matched conversation rows get loaded and ranked.
     private const int MaxScoredConversations = 200;
+    private const int MaxRelevantMessages = 5;
     private const string LikeEscapeChar = "\\";
 
     private readonly ConcurrentDictionary<ulong, SemaphoreSlim> _threadLocks = new();
@@ -185,10 +186,10 @@ public sealed class ConversationService
         // Match in SQL first. Scanning the newest N conversations and scoring them in memory made
         // every older conversation unfindable, and one busy source (alert investigations) could
         // fill that window on its own.
+        var patterns = keywords.Select(k => $"%{EscapeLike(k)}%").ToList();
         var hitsPerConversation = new Dictionary<int, int>();
-        foreach (var keyword in keywords)
+        foreach (var pattern in patterns)
         {
-            var pattern = $"%{EscapeLike(keyword)}%";
             var ids = await db.ConversationMessages
                 .AsNoTracking()
                 .Where(m => EF.Functions.Like(m.Content, pattern, LikeEscapeChar))
@@ -220,37 +221,49 @@ public sealed class ConversationService
             .Select(kv => kv.Key)
             .ToList();
 
-        var conversations = await db.Conversations
+        // Rank on the conversation rows alone. The owner's DM thread is permanent and grows
+        // without end, so loading every message of every candidate would pull it all into memory.
+        var candidates = await db.Conversations
             .AsNoTracking()
-            .Include(c => c.Messages)
             .Where(c => candidateIds.Contains(c.Id))
             .ToListAsync(ct);
 
-        return conversations
-            .Select(c =>
-            {
-                var score = keywords.Count(k =>
-                    c.Messages.Any(m => m.Content.Contains(k, StringComparison.OrdinalIgnoreCase)));
-                return (Conversation: c, Score: score);
-            })
-            .Where(x => x.Score > 0)
-            .OrderByDescending(x => x.Score)
-            .ThenByDescending(x => x.Conversation.LastMessageAt)
+        var winners = candidates
+            .OrderByDescending(c => hitsPerConversation[c.Id])
+            .ThenByDescending(c => c.LastMessageAt)
             .Take(limit)
-            .Select(x => new ConversationSearchResult
-            {
-                ConversationId = x.Conversation.Id,
-                ThreadId = x.Conversation.ThreadId,
-                Title = x.Conversation.Title,
-                Date = x.Conversation.LastMessageAt ?? x.Conversation.CreatedAt,
-                Score = x.Score,
-                RelevantMessages = x.Conversation.Messages
-                    .Where(m => keywords.Any(k => m.Content.Contains(k, StringComparison.OrdinalIgnoreCase)))
-                    .OrderBy(m => m.Timestamp)
-                    .Take(5)
-                    .ToList(),
-            })
             .ToList();
+
+        // One query per winner, not one join for all: with ConversationId fixed, SQLite walks the
+        // (ConversationId, Timestamp) index in time order and stops at the fifth match. A single
+        // query with a per-conversation ROW_NUMBER ranked every match in the whole table first.
+        var results = new List<ConversationSearchResult>(winners.Count);
+        foreach (var conversation in winners)
+        {
+            var messages = await db.ConversationMessages
+                .AsNoTracking()
+                .Where(m => m.ConversationId == conversation.Id)
+                .Where(m => patterns.Any(p => EF.Functions.Like(m.Content, p, LikeEscapeChar)))
+                .OrderBy(m => m.Timestamp)
+                .Take(MaxRelevantMessages)
+                .ToListAsync(ct);
+
+            results.Add(new ConversationSearchResult
+            {
+                ConversationId = conversation.Id,
+                ThreadId = conversation.ThreadId,
+                Title = conversation.Title,
+                Date = conversation.LastMessageAt ?? conversation.CreatedAt,
+                Score = hitsPerConversation[conversation.Id],
+                RelevantMessages = messages,
+            });
+        }
+
+        _logger.LogDebug(
+            "Conversation search: {KeywordCount} keywords, {CandidateCount} candidates, {ResultCount} results",
+            keywords.Length, candidateIds.Count, results.Count);
+
+        return results;
     }
 
     // LIKE wildcards in a user's query would otherwise match far more than they typed.
