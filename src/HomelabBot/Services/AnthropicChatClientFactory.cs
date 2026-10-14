@@ -2,6 +2,7 @@ using System.Diagnostics;
 using Anthropic;
 using Anthropic.Core;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.SemanticKernel;
 
 namespace HomelabBot.Services;
@@ -16,13 +17,16 @@ internal static class AnthropicChatClientFactory
     // The base URL is fixed: without it the SDK takes ANTHROPIC_BASE_URL from the process
     // environment, and one stray line in the server .env would move every request, key included,
     // to another host. The SDK keeps its own HttpClient in production; tests pass a scripted one.
-    public static AnthropicClient CreateApiClient(string apiKey, HttpClient? httpClient = null)
+    // The attempt log rides on Handlers, so the SDK HttpClient, its timeout and its retry stay as
+    // they are. A handler binds to one client: build a new one on every call, never share it.
+    public static AnthropicClient CreateApiClient(string apiKey, HttpClient? httpClient = null, ILogger? logger = null)
     {
         var client = new AnthropicClient
         {
             ApiKey = apiKey,
             BaseUrl = EnvironmentUrl.Production,
             Timeout = RequestTimeout,
+            Handlers = [new AnthropicAttemptLogHandler(logger ?? NullLogger.Instance)],
         };
 
         return httpClient is null ? client : (AnthropicClient)client.WithOptions(options => options with { HttpClient = httpClient });

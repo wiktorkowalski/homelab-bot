@@ -185,7 +185,8 @@ try
     // It also keeps its own HttpClient: a factory client would add a 100 s timeout and, with the
     // resilience handler, a second retry layer.
     builder.Services.AddSingleton<IAnthropicClient>(sp => AnthropicChatClientFactory.CreateApiClient(
-        sp.GetRequiredService<IOptions<BotConfiguration>>().Value.AnthropicApiKey));
+        sp.GetRequiredService<IOptions<BotConfiguration>>().Value.AnthropicApiKey,
+        logger: sp.GetRequiredService<ILogger<AnthropicAttemptLogHandler>>()));
     builder.Services.AddSingleton<KernelService>();
     builder.Services.AddSingleton<DiscordBotService>();
     builder.Services.AddHostedService(sp => sp.GetRequiredService<DiscordBotService>());

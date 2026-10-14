@@ -18,12 +18,13 @@ public class AnthropicChatClientTests
     private readonly ScriptedClaudeHandler _handler = new();
     private readonly PingPlugin _plugin = new();
     private readonly RecordingLogger<AnthropicChatClientTests> _logger = new();
+    private readonly RecordingLogger<AnthropicAttemptLogHandler> _attemptLog = new();
     private readonly Kernel _kernel;
     private readonly IChatCompletionService _chat;
 
     public AnthropicChatClientTests()
     {
-        _kernel = ClaudeTestKernel.Build(_handler.CreateClient(), _plugin, _logger);
+        _kernel = ClaudeTestKernel.Build(_handler.CreateClient(_attemptLog), _plugin, _logger);
         _chat = _kernel.GetRequiredService<IChatCompletionService>();
     }
 
@@ -352,6 +353,14 @@ public class AnthropicChatClientTests
         Assert.Equal("pong received", response.Content);
         Assert.Equal(3, _handler.RequestBodies.Count);
         Assert.Equal(1, scope.Snapshot().Rounds);
+
+        var warnings = AttemptWarnings();
+        Assert.Equal(2, warnings.Count);
+        Assert.Contains("attempt 1 ", warnings[0], StringComparison.Ordinal);
+        Assert.Contains($"status {status} ", warnings[0], StringComparison.Ordinal);
+        Assert.Contains("req_test", warnings[0], StringComparison.Ordinal);
+        Assert.Contains("retry-after 1 ms", warnings[0], StringComparison.Ordinal);
+        Assert.Contains("attempt 2 ", warnings[1], StringComparison.Ordinal);
     }
 
     [Fact]
@@ -363,6 +372,10 @@ public class AnthropicChatClientTests
 
         Assert.Equal("pong received", response.Content);
         Assert.Equal(3, _handler.RequestBodies.Count);
+
+        var warnings = AttemptWarnings();
+        Assert.Equal(2, warnings.Count);
+        Assert.All(warnings, w => Assert.Contains("scripted connection reset", w, StringComparison.Ordinal));
     }
 
     [Fact]
@@ -373,6 +386,47 @@ public class AnthropicChatClientTests
         await Assert.ThrowsAsync<Anthropic5xxException>(() => _chat.GetChatMessageContentAsync("hi"));
 
         Assert.Equal(3, _handler.RequestBodies.Count);
+
+        var warnings = AttemptWarnings();
+        Assert.Equal(3, warnings.Count);
+        for (var i = 0; i < warnings.Count; i++)
+        {
+            Assert.Contains($"attempt {i + 1} ", warnings[i], StringComparison.Ordinal);
+        }
+    }
+
+    // The attempt number in the log line comes from this SDK header. An SDK upgrade that drops it
+    // fails here, not silently as "attempt 1" on every line.
+    [Fact]
+    public async Task RetriedCall_CarriesTheSdkRetryCountHeader()
+    {
+        _handler.EnqueueStatus(529, times: 2).Enqueue(ClaudeResponses.Text());
+
+        await _chat.GetChatMessageContentAsync("hi");
+
+        Assert.Equal(["0", "1", "2"], _handler.RequestHeaders.Select(h => h["x-stainless-retry-count"]));
+    }
+
+    [Fact]
+    public async Task SuccessfulCall_WritesNoAttemptLine()
+    {
+        _handler.Enqueue(ClaudeResponses.Text());
+
+        await _chat.GetChatMessageContentAsync("hi");
+
+        Assert.Empty(_attemptLog.Entries);
+    }
+
+    [Fact]
+    public async Task CallerCancel_WritesOneTimeoutOrCancelLine()
+    {
+        using var caller = new CancellationTokenSource();
+        _handler.EnqueueCallerCancel(caller);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => _chat.GetChatMessageContentAsync("hi", cancellationToken: caller.Token));
+
+        var warning = Assert.Single(AttemptWarnings());
+        Assert.Contains("timeout or cancel", warning, StringComparison.Ordinal);
     }
 
     [Theory]
@@ -386,6 +440,7 @@ public class AnthropicChatClientTests
 
         Assert.IsType(expected, ex);
         Assert.Single(_handler.RequestBodies);
+        Assert.Empty(_attemptLog.Entries);
     }
 
     [Fact]
@@ -578,6 +633,9 @@ public class AnthropicChatClientTests
     };
 
     private JsonObject Request(int index) => _handler.Requests[index];
+
+    private List<string> AttemptWarnings() =>
+        _attemptLog.Entries.Where(e => e.Level == LogLevel.Warning).Select(e => e.Message).ToList();
 
     private sealed class CountingFilter : IFunctionInvocationFilter
     {

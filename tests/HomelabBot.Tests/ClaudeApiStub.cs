@@ -144,6 +144,7 @@ internal sealed class ScriptedClaudeHandler : HttpMessageHandler
 
                 // Keeps the SDK retry backoff out of the test run time.
                 response.Headers.TryAddWithoutValidation("retry-after-ms", "1");
+                response.Headers.TryAddWithoutValidation("request-id", "req_test");
                 return Task.FromResult(response);
             });
         }
@@ -173,7 +174,8 @@ internal sealed class ScriptedClaudeHandler : HttpMessageHandler
     }
 
     // The production client, on this transport.
-    public AnthropicClient CreateClient() => AnthropicChatClientFactory.CreateApiClient("test-key", new HttpClient(this));
+    public AnthropicClient CreateClient(ILogger? logger = null) =>
+        AnthropicChatClientFactory.CreateApiClient("test-key", new HttpClient(this), logger);
 
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
