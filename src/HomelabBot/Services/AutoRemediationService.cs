@@ -126,6 +126,13 @@ public sealed class AutoRemediationService
     public async Task<string> RecordUserConfirmationAsync(int actionId, bool approved, CancellationToken ct)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
+
+        // Claim the answer in one conditional write before anything runs. DSharpPlus runs button
+        // handlers in parallel, and a second click during the restart must find the row taken.
+        var claimed = await db.RemediationActions
+            .Where(a => a.Id == actionId && !a.ConfirmedByUser)
+            .ExecuteUpdateAsync(s => s.SetProperty(a => a.ConfirmedByUser, true), ct);
+
         var action = await db.RemediationActions.FindAsync([actionId], ct);
         if (action == null)
         {
@@ -133,18 +140,14 @@ public sealed class AutoRemediationService
             return "This remediation no longer exists.";
         }
 
-        // A second click must not restart the container again.
-        if (action.ConfirmedByUser)
+        if (claimed == 0)
         {
             _logger.LogInformation("Remediation action {ActionId} was already answered", actionId);
             return $"This remediation for **{action.ContainerName}** was already answered.";
         }
 
-        action.ConfirmedByUser = true;
-
         if (!approved)
         {
-            await db.SaveChangesAsync(ct);
             return $"Remediation for **{action.ContainerName}** rejected.";
         }
 
