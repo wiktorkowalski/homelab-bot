@@ -52,6 +52,26 @@ internal static class ClaudeResponses
          "usage":{{Usage(input, output, cacheWrite, cacheRead)}}}
         """;
 
+    // One final message with several text blocks, for example around a server tool or a citation.
+    public static string TextBlocks(params string[] texts) =>
+        $$"""
+        {"id":"msg_texts","type":"message","role":"assistant","model":"{{Model}}",
+         "content":[{"type":"thinking","thinking":"private reasoning","signature":"{{Signature}}"},
+                    {{string.Join(",", texts.Select(t => $$"""{"type":"text","text":{{JsonSerializer.Serialize(t)}}}"""))}}],
+         "stop_reason":"end_turn","stop_sequence":null,
+         "usage":{{Usage(120, 50, 0, 900)}}}
+        """;
+
+    // A tool round where the model writes a line of text before the tool call.
+    public static string TextThenToolUse(string text, string tool = "Test_Ping") =>
+        $$$"""
+        {"id":"msg_text_tool","type":"message","role":"assistant","model":"{{{Model}}}",
+         "content":[{"type":"text","text":{{{JsonSerializer.Serialize(text)}}}},
+                    {"type":"tool_use","id":"toolu_1","name":"{{{tool}}}","input":{},"caller":{"type":"direct"}}],
+         "stop_reason":"tool_use","stop_sequence":null,
+         "usage":{{{Usage(100, 20, 900, 0)}}}}
+        """;
+
     // The classifier stopped the model after it had already written a tool call.
     public static string RefusalAfterToolUse(string tool) =>
         $$$"""

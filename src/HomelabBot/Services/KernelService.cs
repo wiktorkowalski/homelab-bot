@@ -345,7 +345,7 @@ public sealed class KernelService
             }
             else
             {
-                responseText = StripThinkingBlocks(response!.Content!);
+                responseText = StripThinkingBlocks(ResponseText(response) ?? "");
             }
 
             // Also when there is no real answer: without an assistant reply the user message (and
@@ -544,15 +544,18 @@ public sealed class KernelService
         return false;
     }
 
+    // SK's Content is the first text block only. Claude can split one answer into several text
+    // blocks, and the reply must hold all of them. Null when the message has no text block.
+    internal static string? ResponseText(ChatMessageContent? response)
+    {
+        var texts = response?.Items.OfType<Microsoft.SemanticKernel.TextContent>().Select(t => t.Text).ToList() ?? [];
+        return texts.Count > 0 ? string.Join("\n", texts) : null;
+    }
+
     // Empty when missing, blank, or only a <think> block (which strips to nothing downstream).
     internal static bool IsEmptyResponse(ChatMessageContent? response)
     {
-        if (response is null)
-        {
-            return true;
-        }
-
-        var content = response.Content;
+        var content = ResponseText(response);
         if (string.IsNullOrWhiteSpace(content))
         {
             return true;

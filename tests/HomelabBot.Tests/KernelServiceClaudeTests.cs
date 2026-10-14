@@ -111,6 +111,27 @@ public sealed class KernelServiceClaudeTests : IDisposable
     }
 
     [Fact]
+    public async Task FinalMessageWithSeveralTextBlocks_AnswersWithAllOfThem()
+    {
+        _handler.Enqueue(ClaudeResponses.TextBlocks("First part.", "Second part."));
+
+        var answer = await _service.ProcessMessageAsync(ThreadId, "hi");
+
+        Assert.Equal("First part.\nSecond part.", answer);
+        Assert.Equal(answer, (await SingleInteractionAsync()).Response);
+    }
+
+    [Fact]
+    public async Task TextBeforeAToolCall_IsNotTakenAsTheAnswer()
+    {
+        _handler.Enqueue(ClaudeResponses.TextThenToolUse("Let me check.")).Enqueue(ClaudeResponses.Text("All good."));
+
+        var answer = await _service.ProcessMessageAsync(ThreadId, "check it");
+
+        Assert.Equal("All good.", answer);
+    }
+
+    [Fact]
     public async Task Refusal_IsReportedOnce_NotRetried_AndClosesTheTurn()
     {
         _handler.Enqueue(ClaudeResponses.Refusal("cyber")).Enqueue(ClaudeResponses.Text("next answer"));
