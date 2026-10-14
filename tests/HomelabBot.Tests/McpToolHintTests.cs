@@ -46,6 +46,7 @@ public class McpToolHintTests
         {
             ["HomeAssistantPlugin.TurnOff"] = true,
             ["HomeAssistantPlugin.TurnOn"] = true,
+            ["HomelabMcpTools.AskBot"] = false,
             ["HomelabMcpTools.DeletePattern"] = true,
             ["NtfyPlugin.SendNotification"] = false,
         };

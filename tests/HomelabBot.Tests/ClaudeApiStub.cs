@@ -257,6 +257,12 @@ internal sealed class SpanCollector : IDisposable
     private readonly ActivityListener _listener;
 
     public SpanCollector(ActivityTraceId traceId, Func<ActivitySource, bool> shouldListenTo)
+        : this(span => span.TraceId == traceId, shouldListenTo)
+    {
+    }
+
+    // For spans that start their own trace: keep picks them out from parallel tests.
+    public SpanCollector(Func<Activity, bool> keep, Func<ActivitySource, bool> shouldListenTo)
     {
         _listener = new ActivityListener
         {
@@ -264,7 +270,7 @@ internal sealed class SpanCollector : IDisposable
             Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
             ActivityStopped = span =>
             {
-                if (span.TraceId != traceId)
+                if (!keep(span))
                 {
                     return;
                 }
