@@ -52,6 +52,14 @@ public sealed class ConversationService
     {
         if (_histories.TryGetValue(threadId, out var cached))
         {
+            // The prompt belongs to the caller, not to the history: the daily thread serves the
+            // healthcheck and the evaluations, each with its own prompt. Index 0 is never trimmed.
+            if (cached[0].Content != systemPrompt)
+            {
+                cached[0] = new ChatMessageContent(AuthorRole.System, systemPrompt);
+                _logger.LogDebug("Replaced the system prompt of thread {ThreadId} for this caller", threadId);
+            }
+
             return cached;
         }
 

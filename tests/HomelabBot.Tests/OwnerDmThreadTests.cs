@@ -60,6 +60,20 @@ public sealed class OwnerDmThreadTests : IDisposable
     }
 
     [Fact]
+    public async Task EachTurn_GetsItsCallersSystemPrompt_OnAHistoryAnotherCallerCreated()
+    {
+        _handler.Enqueue(ClaudeResponses.Text("checked")).Enqueue(ClaudeResponses.Text("hi there"));
+
+        await _harness.Service.ProcessMessageAsync(ThreadId, "run the healthcheck", systemPromptOverride: "You are the healthcheck.");
+        await _harness.Service.ProcessMessageAsync(ThreadId, "hello");
+
+        Assert.Contains("You are the healthcheck.", _handler.Requests[0]["system"]!.ToJsonString(), StringComparison.Ordinal);
+        var second = _handler.Requests[1]["system"]!.ToJsonString();
+        Assert.Contains("You are HomeLabBot", second, StringComparison.Ordinal);
+        Assert.DoesNotContain("You are the healthcheck.", second, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task TwoTurnsOnOneThread_RunOneAfterTheOther()
     {
         var arrived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
