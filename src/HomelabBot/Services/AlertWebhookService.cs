@@ -213,13 +213,13 @@ public sealed class AlertWebhookService
         // functions, none of which survive the allow-list. This one matches the available tools
         // and keeps the StartInvestigation/RecordStep workflow that feeds MatchedRunbooks and the
         // déjà-vu context above.
-        return await _kernelService.ProcessMessageAsync(
-            conversationId,
+        return await _kernelService.ProcessOneShotAsync(
             prompt,
             HomelabOwner.DiscordUserId,
             TraceType.Scheduled,
             systemPromptOverride: NotificationPrompts.AlertInvestigationSystem,
             pluginAllowList: NotificationPrompts.InvestigationPlugins,
+            threadId: conversationId,
             ct: ct);
     }
 
