@@ -199,6 +199,7 @@ public sealed class MikroTikPlugin
     }
 
     [KernelFunction]
+    [ChangesState]
     [Description("Sends a Wake-on-LAN magic packet to wake up a device. Requires the target device's MAC address.")]
     public async Task<string> WakeOnLan([Description("MAC address of the device to wake (e.g., AA:BB:CC:DD:EE:FF)")] string macAddress)
     {

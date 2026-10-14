@@ -1,0 +1,23 @@
+using System.Reflection;
+using Microsoft.SemanticKernel;
+
+namespace HomelabBot.Plugins;
+
+// Marks a tool that changes something outside the run: a container, a device, an alert, a message
+// to a person, or what later runs act on (runbooks start on their own when an alert matches;
+// knowledge feeds every prompt and the notification preferences). Scheduled runs never get such a
+// tool (KernelService.SelectFunctions), and a runbook step that calls one is Risky. Investigation
+// records are not marked: the alert investigation prompt asks for them.
+[AttributeUsage(AttributeTargets.Method)]
+internal sealed class ChangesStateAttribute : Attribute
+{
+    public static IReadOnlySet<string> FunctionNames { get; } = typeof(ChangesStateAttribute).Assembly.GetTypes()
+        .Where(t => t.Namespace == typeof(ChangesStateAttribute).Namespace)
+        .SelectMany(t => t.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly))
+        .Where(m => m.IsDefined(typeof(KernelFunctionAttribute)) && m.IsDefined(typeof(ChangesStateAttribute)))
+        .Select(m => m.Name)
+        .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    public static bool IsOn(KernelFunction function) =>
+        function.UnderlyingMethod?.IsDefined(typeof(ChangesStateAttribute), inherit: true) == true;
+}

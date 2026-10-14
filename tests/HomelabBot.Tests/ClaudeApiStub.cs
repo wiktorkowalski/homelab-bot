@@ -8,6 +8,7 @@ using Anthropic;
 using Anthropic.Models.Messages;
 using HomelabBot.Configuration;
 using HomelabBot.Data;
+using HomelabBot.Plugins;
 using HomelabBot.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.AI;
@@ -325,6 +326,7 @@ internal sealed class PingPlugin
     }
 
     [KernelFunction("Restart")]
+    [ChangesState]
     [Description("Restarts a container. Has a side effect.")]
     public string Restart()
     {

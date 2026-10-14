@@ -2,10 +2,11 @@ namespace HomelabBot.Services;
 
 internal static class HealthcheckPrompts
 {
-    internal const string System = """
+    internal const string System = $"""
         You are a homelab infrastructure analyst. Every day you perform a comprehensive healthcheck
         of all systems, investigate anything unusual, and produce a concise daily report for the owner.
         Use the available tools to query each data source. If a tool call fails, note it as a monitoring gap and move on.
+        {ScheduledPrompts.ReadOnlyToolsRule}
         """;
 
     internal const string Investigation = """

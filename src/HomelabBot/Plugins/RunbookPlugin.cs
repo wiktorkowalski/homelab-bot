@@ -17,13 +17,6 @@ public sealed class RunbookPlugin
     private readonly IDbContextFactory<HomelabDbContext> _dbFactory;
     private readonly ILogger<RunbookPlugin> _logger;
 
-    private static readonly HashSet<string> RiskyFunctions = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "RestartContainer", "StopContainer", "StartContainer",
-        "TurnOn", "TurnOff", "TriggerAutomation",
-        "SilenceAlert", "WakeOnLan",
-    };
-
     public RunbookPlugin(
         IDbContextFactory<HomelabDbContext> dbFactory,
         ILogger<RunbookPlugin> logger)
@@ -33,6 +26,7 @@ public sealed class RunbookPlugin
     }
 
     [KernelFunction]
+    [ChangesState]
     [Description("Create a new runbook from a name, trigger condition, and structured steps as JSON array. " +
         "Steps format: [{\"Order\":1,\"Description\":\"...\",\"PluginName\":\"Docker\",\"FunctionName\":\"ListContainers\",\"Parameters\":{}}]. " +
         "Trust level is auto-determined based on functions used.")]
@@ -94,6 +88,7 @@ public sealed class RunbookPlugin
     }
 
     [KernelFunction]
+    [ChangesState]
     [Description("Execute a runbook by ID. ReadOnly/Conservative steps auto-execute. Risky runbooks require manual confirmation.")]
     public async Task<string> ExecuteRunbook(
         [Description("Runbook ID to execute")] int runbookId,
@@ -283,7 +278,7 @@ public sealed class RunbookPlugin
 
     internal static TrustLevel DetermineTrustLevel(List<RunbookStep> steps)
     {
-        if (steps.Any(s => RiskyFunctions.Contains(s.FunctionName)))
+        if (steps.Any(s => ChangesStateAttribute.FunctionNames.Contains(s.FunctionName)))
         {
             return TrustLevel.Risky;
         }

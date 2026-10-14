@@ -141,6 +141,7 @@ public class DockerPlugin
     }
 
     [KernelFunction]
+    [ChangesState]
     [Description("Starts a stopped container. This is a safe operation.")]
     public virtual async Task<string> StartContainer([Description("Container name or ID")] string containerName)
     {
@@ -166,6 +167,7 @@ public class DockerPlugin
     }
 
     [KernelFunction]
+    [ChangesState]
     [Description("Stops a running container. DANGEROUS: Ask for confirmation before executing.")]
     public async Task<string> StopContainer([Description("Container name or ID")] string containerName)
     {
@@ -194,6 +196,7 @@ public class DockerPlugin
     }
 
     [KernelFunction]
+    [ChangesState]
     [Description("Restarts a container. DANGEROUS: Ask for confirmation before executing.")]
     public virtual async Task<string> RestartContainer([Description("Container name or ID")] string containerName)
     {

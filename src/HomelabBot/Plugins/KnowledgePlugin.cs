@@ -29,6 +29,7 @@ public sealed class KnowledgePlugin
     }
 
     [KernelFunction]
+    [ChangesState]
     [Description("Remember a single atomic fact about the homelab. Keep facts small and specific (1-2 sentences max). Call multiple times for multiple facts - don't combine unrelated info into one fact.")]
     public async Task<string> RememberFact(
         [Description("Topic category (e.g., 'docker', 'loki', 'network', 'host', 'service', 'alias:mac', 'alias:container')")] string topic,
@@ -92,6 +93,7 @@ public sealed class KnowledgePlugin
     }
 
     [KernelFunction]
+    [ChangesState]
     [Description("Learn a correction from the user. Call this when the user tells you something you knew was wrong.")]
     public async Task<string> LearnCorrection(
         [Description("Topic being corrected")] string topic,
@@ -123,6 +125,7 @@ public sealed class KnowledgePlugin
     }
 
     [KernelFunction]
+    [ChangesState]
     [Description("Store a device alias for natural language references. Use format 'name → value'.")]
     public async Task<string> StoreAlias(
         [Description("Alias type: 'mac', 'container', or 'entity'")] string aliasType,
@@ -139,6 +142,7 @@ public sealed class KnowledgePlugin
     }
 
     [KernelFunction]
+    [ChangesState]
     [Description("Mark a piece of knowledge as outdated/invalid.")]
     public async Task<string> InvalidateKnowledge(
         [Description("Topic of the knowledge")] string topic,

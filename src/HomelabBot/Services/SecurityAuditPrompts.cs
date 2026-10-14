@@ -2,10 +2,11 @@ namespace HomelabBot.Services;
 
 internal static class SecurityAuditPrompts
 {
-    internal const string System = """
+    internal const string System = $"""
         You are a homelab security auditor. You perform comprehensive security assessments
         of all systems, identify vulnerabilities and misconfigurations, and produce actionable reports.
         Use the available tools to inspect each system. If a tool call fails, note it as a gap and move on.
+        {ScheduledPrompts.ReadOnlyToolsRule}
         """;
 
     internal const string Investigation = """

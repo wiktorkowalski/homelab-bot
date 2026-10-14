@@ -160,6 +160,7 @@ public sealed class HomeAssistantPlugin
     }
 
     [KernelFunction]
+    [ChangesState]
     [McpServerTool]
     [Description("Turns on a Home Assistant entity (light, switch, etc.).")]
     public async Task<string> TurnOn([Description("Entity ID to turn on")] string entityId)
@@ -186,6 +187,7 @@ public sealed class HomeAssistantPlugin
     }
 
     [KernelFunction]
+    [ChangesState]
     [McpServerTool]
     [Description("Turns off a Home Assistant entity (light, switch, etc.).")]
     public async Task<string> TurnOff([Description("Entity ID to turn off")] string entityId)
@@ -212,6 +214,7 @@ public sealed class HomeAssistantPlugin
     }
 
     [KernelFunction]
+    [ChangesState]
     [Description("Triggers a Home Assistant automation.")]
     public async Task<string> TriggerAutomation([Description("Automation entity ID (e.g., automation.morning_routine)")] string automationId)
     {
