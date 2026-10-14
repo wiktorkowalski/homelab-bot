@@ -6,6 +6,8 @@ namespace HomelabBot.Services;
 
 public sealed class DailySummaryService : ScheduledBackgroundService
 {
+    private const string IssueType = "daily_healthcheck";
+
     private readonly IOptionsMonitor<DailySummaryConfiguration> _config;
     private readonly KernelService _kernelService;
     private readonly SmartNotificationService _smartNotification;
@@ -32,12 +34,22 @@ public sealed class DailySummaryService : ScheduledBackgroundService
     protected override TimeSpan GetDelay() =>
         ScheduleHelper.CalculateDelayUntilNextRun(_config.CurrentValue.ScheduleTime, _config.CurrentValue.TimeZone, logger: _logger);
 
-    protected override async Task RunIterationAsync(CancellationToken ct)
+    protected override Task RunIterationAsync(CancellationToken ct) => RunHealthcheckAsync(ct);
+
+    internal async Task RunHealthcheckAsync(CancellationToken ct)
     {
         _logger.LogInformation("Starting daily healthcheck cycle");
 
-        // Start a new notification cycle (clears the old daily context)
+        // Start a new notification cycle (clears the old daily context). Runs even when the
+        // healthcheck is suppressed: the daily thread must still rotate.
         _smartNotification.StartNewCycle();
+
+        // The healthcheck costs ~45-100k tokens; a suppressed result would be dropped anyway.
+        if (await _smartNotification.IsSuppressedAsync(IssueType))
+        {
+            _logger.LogInformation("Issue type '{IssueType}' is suppressed, skipping the daily healthcheck run", IssueType);
+            return;
+        }
 
         // Run the full healthcheck investigation and route through smart notification
         try
@@ -58,7 +70,7 @@ public sealed class DailySummaryService : ScheduledBackgroundService
                     Source = "daily_healthcheck",
                     Summary = "Daily healthcheck completed. Review the findings below.",
                     RawData = report,
-                    IssueType = "daily_healthcheck",
+                    IssueType = IssueType,
                     AlreadyInvestigated = true,
                 },
                 ct);

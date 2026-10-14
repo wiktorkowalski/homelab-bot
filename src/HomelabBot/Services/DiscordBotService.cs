@@ -1,3 +1,4 @@
+using System.Globalization;
 using DSharpPlus;
 using DSharpPlus.Entities;
 using DSharpPlus.EventArgs;
@@ -274,10 +275,21 @@ public sealed class DiscordBotService : BackgroundService
                 return;
             }
 
-            if (customId.StartsWith(SmartNotificationService.ButtonPrefixNormal)
-                || customId.StartsWith(SmartNotificationService.ButtonPrefixInvestigate))
+            if (customId.StartsWith(SmartNotificationService.ButtonPrefixNormal, StringComparison.Ordinal))
             {
                 await HandleNotificationFeedbackAsync(e);
+                return;
+            }
+
+            if (customId.StartsWith(SmartNotificationService.ButtonPrefixRemovePreference, StringComparison.Ordinal))
+            {
+                await HandleRemovePreferenceAsync(e);
+                return;
+            }
+
+            if (customId.StartsWith(SmartNotificationService.ButtonPrefixInvestigate, StringComparison.Ordinal))
+            {
+                await HandleRetiredButtonAsync(e);
                 return;
             }
 
@@ -337,34 +349,84 @@ public sealed class DiscordBotService : BackgroundService
                 .AsEphemeral());
     }
 
-    private async Task HandleNotificationFeedbackAsync(ComponentInteractionCreateEventArgs e)
+    // Old DMs still carry the removed "Investigate further" button. A click must still get an
+    // answer, or Discord shows "This interaction failed".
+    private async Task HandleRetiredButtonAsync(ComponentInteractionCreateEventArgs e)
     {
-        var customId = e.Interaction.Data.CustomId;
-        var isSuppress = customId.StartsWith(SmartNotificationService.ButtonPrefixNormal);
-        var prefix = isSuppress ? SmartNotificationService.ButtonPrefixNormal : SmartNotificationService.ButtonPrefixInvestigate;
-        var hash = customId[prefix.Length..];
+        _logger.LogDebug("Retired button {CustomId} clicked", e.Interaction.Data.CustomId);
+        await e.Interaction.CreateResponseAsync(
+            InteractionResponseType.ChannelMessageWithSource,
+            new DiscordInteractionResponseBuilder()
+                .WithContent("This button is no longer used.")
+                .AsEphemeral());
+    }
+
+    // A "Remove" button of the /preferences list: remove the row, then redraw the list in place.
+    private async Task HandleRemovePreferenceAsync(ComponentInteractionCreateEventArgs e)
+    {
+        if (e.User.Id != HomelabOwner.DiscordUserId)
+        {
+            _logger.LogInformation("Preference removal refused for {UserId}: not the owner", e.User.Id);
+            await e.Interaction.CreateResponseAsync(
+                InteractionResponseType.ChannelMessageWithSource,
+                new DiscordInteractionResponseBuilder()
+                    .WithContent("Only the owner can manage notification preferences.")
+                    .AsEphemeral());
+            return;
+        }
 
         try
         {
-            if (isSuppress)
-            {
-                await SmartNotification.HandleSuppressFeedbackAsync(
-                    hash, "Marked as normal via button feedback");
+            var idText = e.Interaction.Data.CustomId[SmartNotificationService.ButtonPrefixRemovePreference.Length..];
+            var removed = int.TryParse(idText, NumberStyles.None, CultureInfo.InvariantCulture, out var id)
+                ? await SmartNotification.RemovePreferenceAsync(id)
+                : null;
 
-                await e.Interaction.CreateResponseAsync(
-                    InteractionResponseType.ChannelMessageWithSource,
-                    new DiscordInteractionResponseBuilder()
-                        .WithContent("✅ Got it, I'll suppress similar notifications in the future.")
-                        .AsEphemeral());
-            }
-            else
+            var notice = removed != null
+                ? $"Removed `{SmartNotificationService.DescribePreference(removed)}`."
+                : "That preference was already removed.";
+            var preferences = await SmartNotification.ListPreferencesAsync();
+
+            // Facts can come from the model, so they must not ping anyone.
+            await e.Interaction.CreateResponseAsync(
+                InteractionResponseType.UpdateMessage,
+                new DiscordInteractionResponseBuilder()
+                    .WithContent(NotificationPreferencesView.Content(preferences, notice))
+                    .AddComponents(NotificationPreferencesView.Components(preferences))
+                    .AddMentions(Mentions.None));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to remove notification preference");
+            try
             {
                 await e.Interaction.CreateResponseAsync(
                     InteractionResponseType.ChannelMessageWithSource,
                     new DiscordInteractionResponseBuilder()
-                        .WithContent("🔍 Noted. Feel free to ask me follow-up questions about this issue.")
+                        .WithContent("Something went wrong removing the preference.")
                         .AsEphemeral());
             }
+            catch (Exception innerEx)
+            {
+                _logger.LogWarning(innerEx, "Failed to send error response for interaction");
+            }
+        }
+    }
+
+    private async Task HandleNotificationFeedbackAsync(ComponentInteractionCreateEventArgs e)
+    {
+        var payload = e.Interaction.Data.CustomId[SmartNotificationService.ButtonPrefixNormal.Length..];
+
+        try
+        {
+            var scope = await SmartNotification.HandleSuppressFeedbackAsync(
+                payload, "Marked as normal via button feedback");
+
+            await e.Interaction.CreateResponseAsync(
+                InteractionResponseType.ChannelMessageWithSource,
+                new DiscordInteractionResponseBuilder()
+                    .WithContent($"✅ Got it, I'll suppress {scope}. Use /preferences to undo.")
+                    .AsEphemeral());
         }
         catch (Exception ex)
         {
@@ -712,20 +774,13 @@ public sealed class DiscordBotService : BackgroundService
     }
 
     // Buttons only, nothing the owner would ask about: not recorded.
-    public Task SendDmNotificationFeedbackAsync(ulong userId, string issueHash) =>
+    public Task SendDmNotificationFeedbackAsync(ulong userId, string buttonId) =>
         SendDmMessageAsync(
             userId,
             new DiscordMessageBuilder()
                 .WithContent("Was this notification useful?")
                 .AddComponents(
-                    new DiscordButtonComponent(
-                        ButtonStyle.Secondary,
-                        $"{SmartNotificationService.ButtonPrefixNormal}{issueHash}",
-                        "Normal, ignore in future"),
-                    new DiscordButtonComponent(
-                        ButtonStyle.Primary,
-                        $"{SmartNotificationService.ButtonPrefixInvestigate}{issueHash}",
-                        "Investigate further")),
+                    new DiscordButtonComponent(ButtonStyle.Secondary, buttonId, "Normal, ignore in future")),
             recordText: null);
 
     public async Task<(ulong ThreadId, ulong MessageId)?> CreateThreadInChannelAsync(

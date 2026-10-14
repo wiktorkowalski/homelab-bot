@@ -82,6 +82,7 @@ public sealed class HealthScoreBackgroundService : ScheduledBackgroundService
                     Summary = $"Health score dropped {previousScore.Value - result.Score} points ({previousScore.Value} → {result.Score})",
                     RawData = rawData,
                     IssueType = "health_score_drop",
+                    Kinds = DeductionKinds(result),
                 },
                 ct);
 
@@ -153,6 +154,23 @@ public sealed class HealthScoreBackgroundService : ScheduledBackgroundService
         var totalDeductions = deductions.Sum();
 
         return totalDeductions;
+    }
+
+    // The categories with deductions are the kinds of a score drop: "Normal, ignore in future"
+    // then mutes drops from these categories only.
+    internal static List<string> DeductionKinds(Models.HealthScoreResult result)
+    {
+        (string Kind, int Deduction)[] categories =
+        [
+            ("alerts", result.AlertDeductions),
+            ("containers", result.ContainerDeductions),
+            ("pools", result.PoolDeductions),
+            ("monitoring", result.MonitoringDeductions),
+            ("connectivity", result.ConnectivityDeductions),
+            ("blast_radius", result.BlastRadiusDeductions),
+        ];
+
+        return [.. categories.Where(c => c.Deduction > 0).Select(c => c.Kind)];
     }
 
     private static string BuildBreakdown(Models.HealthScoreResult result)

@@ -899,6 +899,7 @@ public sealed class AnomalyDetectionService : BackgroundService
                 Summary = summary,
                 RawData = anomalySummary.ToString(),
                 IssueType = issueType,
+                Kinds = [.. anomalies.Select(a => a.Type).Distinct(StringComparer.OrdinalIgnoreCase)],
                 NeverSuppress = hasCritical,
             },
             ct);
