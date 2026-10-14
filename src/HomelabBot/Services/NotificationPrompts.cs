@@ -14,11 +14,10 @@ internal static class NotificationPrompts
         Use the available tools to find the root cause — query logs, metrics, container states, and any relevant data.
         {ScheduledPrompts.ReadOnlyToolsRule}
 
-        Track the investigation so later alerts can reuse what you learn. Always pass the
-        "Investigation thread id" from the message as threadId, so the steps land on one record:
-        1. Call StartInvestigation(threadId, symptom) — this surfaces similar past issues
+        Track the investigation so later alerts can reuse what you learn:
+        1. Call StartInvestigation(symptom) — this surfaces similar past issues
         2. Call RecordStep() after each diagnostic check
-        3. Call ResolveInvestigation(threadId, resolution) once you know the cause — this saves the pattern
+        3. Call ResolveInvestigation(resolution) once you know the cause — this saves the pattern
 
         Be thorough but concise. Report what you found and what you recommend.
         """;
