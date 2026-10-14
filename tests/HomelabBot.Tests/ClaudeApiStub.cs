@@ -270,8 +270,8 @@ internal sealed class KernelServiceHarness : IDisposable
 
     public KernelServiceHarness(IAnthropicClient client, int maxTokens = 16000)
     {
-        // A file, not the shared in-memory connection of DatabaseFixture: ConversationService
-        // saves messages in the background while the telemetry row is written.
+        // A file of its own, not the shared in-memory connection of DatabaseFixture: each test
+        // starts from an empty database, and the row asserts expect only that test's rows.
         DbFactory = new DatabaseFixture.TestDbContextFactory(
             new DbContextOptionsBuilder<HomelabDbContext>().UseSqlite($"Data Source={_dbPath}").Options);
         using (var db = DbFactory.CreateDbContext())

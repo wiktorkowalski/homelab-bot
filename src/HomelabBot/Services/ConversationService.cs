@@ -336,8 +336,7 @@ public sealed class ConversationService
 
     // The function-invocation loop (KernelService) appends tool results straight into the cached
     // history, so they are capped here, at the next Add* call, before any later request re-sends them.
-    // A tool message holds the result as a FunctionResultContent (sent to the model). A history
-    // built by hand can also hold it as a TextContent. Both get capped.
+    // A tool message holds each result as a FunctionResultContent and no text.
     // Rewriting a stored turn is safe for the API because stored turns carry no thinking blocks:
     // the bridge drops them when it converts a response into chat history.
     internal static int TruncateToolResults(ChatHistory history, int maxChars)
@@ -354,20 +353,14 @@ public sealed class ConversationService
             var changed = false;
             for (var i = 0; i < message.Items.Count; i++)
             {
-                switch (message.Items[i])
+                // Result is get-only, so swap in a new item with the same call id; the id pairs
+                // it with the assistant's tool call and must survive.
+                if (message.Items[i] is FunctionResultContent result
+                    && ResultText(result) is { } body && body.Length > maxChars)
                 {
-                    case TextContent text when text.Text is { } body && body.Length > maxChars:
-                        text.Text = Truncate(body, maxChars);
-                        changed = true;
-                        break;
-
-                    // Result is get-only, so swap in a new item with the same call id; the id pairs
-                    // it with the assistant's tool call and must survive.
-                    case FunctionResultContent result when ResultText(result) is { } body && body.Length > maxChars:
-                        message.Items[i] = new FunctionResultContent(
-                            result.FunctionName, result.PluginName, result.CallId, Truncate(body, maxChars));
-                        changed = true;
-                        break;
+                    message.Items[i] = new FunctionResultContent(
+                        result.FunctionName, result.PluginName, result.CallId, Truncate(body, maxChars));
+                    changed = true;
                 }
             }
 
@@ -425,29 +418,25 @@ public sealed class ConversationService
 
     internal static int EstimateTokens(ChatMessageContent message)
     {
-        var textChars = 0;
-        var resultChars = 0;
-        var callChars = 0;
-        var hasText = false;
+        var chars = 0;
 
         foreach (var item in message.Items)
         {
             switch (item)
             {
                 case TextContent text:
-                    textChars += text.Text?.Length ?? 0;
-                    hasText = true;
+                    chars += text.Text?.Length ?? 0;
                     break;
                 case FunctionResultContent result:
-                    resultChars += ResultText(result)?.Length ?? 0;
+                    chars += ResultText(result)?.Length ?? 0;
                     break;
                 case FunctionCallContent call:
-                    callChars += call.FunctionName.Length;
+                    chars += call.FunctionName.Length;
                     if (call.Arguments is not null)
                     {
                         foreach (var arg in call.Arguments)
                         {
-                            callChars += arg.Key.Length + (arg.Value?.ToString()?.Length ?? 0);
+                            chars += arg.Key.Length + (arg.Value?.ToString()?.Length ?? 0);
                         }
                     }
 
@@ -455,8 +444,7 @@ public sealed class ConversationService
             }
         }
 
-        // A tool message can carry the same result as text and as FunctionResultContent; count it once.
-        return (callChars + (hasText ? textChars : resultChars)) / 4;
+        return chars / 4;
     }
 
     private static int LastUserIndex(ChatHistory history)

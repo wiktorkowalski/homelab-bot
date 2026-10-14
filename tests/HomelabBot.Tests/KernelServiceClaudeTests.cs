@@ -266,6 +266,34 @@ public sealed class KernelServiceClaudeTests : IDisposable
     }
 
     [Fact]
+    public async Task ProcessMessage_StoresTheUserAndAssistantRows()
+    {
+        _handler.Enqueue(ClaudeResponses.Text("ok"));
+
+        await _service.ProcessMessageAsync(ThreadId, "hi");
+
+        var rows = await StoredMessagesAsync();
+        Assert.Equal(["user", "assistant"], rows.Select(m => m.Role));
+        Assert.Equal(["hi", "ok"], rows.Select(m => m.Content));
+    }
+
+    // The caller's token is dead when the failed turn is closed; the row must still be written.
+    [Fact]
+    public async Task CancelAfterAToolRan_StoresTheFailedTurnRow()
+    {
+        using var caller = new CancellationTokenSource();
+        _handler.Enqueue(ClaudeResponses.ToolUse(tools: "Test_Restart")).EnqueueCallerCancel(caller);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => _service.ProcessMessageAsync(ThreadId, "restart it", ct: caller.Token));
+
+        var last = (await StoredMessagesAsync())[^1];
+        Assert.Equal("assistant", last.Role);
+        Assert.StartsWith("The request was cancelled", last.Content, StringComparison.Ordinal);
+        Assert.Contains("Test.Restart", last.Content, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task RefusalAfterAToolCall_DoesNotRunTheTool_AndIsReported()
     {
         _handler.Enqueue(ClaudeResponses.RefusalAfterToolUse("Test_Restart"));
@@ -427,6 +455,12 @@ public sealed class KernelServiceClaudeTests : IDisposable
     {
         await using var db = _dbFactory.CreateDbContext();
         return await db.LlmInteractions.SingleAsync();
+    }
+
+    private async Task<List<ConversationMessage>> StoredMessagesAsync()
+    {
+        await using var db = _dbFactory.CreateDbContext();
+        return await db.ConversationMessages.OrderBy(m => m.Id).ToListAsync();
     }
 
     private async Task<List<ToolCallLog>> ToolCallsAsync()

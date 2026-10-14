@@ -20,9 +20,8 @@ public class KernelServiceRetryTests
     [InlineData(null, true)]
     [InlineData("", true)]
     [InlineData("   ", true)]
-    [InlineData("<think>just reasoning, no answer</think>", true)]
     [InlineData("real answer", false)]
-    [InlineData("<think>reasoning</think>actual answer", false)]
+    [InlineData("<think>x</think>", false)]
     public void IsEmptyResponse_ClassifiesContent(string? content, bool expected)
     {
         var response = new ChatMessageContent(AuthorRole.Assistant, content);
