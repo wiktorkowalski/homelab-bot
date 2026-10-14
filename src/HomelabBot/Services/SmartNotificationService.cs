@@ -13,6 +13,8 @@ public sealed class SmartNotificationService
     private const string TopicPrefixAlways = "notification_preference:always:";
     internal const string TopicPrefix = "notification_preference";
     internal const string ButtonPrefixNormal = "notif_normal_";
+
+    // Retired: no longer sent, but old DMs still carry it and a click must get an answer.
     internal const string ButtonPrefixInvestigate = "notif_investigate_";
 
     private readonly KernelService _kernelService;

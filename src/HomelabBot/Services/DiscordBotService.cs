@@ -274,10 +274,15 @@ public sealed class DiscordBotService : BackgroundService
                 return;
             }
 
-            if (customId.StartsWith(SmartNotificationService.ButtonPrefixNormal)
-                || customId.StartsWith(SmartNotificationService.ButtonPrefixInvestigate))
+            if (customId.StartsWith(SmartNotificationService.ButtonPrefixNormal, StringComparison.Ordinal))
             {
                 await HandleNotificationFeedbackAsync(e);
+                return;
+            }
+
+            if (customId.StartsWith(SmartNotificationService.ButtonPrefixInvestigate, StringComparison.Ordinal))
+            {
+                await HandleRetiredButtonAsync(e);
                 return;
             }
 
@@ -337,34 +342,32 @@ public sealed class DiscordBotService : BackgroundService
                 .AsEphemeral());
     }
 
+    // Old DMs still carry the removed "Investigate further" button. A click must still get an
+    // answer, or Discord shows "This interaction failed".
+    private async Task HandleRetiredButtonAsync(ComponentInteractionCreateEventArgs e)
+    {
+        _logger.LogDebug("Retired button {CustomId} clicked", e.Interaction.Data.CustomId);
+        await e.Interaction.CreateResponseAsync(
+            InteractionResponseType.ChannelMessageWithSource,
+            new DiscordInteractionResponseBuilder()
+                .WithContent("This button is no longer used.")
+                .AsEphemeral());
+    }
+
     private async Task HandleNotificationFeedbackAsync(ComponentInteractionCreateEventArgs e)
     {
-        var customId = e.Interaction.Data.CustomId;
-        var isSuppress = customId.StartsWith(SmartNotificationService.ButtonPrefixNormal);
-        var prefix = isSuppress ? SmartNotificationService.ButtonPrefixNormal : SmartNotificationService.ButtonPrefixInvestigate;
-        var hash = customId[prefix.Length..];
+        var hash = e.Interaction.Data.CustomId[SmartNotificationService.ButtonPrefixNormal.Length..];
 
         try
         {
-            if (isSuppress)
-            {
-                await SmartNotification.HandleSuppressFeedbackAsync(
-                    hash, "Marked as normal via button feedback");
+            await SmartNotification.HandleSuppressFeedbackAsync(
+                hash, "Marked as normal via button feedback");
 
-                await e.Interaction.CreateResponseAsync(
-                    InteractionResponseType.ChannelMessageWithSource,
-                    new DiscordInteractionResponseBuilder()
-                        .WithContent("✅ Got it, I'll suppress similar notifications in the future.")
-                        .AsEphemeral());
-            }
-            else
-            {
-                await e.Interaction.CreateResponseAsync(
-                    InteractionResponseType.ChannelMessageWithSource,
-                    new DiscordInteractionResponseBuilder()
-                        .WithContent("🔍 Noted. Feel free to ask me follow-up questions about this issue.")
-                        .AsEphemeral());
-            }
+            await e.Interaction.CreateResponseAsync(
+                InteractionResponseType.ChannelMessageWithSource,
+                new DiscordInteractionResponseBuilder()
+                    .WithContent("✅ Got it, I'll suppress similar notifications in the future.")
+                    .AsEphemeral());
         }
         catch (Exception ex)
         {
@@ -721,11 +724,7 @@ public sealed class DiscordBotService : BackgroundService
                     new DiscordButtonComponent(
                         ButtonStyle.Secondary,
                         $"{SmartNotificationService.ButtonPrefixNormal}{issueHash}",
-                        "Normal, ignore in future"),
-                    new DiscordButtonComponent(
-                        ButtonStyle.Primary,
-                        $"{SmartNotificationService.ButtonPrefixInvestigate}{issueHash}",
-                        "Investigate further")),
+                        "Normal, ignore in future")),
             recordText: null);
 
     public async Task<(ulong ThreadId, ulong MessageId)?> CreateThreadInChannelAsync(
