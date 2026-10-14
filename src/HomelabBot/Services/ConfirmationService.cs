@@ -5,204 +5,220 @@ using DSharpPlus.EventArgs;
 
 namespace HomelabBot.Services;
 
+internal enum ConfirmationClick
+{
+    Answered,
+    NotYours,
+    Unknown,
+}
+
+// The Discord side of ToolConfirmationFilter: a message with Approve and Reject buttons in the
+// channel of the turn, answered by the user who started the turn.
 public sealed class ConfirmationService
 {
-    private readonly ConcurrentDictionary<string, PendingConfirmation> _pendingConfirmations = new();
+    internal const string ApprovePrefix = "toolconfirm_approve_";
+    internal const string RejectPrefix = "toolconfirm_reject_";
+
+    internal static readonly TimeSpan Timeout = TimeSpan.FromMinutes(5);
+
+    private readonly ConcurrentDictionary<string, PendingConfirmation> _pending = new(StringComparer.Ordinal);
     private readonly ILogger<ConfirmationService> _logger;
-    private readonly TimeSpan _confirmationTimeout = TimeSpan.FromMinutes(2);
+    private readonly TimeSpan _timeout;
 
     public ConfirmationService(ILogger<ConfirmationService> logger)
+        : this(logger, Timeout)
     {
-        _logger = logger;
     }
 
-    public async Task<(DiscordMessage Message, string ConfirmId)> RequestConfirmationAsync(
-        DiscordChannel channel,
-        string action,
-        string details)
+    // Tests pass a short timeout.
+    internal ConfirmationService(ILogger<ConfirmationService> logger, TimeSpan timeout)
     {
-        var confirmId = Guid.NewGuid().ToString()[..8];
-
-        var embed = new DiscordEmbedBuilder()
-            .WithTitle("Confirmation Required")
-            .WithDescription($"**Action:** {action}\n\n{details}")
-            .WithColor(DiscordColor.Orange)
-            .WithFooter($"Expires in {_confirmationTimeout.TotalMinutes} minutes")
-            .Build();
-
-        var confirmButton = new DiscordButtonComponent(
-            ButtonStyle.Danger,
-            $"confirm_{confirmId}",
-            "Confirm",
-            false,
-            new DiscordComponentEmoji("✅"));
-
-        var cancelButton = new DiscordButtonComponent(
-            ButtonStyle.Secondary,
-            $"cancel_{confirmId}",
-            "Cancel",
-            false,
-            new DiscordComponentEmoji("❌"));
-
-        var builder = new DiscordMessageBuilder()
-            .WithEmbed(embed)
-            .AddComponents(confirmButton, cancelButton);
-
-        var message = await channel.SendMessageAsync(builder);
-
-        var pending = new PendingConfirmation
-        {
-            Action = action,
-            Details = details,
-            Message = message,
-            ExpiresAt = DateTime.UtcNow + _confirmationTimeout
-        };
-
-        _pendingConfirmations[confirmId] = pending;
-
-        _logger.LogInformation("Created confirmation request {ConfirmId} for action: {Action}", confirmId, action);
-
-        // Schedule cleanup
-        _ = Task.Run(async () =>
-        {
-            try
-            {
-                await Task.Delay(_confirmationTimeout);
-                if (_pendingConfirmations.TryRemove(confirmId, out var expired))
-                {
-                    _logger.LogInformation("Confirmation {ConfirmId} expired", confirmId);
-                    await UpdateMessageAsExpired(expired.Message);
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to clean up expired confirmation {ConfirmId}", confirmId);
-            }
-        });
-
-        return (message, confirmId);
+        _logger = logger;
+        _timeout = timeout;
     }
 
     public async Task<bool> HandleInteractionAsync(ComponentInteractionCreateEventArgs e)
     {
         var customId = e.Interaction.Data.CustomId;
-
-        if (!customId.StartsWith("confirm_") && !customId.StartsWith("cancel_"))
+        var approve = customId.StartsWith(ApprovePrefix, StringComparison.Ordinal);
+        if (!approve && !customId.StartsWith(RejectPrefix, StringComparison.Ordinal))
         {
             return false;
         }
 
-        var parts = customId.Split('_');
-        if (parts.Length != 2)
-        {
-            return false;
-        }
+        var id = customId[(approve ? ApprovePrefix : RejectPrefix).Length..];
+        var (click, pending) = Answer(id, e.User.Id, approve);
 
-        var confirmId = parts[1];
-        var isConfirm = parts[0] == "confirm";
-
-        if (!_pendingConfirmations.TryRemove(confirmId, out var pending))
+        if (click != ConfirmationClick.Answered)
         {
+            var text = click == ConfirmationClick.NotYours
+                ? "Only the person who asked for this action can approve or reject it."
+                : "This confirmation has expired or was already answered.";
             await e.Interaction.CreateResponseAsync(
-                InteractionResponseType.UpdateMessage,
-                new DiscordInteractionResponseBuilder()
-                    .WithContent("This confirmation has expired or was already handled.")
-                    .AsEphemeral());
+                InteractionResponseType.ChannelMessageWithSource,
+                new DiscordInteractionResponseBuilder().WithContent(text).AsEphemeral());
             return true;
         }
 
-        if (isConfirm)
+        var decision = approve ? ToolConfirmationDecision.Approved : ToolConfirmationDecision.Declined;
+        try
         {
-            _logger.LogInformation("User {User} confirmed action: {Action}",
-                e.User.Username, pending.Action);
-
-            var embed = new DiscordEmbedBuilder()
-                .WithTitle("Action Confirmed")
-                .WithDescription($"**Action:** {pending.Action}\n\nExecuting...")
-                .WithColor(DiscordColor.Green)
-                .Build();
-
             await e.Interaction.CreateResponseAsync(
                 InteractionResponseType.UpdateMessage,
                 new DiscordInteractionResponseBuilder()
-                    .AddEmbed(embed));
-
-            pending.Confirmed = true;
-            pending.CompletionSource.SetResult(true);
+                    .WithContent(OutcomeText(decision, pending!.Action, e.User.Username))
+                    .AddComponents(Buttons(id, disabled: true)));
         }
-        else
+        catch (Exception ex)
         {
-            _logger.LogInformation("User {User} cancelled action: {Action}",
-                e.User.Username, pending.Action);
-
-            var embed = new DiscordEmbedBuilder()
-                .WithTitle("Action Cancelled")
-                .WithDescription($"**Action:** {pending.Action}\n\nCancelled by user.")
-                .WithColor(DiscordColor.Gray)
-                .Build();
-
-            await e.Interaction.CreateResponseAsync(
-                InteractionResponseType.UpdateMessage,
-                new DiscordInteractionResponseBuilder()
-                    .AddEmbed(embed));
-
-            pending.CompletionSource.SetResult(false);
+            // The decision already stands; only the message still shows live buttons.
+            _logger.LogWarning(ex, "Could not update confirmation message {ConfirmId} after the answer", id);
         }
 
         return true;
     }
 
-    public async Task<bool> WaitForConfirmationAsync(string confirmId, CancellationToken ct = default)
+    // The ask of ToolConfirmationScope for one chat turn. onSent gets the prompt text once it is in
+    // the channel, so an owner DM can record it.
+    internal Func<string, CancellationToken, Task<ToolConfirmationDecision>> AskIn(
+        DiscordChannel channel, ulong userId, Action<string>? onSent) =>
+        (action, ct) => AskAsync(channel, userId, action, onSent, ct);
+
+    internal async Task<ToolConfirmationDecision> AskAsync(
+        DiscordChannel channel, ulong userId, string action, Action<string>? onSent, CancellationToken ct)
     {
-        if (!_pendingConfirmations.TryGetValue(confirmId, out var pending))
+        var pending = Register(userId, action);
+        var prompt = PromptText(action);
+
+        DiscordMessage message;
+        try
         {
-            return false;
+            message = await channel.SendMessageAsync(
+                new DiscordMessageBuilder().WithContent(prompt).AddComponents(Buttons(pending.Id, disabled: false)));
         }
+        catch
+        {
+            _pending.TryRemove(pending.Id, out _);
+            throw;
+        }
+
+        onSent?.Invoke(prompt);
 
         try
         {
-            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            cts.CancelAfter(_confirmationTimeout);
+            var decision = await WaitAsync(pending, ct);
+            if (decision == ToolConfirmationDecision.TimedOut)
+            {
+                await TryEditAsync(message, pending.Id, OutcomeText(decision, action, by: null));
+            }
 
-            return await pending.CompletionSource.Task.WaitAsync(cts.Token);
+            return decision;
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            _logger.LogInformation("Confirmation {ConfirmId} wait was cancelled", confirmId);
-            return false;
+            await TryEditAsync(message, pending.Id, $"🚫 **Cancelled**, did not run\n{Code(action)}");
+            throw;
         }
     }
 
-    private async Task UpdateMessageAsExpired(DiscordMessage message)
+    internal PendingConfirmation Register(ulong userId, string action)
+    {
+        var pending = new PendingConfirmation(Guid.NewGuid().ToString("N"), userId, action);
+        _pending[pending.Id] = pending;
+        return pending;
+    }
+
+    // Removing the entry claims the answer: of a click and the timeout, or of two clicks that
+    // arrive together, only the one that removes it decides.
+    internal (ConfirmationClick Click, PendingConfirmation? Pending) Answer(string id, ulong userId, bool approve)
+    {
+        if (!_pending.TryGetValue(id, out var pending))
+        {
+            return (ConfirmationClick.Unknown, null);
+        }
+
+        if (pending.UserId != userId)
+        {
+            return (ConfirmationClick.NotYours, pending);
+        }
+
+        if (!_pending.TryRemove(id, out _))
+        {
+            return (ConfirmationClick.Unknown, null);
+        }
+
+        pending.Decision.TrySetResult(approve ? ToolConfirmationDecision.Approved : ToolConfirmationDecision.Declined);
+        return (ConfirmationClick.Answered, pending);
+    }
+
+    internal async Task<ToolConfirmationDecision> WaitAsync(PendingConfirmation pending, CancellationToken ct)
     {
         try
         {
-            var embed = new DiscordEmbedBuilder()
-                .WithTitle("Confirmation Expired")
-                .WithDescription("This confirmation request has expired.")
-                .WithColor(DiscordColor.Gray)
-                .Build();
+            return await pending.Decision.Task.WaitAsync(_timeout, ct);
+        }
+        catch (TimeoutException)
+        {
+            // A click that claimed the entry just before the timeout still decides.
+            return _pending.TryRemove(pending.Id, out _) ? ToolConfirmationDecision.TimedOut : await pending.Decision.Task;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            _pending.TryRemove(pending.Id, out _);
+            throw;
+        }
+    }
 
-            await message.ModifyAsync(new DiscordMessageBuilder().WithEmbed(embed));
+    private static string PromptText(string action) =>
+        $"⚠️ **Confirm action**\n{Code(action)}\nApprove or reject within {Timeout.TotalMinutes:0} minutes. Without an answer it does not run.";
+
+    private static string OutcomeText(ToolConfirmationDecision decision, string action, string? by) =>
+        decision switch
+        {
+            ToolConfirmationDecision.Approved => $"✅ **Approved** by {by}\n{Code(action)}",
+            ToolConfirmationDecision.Declined => $"❌ **Rejected** by {by}, did not run\n{Code(action)}",
+            _ => $"⌛ **No answer within {Timeout.TotalMinutes:0} minutes**, did not run\n{Code(action)}",
+        };
+
+    // A backtick in an argument would end the code span early.
+    private static string Code(string action) => $"`{action.Replace('`', '\'')}`";
+
+    private static DiscordComponent[] Buttons(string id, bool disabled) =>
+    [
+        new DiscordButtonComponent(ButtonStyle.Success, $"{ApprovePrefix}{id}", "Approve", disabled),
+        new DiscordButtonComponent(ButtonStyle.Secondary, $"{RejectPrefix}{id}", "Reject", disabled),
+    ];
+
+    private async Task TryEditAsync(DiscordMessage message, string id, string text)
+    {
+        try
+        {
+            await message.ModifyAsync(new DiscordMessageBuilder().WithContent(text).AddComponents(Buttons(id, disabled: true)));
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to update message as expired");
+            _logger.LogWarning(ex, "Could not update confirmation message {ConfirmId}", id);
         }
     }
 
-    private sealed class PendingConfirmation
+    internal sealed class PendingConfirmation
     {
-        public required string Action { get; init; }
+        public PendingConfirmation(string id, ulong userId, string action)
+        {
+            Id = id;
+            UserId = userId;
+            Action = action;
+        }
 
-        public required string Details { get; init; }
+        public string Id { get; }
 
-        public required DiscordMessage Message { get; init; }
+        public ulong UserId { get; }
 
-        public required DateTime ExpiresAt { get; init; }
+        public string Action { get; }
 
-        public bool Confirmed { get; set; }
-
-        public TaskCompletionSource<bool> CompletionSource { get; } = new();
+        // Asynchronous continuations: the waiting turn must not run its tool and the next LLM
+        // round on the Discord event handler that set the result.
+        public TaskCompletionSource<ToolConfirmationDecision> Decision { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 }

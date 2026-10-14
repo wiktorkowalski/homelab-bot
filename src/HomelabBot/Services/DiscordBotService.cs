@@ -540,6 +540,8 @@ public sealed class DiscordBotService : BackgroundService
             string response;
             await using (TypingIndicator.Start(responseChannel.TriggerTypingAsync, _logger))
             {
+                using var confirmation = ToolConfirmationScope.Begin(
+                    _confirmationService.AskIn(responseChannel, e.Author.Id, onSent: null));
                 response = await _kernelService.ProcessMessageAsync(conversationId, content, e.Author.Id);
             }
 
@@ -594,6 +596,8 @@ public sealed class DiscordBotService : BackgroundService
             string response;
             await using (TypingIndicator.Start(e.Channel.TriggerTypingAsync, _logger))
             {
+                using var confirmation = ToolConfirmationScope.Begin(
+                    _confirmationService.AskIn(e.Channel, e.Author.Id, onSent: text => RecordForOwner(e.Author.Id, text)));
                 response = await _kernelService.ProcessMessageAsync(
                     HomelabOwner.DmThreadId, content, e.Author.Id);
             }

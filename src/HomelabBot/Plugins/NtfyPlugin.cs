@@ -28,7 +28,7 @@ public sealed class NtfyPlugin
     }
 
     [KernelFunction]
-    [ChangesState]
+    [ChangesState(RequiresConfirmation = false)]
     [McpServerTool(ReadOnly = false, Destructive = false)]
     [Description("Sends a push notification via ntfy. Can specify topic, title, and priority.")]
     public async Task<string> SendNotification(
@@ -85,7 +85,7 @@ public sealed class NtfyPlugin
     }
 
     [KernelFunction]
-    [ChangesState]
+    [ChangesState(RequiresConfirmation = false)]
     [Description("Sends a notification with action buttons that users can click.")]
     public async Task<string> SendNotificationWithActions(
         [Description("The notification message")] string message,
