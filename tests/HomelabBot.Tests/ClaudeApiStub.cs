@@ -31,17 +31,13 @@ internal static class ClaudeResponses
         int input = 100, int output = 20, int? cacheWrite = 900, int? cacheRead = 0, params string[] tools)
     {
         tools = tools.Length == 0 ? ["Test_Ping"] : tools;
-        var calls = string.Join(
-            ",",
-            tools.Select((name, i) => $$$"""{"type":"tool_use","id":"toolu_{{{i + 1}}}","name":"{{{name}}}","input":{},"caller":{"type":"direct"}}"""));
-
-        return $$"""
-            {"id":"msg_tool","type":"message","role":"assistant","model":"{{Model}}",
-             "content":[{"type":"thinking","thinking":"","signature":"{{Signature}}"},{{calls}}],
-             "stop_reason":"tool_use","stop_sequence":null,
-             "usage":{{Usage(input, output, cacheWrite, cacheRead)}}}
-            """;
+        var calls = string.Join(",", tools.Select((name, i) => ToolCall(i + 1, name, "{}")));
+        return ToolUseMessage(calls, input, output, cacheWrite, cacheRead);
     }
+
+    // One tool call that carries arguments, for tools with required parameters.
+    public static string ToolUseWithInput(string tool, string inputJson) =>
+        ToolUseMessage(ToolCall(1, tool, inputJson), 100, 20, 900, 0);
 
     public static string Text(
         string text = "pong received", int input = 120, int output = 50, int? cacheWrite = 0, int? cacheRead = 900) =>
@@ -91,6 +87,17 @@ internal static class ClaudeResponses
         """;
 
     public static Message Parse(string json) => JsonSerializer.Deserialize<Message>(json)!;
+
+    private static string ToolCall(int id, string name, string inputJson) =>
+        $$$"""{"type":"tool_use","id":"toolu_{{{id}}}","name":"{{{name}}}","input":{{{inputJson}}},"caller":{"type":"direct"}}""";
+
+    private static string ToolUseMessage(string calls, int input, int output, int? cacheWrite, int? cacheRead) =>
+        $$"""
+        {"id":"msg_tool","type":"message","role":"assistant","model":"{{Model}}",
+         "content":[{"type":"thinking","thinking":"","signature":"{{Signature}}"},{{calls}}],
+         "stop_reason":"tool_use","stop_sequence":null,
+         "usage":{{Usage(input, output, cacheWrite, cacheRead)}}}
+        """;
 
     private static string Usage(int input, int output, int? cacheWrite, int? cacheRead)
     {
@@ -268,7 +275,9 @@ internal sealed class KernelServiceHarness : IDisposable
 {
     private readonly string _dbPath = Path.Combine(Path.GetTempPath(), $"homelab-bot-claude-{Guid.NewGuid():N}.db");
 
-    public KernelServiceHarness(IAnthropicClient client, int maxTokens = 16000)
+    // morePlugins runs after DbFactory and Conversations exist, so a plugin can be built on them.
+    public KernelServiceHarness(
+        IAnthropicClient client, int maxTokens = 16000, Action<IKernelBuilderPlugins, KernelServiceHarness>? morePlugins = null)
     {
         // A file of its own, not the shared in-memory connection of DatabaseFixture: each test
         // starts from an empty database, and the row asserts expect only that test's rows.
@@ -291,6 +300,7 @@ internal sealed class KernelServiceHarness : IDisposable
             {
                 plugins.AddFromObject(Plugin, "Test");
                 plugins.AddFromObject(new PingPlugin(), "Other");
+                morePlugins?.Invoke(plugins, this);
             });
     }
 
