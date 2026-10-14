@@ -209,7 +209,7 @@ public class HealingChainServiceTests : IClassFixture<DatabaseFixture>, IDisposa
             harness.Service,
             new RunbookCompilerService(harness.DbFactory, NullLogger<RunbookCompilerService>.Instance),
             new IncidentSimilarityService(harness.DbFactory, NullLogger<IncidentSimilarityService>.Instance),
-            Options.Create(new HealingChainConfiguration()),
+            Options.Create(new HealingChainConfiguration { Enabled = true }),
             logger);
 
     private static List<RunbookStep>? InvokeParseSteps(string response) =>
@@ -217,7 +217,7 @@ public class HealingChainServiceTests : IClassFixture<DatabaseFixture>, IDisposa
 
     private HealingChainService CreateService(HealingChainConfiguration? config = null)
     {
-        config ??= new HealingChainConfiguration();
+        config ??= new HealingChainConfiguration { Enabled = true };
         var runbookCompiler = new RunbookCompilerService(
             _fixture.DbContextFactory,
             NullLogger<RunbookCompilerService>.Instance);
