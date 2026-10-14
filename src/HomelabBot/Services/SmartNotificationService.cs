@@ -21,7 +21,9 @@ public sealed class SmartNotificationService
     private readonly ILogger<SmartNotificationService> _logger;
     private readonly Lock _cycleLock = new();
 
-    private string _currentCycleDate = "";
+    // Start in today's cycle: after a restart the evaluations continue on the daily thread of
+    // today's healthcheck, which ConversationService reloads from the database.
+    private string _currentCycleDate = DateTime.UtcNow.ToString("yyyy-MM-dd");
 
     public SmartNotificationService(
         KernelService kernelService,
@@ -35,13 +37,6 @@ public sealed class SmartNotificationService
         _discordBot = discordBot;
         _knowledgeService = knowledgeService;
         _logger = logger;
-
-        lock (_cycleLock)
-        {
-            // Use yesterday so the first StartNewCycle call always rotates to today,
-            // ensuring cleanup of any orphaned conversation from a previous process.
-            _currentCycleDate = DateTime.UtcNow.AddDays(-1).ToString("yyyy-MM-dd");
-        }
     }
 
     public ulong CurrentDailyThreadId
