@@ -52,7 +52,7 @@ public sealed class RunbookTriggerService
         _logger.LogInformation("Alert {AlertName} matched runbook '{Runbook}' (ID {Id})",
             alert.AlertName, matched.Name, matched.Id);
 
-        if (matched.TrustLevel == TrustLevel.Risky)
+        if (RunbookPlugin.EffectiveTrustLevel(matched) == TrustLevel.Risky)
         {
             _logger.LogWarning("Runbook '{RunbookName}' matched {AlertName} but requires confirmation", matched.Name, alert.AlertName);
             return $"📋 Runbook **{matched.Name}** matched this alert but requires manual confirmation (TrustLevel=Risky). " +

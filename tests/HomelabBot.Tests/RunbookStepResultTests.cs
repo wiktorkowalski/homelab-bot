@@ -56,13 +56,52 @@ public class RunbookStepResultTests : IClassFixture<DatabaseFixture>, IDisposabl
         Assert.DoesNotContain("❌", result);
     }
 
-    private async Task<string> ExecuteAsync(StepKernel kernel, params string[] functions)
+    // Stored before the marks: ReadOnly with a notification step must still wait for confirmation.
+    [Fact]
+    public async Task ExecuteRunbook_StoredReadOnlyWithAStateChangingStep_NeedsConfirmation()
+    {
+        var kernel = new StepKernel();
+
+        var result = await ExecuteAsync(kernel, TrustLevel.ReadOnly, "Works", "SendNotification");
+
+        Assert.Contains("requires manual confirmation", result);
+        Assert.Empty(kernel.Calls);
+    }
+
+    [Fact]
+    public async Task ExecuteRunbook_StoredRiskyWithOnlyReadSteps_StillNeedsConfirmation()
+    {
+        var kernel = new StepKernel();
+
+        var result = await ExecuteAsync(kernel, TrustLevel.Risky, "Works");
+
+        Assert.Contains("requires manual confirmation", result);
+        Assert.Empty(kernel.Calls);
+    }
+
+    [Fact]
+    public async Task ListRunbooks_ShowsTheLevelTheStepsCallFor()
+    {
+        await ExecuteAsync(new StepKernel(), TrustLevel.ReadOnly, "SendNotification");
+
+        var plugin = new RunbookPlugin(_fixture.DbContextFactory, NullLogger<RunbookPlugin>.Instance);
+        var list = await plugin.ListRunbooks();
+
+        Assert.Contains("Trust: Risky", list);
+        Assert.DoesNotContain("Trust: ReadOnly", list);
+    }
+
+    private Task<string> ExecuteAsync(StepKernel kernel, params string[] functions) =>
+        ExecuteAsync(kernel, TrustLevel.ReadOnly, functions);
+
+    private async Task<string> ExecuteAsync(StepKernel kernel, TrustLevel trustLevel, params string[] functions)
     {
         var runbook = new Runbook
         {
             Name = "test",
             TriggerCondition = "alertname=Test",
             StepsJson = JsonSerializer.Serialize(StepKernel.Steps(functions)),
+            TrustLevel = trustLevel,
         };
 
         await using (var db = await _fixture.DbContextFactory.CreateDbContextAsync())
