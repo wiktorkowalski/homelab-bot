@@ -16,10 +16,8 @@ public sealed class ConversationHistoryBudgetTests
     private static void AddToolTurn(ChatHistory history, string callId, string result)
     {
         history.Add(new ChatMessageContent(AuthorRole.Assistant, [new FunctionCallContent("Recall", "Knowledge", callId)]));
-        // Same shape SK's FunctionCallsProcessor builds: text content plus FunctionResultContent.
-        var toolMessage = new ChatMessageContent(AuthorRole.Tool, result);
-        toolMessage.Items.Add(new FunctionResultContent("Recall", "Knowledge", callId, result));
-        history.Add(toolMessage);
+        // Same shape the function-invocation loop stores: FunctionResultContent only, no text.
+        history.Add(new ChatMessageContent(AuthorRole.Tool, [new FunctionResultContent("Recall", "Knowledge", callId, result)]));
     }
 
     [Fact]
@@ -32,13 +30,12 @@ public sealed class ConversationHistoryBudgetTests
 
         Assert.Equal(1, count);
         var tool = history[2];
-        Assert.StartsWith(new string('a', 900), tool.Content);
-        Assert.EndsWith(" of 10000 chars]", tool.Content);
         Assert.True(ConversationService.EstimateTokens(tool) < 300);
-        var result = Assert.IsType<FunctionResultContent>(tool.Items[1]);
+        var result = Assert.IsType<FunctionResultContent>(Assert.Single(tool.Items));
         Assert.Equal("call-1", result.CallId);
         var text = Assert.IsType<string>(result.Result);
-        Assert.Equal(tool.Content, text);
+        Assert.StartsWith(new string('a', 900), text);
+        Assert.EndsWith(" of 10000 chars]", text);
 
         // The marker is part of the 1000 chars and says how many chars of the result are left.
         Assert.True(text.Length <= 1_000);
@@ -55,7 +52,7 @@ public sealed class ConversationHistoryBudgetTests
         var count = ConversationService.TruncateToolResults(history, 8_000);
 
         Assert.Equal(0, count);
-        Assert.True(history[2].Content!.Length <= 8_000);
+        Assert.True(((string)((FunctionResultContent)history[2].Items[0]).Result!).Length <= 8_000);
     }
 
     [Fact]
@@ -67,8 +64,7 @@ public sealed class ConversationHistoryBudgetTests
         var count = ConversationService.TruncateToolResults(history, 1_000);
 
         Assert.Equal(0, count);
-        Assert.Equal("small", history[2].Content);
-        Assert.Equal("small", ((FunctionResultContent)history[2].Items[1]).Result);
+        Assert.Equal("small", ((FunctionResultContent)history[2].Items[0]).Result);
     }
 
     [Fact]
@@ -236,21 +232,22 @@ public sealed class ConversationHistoryBudgetTests
     }
 
     [Fact]
-    public void EstimateTokens_CountsToolResultOnce()
-    {
-        var text = new string('z', 4_000);
-        var message = new ChatMessageContent(AuthorRole.Tool, text);
-        message.Items.Add(new FunctionResultContent("Recall", "Knowledge", "c", text));
-
-        Assert.Equal(1_000, ConversationService.EstimateTokens(message));
-    }
-
-    [Fact]
-    public void EstimateTokens_CountsBareToolResult()
+    public void EstimateTokens_CountsToolResult()
     {
         var message = new ChatMessageContent(
             AuthorRole.Tool, [new FunctionResultContent("Recall", "Knowledge", "c", new string('z', 4_000))]);
 
         Assert.Equal(1_000, ConversationService.EstimateTokens(message));
+    }
+
+    [Fact]
+    public void EstimateTokens_CountsTextAndToolCallOfOneMessage()
+    {
+        var message = new ChatMessageContent(
+            AuthorRole.Assistant,
+            [new TextContent(new string('t', 400)), new FunctionCallContent("Recall", "Knowledge", "c")]);
+
+        // 400 chars of text plus 6 of the function name.
+        Assert.Equal(101, ConversationService.EstimateTokens(message));
     }
 }
