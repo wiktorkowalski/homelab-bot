@@ -79,6 +79,7 @@ public sealed class KernelServiceClaudeTests : IDisposable
     [Fact]
     public async Task ChatRun_KeepsToolsThatChangeState()
     {
+        using var approval = ApproveEveryTool();
         _handler
             .Enqueue(ClaudeResponses.ToolUse(tools: "Test_Restart"))
             .Enqueue(ClaudeResponses.Text("restarted"));
@@ -91,6 +92,7 @@ public sealed class KernelServiceClaudeTests : IDisposable
     [Fact]
     public async Task MultiRoundToolInteraction_AnswersAndStoresUsageOfEveryRound()
     {
+        using var approval = ApproveEveryTool();
         _handler
             .Enqueue(ClaudeResponses.ToolUse(input: 100, output: 20, cacheWrite: 900, cacheRead: 0))
             .Enqueue(ClaudeResponses.ToolUse(input: 110, output: 25, cacheWrite: 60, cacheRead: 900, tools: "Test_Restart"))
@@ -219,6 +221,7 @@ public sealed class KernelServiceClaudeTests : IDisposable
     [Fact]
     public async Task EmptyResponse_AfterAToolRan_IsNotRetried()
     {
+        using var approval = ApproveEveryTool();
         _handler.Enqueue(ClaudeResponses.ToolUse(tools: "Test_Restart")).Enqueue(ClaudeResponses.EmptyAtMaxTokens());
 
         var answer = await _service.ProcessMessageAsync(ThreadId, "restart it");
@@ -247,6 +250,7 @@ public sealed class KernelServiceClaudeTests : IDisposable
     [Fact]
     public async Task ServerErrorInRoundTwo_ThatStays_DoesNotRunTheToolAgain_AndKeepsTheBilledRound()
     {
+        using var approval = ApproveEveryTool();
         _handler.Enqueue(ClaudeResponses.ToolUse(tools: "Test_Restart")).EnqueueStatus(500, times: 9);
 
         var answer = await _service.ProcessMessageAsync(ThreadId, "restart it");
@@ -269,6 +273,7 @@ public sealed class KernelServiceClaudeTests : IDisposable
     [Fact]
     public async Task FailureAfterAToolRan_IsRememberedOnTheNextTurn()
     {
+        using var approval = ApproveEveryTool();
         _handler.Enqueue(ClaudeResponses.ToolUse(tools: "Test_Restart")).EnqueueStatus(500, times: 3).Enqueue(ClaudeResponses.Text("already done"));
         var failure = await _service.ProcessMessageAsync(ThreadId, "restart it");
 
@@ -299,6 +304,7 @@ public sealed class KernelServiceClaudeTests : IDisposable
     [Fact]
     public async Task CancelAfterAToolRan_Rethrows_AndIsRememberedOnTheNextTurn()
     {
+        using var approval = ApproveEveryTool();
         using var caller = new CancellationTokenSource();
         _handler.Enqueue(ClaudeResponses.ToolUse(tools: "Test_Restart")).EnqueueCallerCancel(caller).Enqueue(ClaudeResponses.Text("ok"));
 
@@ -349,6 +355,7 @@ public sealed class KernelServiceClaudeTests : IDisposable
     [Fact]
     public async Task CancelAfterAToolRan_StoresTheFailedTurnRow()
     {
+        using var approval = ApproveEveryTool();
         using var caller = new CancellationTokenSource();
         _handler.Enqueue(ClaudeResponses.ToolUse(tools: "Test_Restart")).EnqueueCallerCancel(caller);
 
@@ -516,6 +523,10 @@ public sealed class KernelServiceClaudeTests : IDisposable
         Assert.Equal("execute_tool Test_Ping", tool.DisplayName);
         Assert.Equal("Test_Ping", tool.GetTagItem("gen_ai.tool.name"));
     }
+
+    // Synchronous: the scope must be set in the test's own flow (see TokenUsageScope).
+    private static ToolConfirmationScope ApproveEveryTool() =>
+        ToolConfirmationScope.Begin((_, _) => Task.FromResult(ToolConfirmationDecision.Approved));
 
     private List<JsonObject> Requests() => _handler.Requests;
 

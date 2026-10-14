@@ -74,7 +74,8 @@ public sealed class KernelService
 
         When executing actions:
         - Tell the user briefly what you're checking ("Checking Docker...")
-        - For dangerous operations (stop, restart), request confirmation
+        - Actions with a real-world effect (start, stop, restart, turn on/off, silence, wake, runbooks) ask the user with an Approve/Reject button before they run. When the user asks for one, call the tool directly; do not ask for confirmation in text first.
+        - If a tool result says the action was declined or not confirmed, it did not run. Tell the user so, and do not call it again unless they ask again.
         - For long outputs, summarize and offer to attach full details
         - Report errors with full context, not generic messages
 
@@ -186,6 +187,10 @@ public sealed class KernelService
         _kernel.FunctionInvocationFilters.Add(new TelemetryFunctionFilter(telemetryService, filterLogger));
         _kernel.FunctionInvocationFilters.Add(new ToolSpanNameFilter());
         _kernel.AutoFunctionInvocationFilters.Add(new ToolExceptionFilter(logger));
+
+        // Added after ToolExceptionFilter, so that filter wraps it: a confirmation message that
+        // fails to send becomes an error text for the model, and the tool does not run.
+        _kernel.AutoFunctionInvocationFilters.Add(new ToolConfirmationFilter(logger));
         _chatService = _kernel.GetRequiredService<IChatCompletionService>();
 
         _logger.LogInformation(

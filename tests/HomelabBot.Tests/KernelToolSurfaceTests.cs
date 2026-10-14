@@ -194,6 +194,27 @@ public class KernelToolSurfaceTests
         Assert.Equal(expected, marked);
     }
 
+    // The owner approves these with a button in a chat turn. Memory writes and the owner's own
+    // push notifications run without one.
+    [Fact]
+    public void ToolsWithARealWorldEffect_NeedConfirmation()
+    {
+        string[] expected =
+        [
+            "AlertmanagerPlugin.SilenceAlert", "DockerPlugin.RestartContainer", "DockerPlugin.StartContainer",
+            "DockerPlugin.StopContainer", "HomeAssistantPlugin.TriggerAutomation", "HomeAssistantPlugin.TurnOff",
+            "HomeAssistantPlugin.TurnOn", "MikroTikPlugin.WakeOnLan", "RunbookPlugin.CreateRunbook",
+            "RunbookPlugin.ExecuteRunbook",
+        ];
+
+        var confirmed = PluginTools()
+            .Where(m => m.GetCustomAttribute<ChangesStateAttribute>() is { RequiresConfirmation: true })
+            .Select(m => $"{m.DeclaringType!.Name}.{m.Name}")
+            .Order(StringComparer.Ordinal);
+
+        Assert.Equal(expected, confirmed);
+    }
+
     // A new tool named like an action must be marked, or carry a name that does not look like one.
     [Fact]
     public void ToolsNamedLikeAnAction_AreMarked()

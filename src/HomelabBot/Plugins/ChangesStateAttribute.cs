@@ -19,6 +19,15 @@ internal sealed class ChangesStateAttribute : Attribute
         .Select(m => m.Name)
         .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
+    // In a chat turn the owner approves the call with a Discord button first (ToolConfirmationFilter).
+    // On by default, so a new tool asks unless it opts out. Opt out only for writes with no effect
+    // outside the bot's own memory or the owner's own notifications: a button per fact would make
+    // the memory tools unusable.
+    public bool RequiresConfirmation { get; set; } = true;
+
     public static bool IsOn(KernelFunction function) =>
         function.UnderlyingMethod?.IsDefined(typeof(ChangesStateAttribute), inherit: true) == true;
+
+    public static bool NeedsConfirmation(KernelFunction function) =>
+        function.UnderlyingMethod?.GetCustomAttribute<ChangesStateAttribute>(inherit: true) is { RequiresConfirmation: true };
 }
