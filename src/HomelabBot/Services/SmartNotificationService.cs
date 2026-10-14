@@ -147,6 +147,11 @@ public sealed class SmartNotificationService
         return await SendNotificationAsync(report, candidate);
     }
 
+    // Lets a caller skip expensive work whose result would be suppressed anyway. A failed load
+    // returns no preferences, so the work still runs.
+    public async Task<bool> IsSuppressedAsync(string issueType) =>
+        IsIssueSuppressed(issueType, await LoadNotificationPreferencesAsync());
+
     // Handle "Normal, ignore in future" button press.
     public async Task HandleSuppressFeedbackAsync(string issueType, string description)
     {
