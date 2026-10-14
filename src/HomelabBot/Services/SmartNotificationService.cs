@@ -116,13 +116,17 @@ public sealed class SmartNotificationService
             ? NotificationPrompts.BuildDecisionOnlyPrompt(candidate.Summary, candidate.RawData, prefsText)
             : NotificationPrompts.BuildInvestigationPrompt(candidate.Summary, candidate.RawData, prefsText);
 
+        // Read once: a new cycle can start while the model works, and a not-delivered record must
+        // land in the thread that holds the decision.
+        var threadId = CurrentDailyThreadId;
+
         string analysis;
         try
         {
             // The decision-only prompt tells the model not to use tools; sending their schemas
             // anyway is pure cost.
             analysis = await _kernelService.ProcessMessageAsync(
-                threadId: CurrentDailyThreadId,
+                threadId: threadId,
                 userMessage: prompt,
                 traceType: TraceType.Scheduled,
                 maxTokens: NotificationPrompts.MaxTokens,
@@ -156,7 +160,13 @@ public sealed class SmartNotificationService
                 .Replace(NotificationPrompts.TagSilent, "", StringComparison.OrdinalIgnoreCase)
                 .Trim();
 
-        return await SendNotificationAsync(report, candidate);
+        var sent = await SendNotificationAsync(report, candidate);
+        if (!sent)
+        {
+            await RecordNotDeliveredAsync(threadId, candidate);
+        }
+
+        return sent;
     }
 
     // Lets a caller skip expensive work whose result would be suppressed anyway. A failed load
@@ -283,7 +293,11 @@ public sealed class SmartNotificationService
 
         try
         {
-            await _discordBot.SendDmSplitAsync(userId, report);
+            if (!await _discordBot.SendDmSplitAsync(userId, report))
+            {
+                _logger.LogWarning("Failed to send notification for {Source}: no DM channel", candidate.Source);
+                return false;
+            }
         }
         catch (Exception ex)
         {
@@ -302,6 +316,22 @@ public sealed class SmartNotificationService
 
         _logger.LogInformation("Sent smart notification for {Source}", candidate.Source);
         return true;
+    }
+
+    // A user-role note of its own, like the bot-message records in the DM thread. The evaluation
+    // turn has released the thread lock; this waits for any other turn on the thread. No ct: the
+    // note must land, or the decision keeps saying the owner was told.
+    private async Task RecordNotDeliveredAsync(ulong threadId, NotificationCandidate candidate)
+    {
+        using (await _conversationService.LockThreadAsync(threadId))
+        {
+            await _conversationService.AddUserMessageAsync(
+                threadId, NotificationPrompts.BuildNotDeliveredNote(candidate.Source, candidate.Summary));
+        }
+
+        _logger.LogInformation(
+            "Recorded in daily thread {ThreadId} that the notification for {Source} was not delivered",
+            threadId, candidate.Source);
     }
 
     private async Task<List<Knowledge>> LoadNotificationPreferencesAsync()
