@@ -227,6 +227,30 @@ public class NotificationPreferenceTests : IClassFixture<DatabaseFixture>
     }
 
     [Fact]
+    public void PreferencesView_LongRealRows_StayUnderTheDiscordLimit_WithAButtonPerShownLine()
+    {
+        List<Knowledge> prefs =
+        [
+            new Knowledge { Id = 100, Topic = $"{Suppress}{new string('x', 500)}", Fact = "llm topic", Confidence = 1.0 },
+            .. Enumerable.Range(1, 22).Select(i => new Knowledge
+            {
+                Id = i,
+                Topic = $"{Suppress}health_score_drop:containers_and_connectivity_{i}",
+                Fact = "Owner marked as normal/ignorable: Marked as normal via button feedback",
+                Confidence = 1.0,
+            }),
+        ];
+
+        var content = NotificationPreferencesView.Content(prefs, $"Removed `SUPPRESS {new string('y', 400)}`.");
+        var buttons = NotificationPreferencesView.Components(prefs).SelectMany(r => r.Components).ToList();
+        var shownLines = content.Split('\n').Count(l => char.IsDigit(l[0]));
+
+        Assert.True(content.Length <= 2000, $"{content.Length} characters");
+        Assert.Equal(shownLines, buttons.Count);
+        Assert.Contains($"first {shownLines} of 23", content, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void PreferencesView_Empty_SaysSoWithoutButtons()
     {
         Assert.Empty(NotificationPreferencesView.Components([]));
