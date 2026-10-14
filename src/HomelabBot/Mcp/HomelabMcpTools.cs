@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Globalization;
 using HomelabBot.Configuration;
 using HomelabBot.Helpers;
@@ -80,9 +81,11 @@ public sealed class HomelabMcpTools
         return deleted ? $"Pattern #{patternId} deleted." : $"Pattern #{patternId} not found.";
     }
 
-    // A chat turn as the owner, on the bot's own model and tools. The mark only sets the MCP hints:
-    // the turn can write the bot's memory. A real-world action in the turn needs a Discord button,
-    // and this call has no chat to put it in, so it does not run (ToolConfirmationFilter).
+    // A chat turn as the owner, on the bot's own model and tools. The turn can write the bot's
+    // memory, so the hints say not read-only; [ChangesState] is there because McpToolHintTests
+    // requires it on every such tool, and it has no effect on a non-kernel method. A real-world
+    // action in the turn needs a Discord button, and this call has no chat to put it in, so it
+    // does not run (ToolConfirmationFilter).
     [ChangesState(RequiresConfirmation = false)]
     [McpServerTool(ReadOnly = false, Destructive = false)]
     [Description(
@@ -118,7 +121,12 @@ public sealed class HomelabMcpTools
         _logger.LogInformation(
             "ask_bot turn on thread {ThreadId} ({Kind}, {Chars} chars)",
             threadId, conversationId is null ? "new" : "continued", message.Length);
-        var answer = await _kernelService.ProcessMessageAsync(threadId, message, HomelabOwner.DiscordUserId, TraceType.Chat, ct: ct);
-        return $"conversationId: {threadId}\n\n{answer}";
+
+        // The turn's span must be a root like a Discord turn's, not a child of the HTTP request
+        // span that is never exported. Async-local: the request's own span is untouched.
+        Activity.Current = null;
+        var answer = await _kernelService.ProcessMessageAsync(threadId, message, HomelabOwner.DiscordUserId, ct: ct);
+        var reply = $"conversationId: {threadId}\n\n{answer}";
+        return KernelService.IsFailedTurnAnswer(answer) ? ToolResult.Failure($"the bot's turn failed.\n{reply}") : reply;
     }
 }

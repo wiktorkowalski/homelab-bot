@@ -32,10 +32,11 @@ public sealed class AskBotMcpToolTests : IDisposable
     [Fact]
     public async Task NewConversation_ReturnsAFreshId_AndTheAnswer_FromATurnAsTheOwner()
     {
-        using var root = new Activity("test-root").Start();
+        // Stands in for the HTTP request span of the MCP call, which is never exported.
+        using var request = new Activity("test-request").Start();
 
         // By name: the static source may not exist yet when the listener is added.
-        using var spans = new SpanCollector(root.TraceId, s => s.Name == "HomelabBot.Chat");
+        using var spans = new SpanCollector(s => s.DisplayName == "Chat", s => s.Name == "HomelabBot.Chat");
         _handler.Enqueue(ClaudeResponses.Text("all green"));
 
         var result = await _tools.AskBot("how is the lab?");
@@ -45,8 +46,11 @@ public sealed class AskBotMcpToolTests : IDisposable
         Assert.Single(_handler.RequestBodies);
         await using var db = _harness.DbFactory.CreateDbContext();
         Assert.Equal(id, (await db.Conversations.SingleAsync()).ThreadId);
-        var turn = Assert.Single(spans.Snapshot(), s => s.DisplayName == "Chat");
-        Assert.Equal(id.ToString(CultureInfo.InvariantCulture), turn.GetTagItem("langfuse.session.id"));
+        var idText = id.ToString(CultureInfo.InvariantCulture);
+        var turn = Assert.Single(spans.Snapshot(), s => idText.Equals(s.GetTagItem("langfuse.session.id")));
+        Assert.Equal(default, turn.ParentSpanId);
+        Assert.NotEqual(request.TraceId, turn.TraceId);
+        Assert.Same(request, Activity.Current);
         Assert.Equal(HomelabOwner.DiscordUserId.ToString(CultureInfo.InvariantCulture), turn.GetTagItem("langfuse.user.id"));
 
         // The thread id is logged, the owner's text is not.
@@ -81,6 +85,32 @@ public sealed class AskBotMcpToolTests : IDisposable
         Assert.StartsWith("Error:", result, StringComparison.Ordinal);
         Assert.Contains("conversationId", result, StringComparison.Ordinal);
         await AssertNoTurnAsync();
+    }
+
+    // A broken bot must not read as a healthy answer to a prod check.
+    [Fact]
+    public async Task FailedTurn_IsAnError_WithTheIdAndTheBotsText()
+    {
+        _handler.EnqueueStatus(529, times: 3);
+
+        var result = await _tools.AskBot("how is the lab?");
+
+        Assert.StartsWith("Error:", result, StringComparison.Ordinal);
+        Assert.Contains(IdPrefix, result, StringComparison.Ordinal);
+        Assert.Contains("Error processing your request:", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RealWorldAction_DoesNotRun_FromAskBot()
+    {
+        _handler
+            .Enqueue(ClaudeResponses.ToolUseWithInput("Test_Restart", """{"container":"plex"}"""))
+            .Enqueue(ClaudeResponses.Text("I could not restart it"));
+
+        var (_, answer) = Parse(await _tools.AskBot("restart plex"));
+
+        Assert.Equal("I could not restart it", answer);
+        Assert.Equal(0, _harness.Plugin.RestartCalls);
     }
 
     [Theory]

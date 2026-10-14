@@ -25,6 +25,8 @@ public sealed class KernelService
     private const string EmptyResponseMessage =
         "I couldn't generate a response - the model returned nothing. Try asking again or rephrasing.";
 
+    private const string FailedTurnPrefix = "Error processing your request";
+
     // Thinking is always on and counts toward max_tokens. A caller that caps the reply (1024 for
     // a short JSON answer) would leave thinking almost nothing and get an empty or cut reply, so
     // this is added on top of the caller's cap. Same size the SDK reserves for medium effort.
@@ -281,6 +283,12 @@ public sealed class KernelService
             threadId ?? (ulong)Random.Shared.NextInt64(1, long.MaxValue),
             userMessage, userId, traceType, maxTokens, systemPromptOverride, pluginAllowList, allowToolUse, forgetHistory: true, ct);
 
+    // A turn that fails still answers with text, so a caller that must report failure apart
+    // from an answer (an MCP client) needs this check.
+    internal static bool IsFailedTurnAnswer(string answer) =>
+        answer.StartsWith(FailedTurnPrefix, StringComparison.Ordinal)
+        || answer.Equals(EmptyResponseMessage, StringComparison.Ordinal);
+
     private async Task<string> ProcessTurnAsync(
         ulong threadId,
         string userMessage,
@@ -431,7 +439,7 @@ public sealed class KernelService
             _logger.LogError(ex, "Error processing message for thread {ThreadId}", threadId);
             activity?.SetTag("langfuse.observation.level", "ERROR");
             activity?.SetTag("langfuse.observation.status_message", ex.Message);
-            return await CloseFailedTurnAsync(threadId, interaction?.Id, $"Error processing your request: {ex.Message}");
+            return await CloseFailedTurnAsync(threadId, interaction?.Id, $"{FailedTurnPrefix}: {ex.Message}");
         }
         finally
         {
