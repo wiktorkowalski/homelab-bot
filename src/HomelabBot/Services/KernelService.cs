@@ -385,6 +385,31 @@ public sealed class KernelService
         }
     }
 
+    // One answer, no memory: a fresh thread, and its cached history is dropped when the call
+    // ends. Pass threadId only to tie the stored rows and investigations to a known id.
+    public async Task<string> ProcessOneShotAsync(
+        string userMessage,
+        ulong? userId = null,
+        TraceType traceType = TraceType.Chat,
+        int? maxTokens = null,
+        string? systemPromptOverride = null,
+        IReadOnlyList<string>? pluginAllowList = null,
+        bool allowToolUse = true,
+        ulong? threadId = null,
+        CancellationToken ct = default)
+    {
+        var id = threadId ?? (ulong)Random.Shared.NextInt64(1, long.MaxValue);
+        try
+        {
+            return await ProcessMessageAsync(
+                id, userMessage, userId, traceType, maxTokens, systemPromptOverride, pluginAllowList, allowToolUse, ct);
+        }
+        finally
+        {
+            _conversationService.ClearHistory(id);
+        }
+    }
+
     // The loop adds tool turns to the history only when it returns. When it throws after a tool
     // ran, the history would hold no trace of that tool, and a "try again" from the user would
     // run the side effect a second time. So a failed turn ends with an assistant message that

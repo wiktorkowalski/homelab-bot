@@ -7,20 +7,17 @@ public sealed class SecurityAuditService : ScheduledBackgroundService
 {
     private readonly IOptionsMonitor<SecurityAuditConfiguration> _config;
     private readonly KernelService _kernelService;
-    private readonly ConversationService _conversationService;
     private readonly ILogger<SecurityAuditService> _logger;
 
     public SecurityAuditService(
         IOptionsMonitor<SecurityAuditConfiguration> config,
         KernelService kernelService,
-        ConversationService conversationService,
         DiscordBotService discordBot,
         ILogger<SecurityAuditService> logger)
         : base(discordBot)
     {
         _config = config;
         _kernelService = kernelService;
-        _conversationService = conversationService;
         _logger = logger;
     }
 
@@ -35,25 +32,15 @@ public sealed class SecurityAuditService : ScheduledBackgroundService
 
     public async Task<string> RunAuditAsync(CancellationToken ct = default)
     {
-        var threadId = (ulong)DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        _logger.LogInformation("Running security audit");
+        var report = await _kernelService.ProcessOneShotAsync(
+            userMessage: SecurityAuditPrompts.Investigation,
+            traceType: TraceType.Scheduled,
+            systemPromptOverride: SecurityAuditPrompts.System,
+            ct: ct);
 
-        try
-        {
-            _logger.LogInformation("Running security audit");
-            var report = await _kernelService.ProcessMessageAsync(
-                threadId: threadId,
-                userMessage: SecurityAuditPrompts.Investigation,
-                traceType: TraceType.Scheduled,
-                systemPromptOverride: SecurityAuditPrompts.System,
-                ct: ct);
-
-            _logger.LogInformation("Security audit completed, report length: {Length}", report.Length);
-            return report;
-        }
-        finally
-        {
-            _conversationService.ClearHistory(threadId);
-        }
+        _logger.LogInformation("Security audit completed, report length: {Length}", report.Length);
+        return report;
     }
 
     private async Task RunAuditAndDeliverAsync(CancellationToken ct)

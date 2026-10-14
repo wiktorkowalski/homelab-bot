@@ -48,6 +48,8 @@ public sealed class ConversationService
         _logger = logger;
     }
 
+    internal int CachedHistoryCount => _histories.Count;
+
     public async Task<ChatHistory> GetOrCreateHistoryAsync(ulong threadId, string systemPrompt, CancellationToken ct = default)
     {
         if (_histories.TryGetValue(threadId, out var cached))
