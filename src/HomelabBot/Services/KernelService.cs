@@ -5,6 +5,7 @@ using System.Text.RegularExpressions;
 using Anthropic;
 using Anthropic.Models.Messages;
 using HomelabBot.Configuration;
+using HomelabBot.Data.Entities;
 using HomelabBot.Plugins;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Options;
@@ -285,11 +286,6 @@ public sealed class KernelService
         await _conversationService.AddUserMessageAsync(threadId, userMessage);
 
         var historyJson = JsonSerializer.Serialize(history.Select(m => new { m.Role, Content = TelemetryText(m) }));
-        var interaction = await _telemetryService.LogInteractionStartAsync(
-            threadId, _modelId, userMessage, historyJson, ct);
-
-        // Set active interaction for tool call logging
-        _telemetryService.SetActiveInteraction(interaction.Id);
 
         var activeSettings = new PromptExecutionSettings
         {
@@ -309,8 +305,17 @@ public sealed class KernelService
         // Sums usage of every billed LLM request in this interaction: tool rounds, retries, nested tool calls.
         using var usageScope = TokenUsageScope.Begin();
 
+        // The user message is already in the history, so the start is inside the try: a cancel or
+        // a database failure here must close the turn too.
+        LlmInteraction? interaction = null;
         try
         {
+            interaction = await _telemetryService.LogInteractionStartAsync(
+                threadId, _modelId, userMessage, historyJson, ct);
+
+            // Set active interaction for tool call logging
+            _telemetryService.SetActiveInteraction(interaction.Id);
+
             var response = await InvokeWithRetryAsync(
                 c => _chatService.GetChatMessageContentAsync(history, activeSettings, _kernel, c),
                 history,
@@ -366,20 +371,32 @@ public sealed class KernelService
             sw.Stop();
 
             // Rounds before the cancel were billed; record them even though the caller's token is dead.
-            await _telemetryService.TryLogInteractionCancelledAsync(
-                interaction.Id, sw.ElapsedMilliseconds, ResolveUsage(usageScope, null));
-            await CloseFailedTurnAsync(threadId, interaction.Id, "The request was cancelled before I could answer.");
+            if (interaction is not null)
+            {
+                await _telemetryService.TryLogInteractionCancelledAsync(
+                    interaction.Id, sw.ElapsedMilliseconds, ResolveUsage(usageScope, null));
+            }
+            else
+            {
+                _logger.LogInformation("Turn for thread {ThreadId} was cancelled before its interaction was recorded", threadId);
+            }
+
+            await CloseFailedTurnAsync(threadId, interaction?.Id, "The request was cancelled before I could answer.");
             throw;
         }
         catch (Exception ex)
         {
             sw.Stop();
-            await _telemetryService.LogInteractionErrorAsync(
-                interaction.Id, ex.Message, sw.ElapsedMilliseconds, ResolveUsage(usageScope, null), ct);
+            if (interaction is not null)
+            {
+                await _telemetryService.LogInteractionErrorAsync(
+                    interaction.Id, ex.Message, sw.ElapsedMilliseconds, ResolveUsage(usageScope, null), ct);
+            }
+
             _logger.LogError(ex, "Error processing message for thread {ThreadId}", threadId);
             activity?.SetTag("langfuse.observation.level", "ERROR");
             activity?.SetTag("langfuse.observation.status_message", ex.Message);
-            return await CloseFailedTurnAsync(threadId, interaction.Id, $"Error processing your request: {ex.Message}");
+            return await CloseFailedTurnAsync(threadId, interaction?.Id, $"Error processing your request: {ex.Message}");
         }
         finally
         {
@@ -394,12 +411,13 @@ public sealed class KernelService
     // leave a tool call without its result. It holds the call and whether it worked, never the
     // tool's output: that is data from outside (log lines, alert texts) and must not come back
     // as the assistant's own words. Never throws: it runs on the error paths.
-    private async Task<string> CloseFailedTurnAsync(ulong threadId, int interactionId, string failure)
+    // A null interactionId means the turn failed before it started, so no tool ran.
+    private async Task<string> CloseFailedTurnAsync(ulong threadId, int? interactionId, string failure)
     {
         var text = failure;
         try
         {
-            var toolCalls = await _telemetryService.GetToolCallsAsync(interactionId);
+            var toolCalls = interactionId is { } id ? await _telemetryService.GetToolCallsAsync(id) : [];
             if (toolCalls.Count > 0)
             {
                 var lines = toolCalls.Select(call =>

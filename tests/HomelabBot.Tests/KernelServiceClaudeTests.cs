@@ -266,6 +266,25 @@ public sealed class KernelServiceClaudeTests : IDisposable
     }
 
     [Fact]
+    public async Task CancelWhileTheTurnStarts_Rethrows_AndClosesTheTurn()
+    {
+        using var caller = new CancellationTokenSource();
+        var handler = new ScriptedClaudeHandler().Enqueue(ClaudeResponses.Text("ok"));
+        using var harness = new KernelServiceHarness(
+            handler.CreateClient(), telemetryDb: db => new CancelOnFirstContextFactory(db, caller));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => harness.Service.ProcessMessageAsync(ThreadId, "hi", ct: caller.Token));
+
+        await harness.Service.ProcessMessageAsync(ThreadId, "again");
+        var messages = Assert.Single(handler.Requests)["messages"]!.AsArray();
+        Assert.Equal(["user", "assistant", "user"], messages.Select(m => (string?)m!["role"]));
+        var remembered = (string?)messages[1]!["content"]!.AsArray().Single()!["text"];
+        Assert.StartsWith("The request was cancelled", remembered, StringComparison.Ordinal);
+        Assert.DoesNotContain("Tools that already ran", remembered, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task RefusalAfterAToolCall_DoesNotRunTheTool_AndIsReported()
     {
         _handler.Enqueue(ClaudeResponses.RefusalAfterToolUse("Test_Restart"));

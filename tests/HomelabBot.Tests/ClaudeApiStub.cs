@@ -266,7 +266,11 @@ internal sealed class KernelServiceHarness : IDisposable
 {
     private readonly string _dbPath = Path.Combine(Path.GetTempPath(), $"homelab-bot-claude-{Guid.NewGuid():N}.db");
 
-    public KernelServiceHarness(IAnthropicClient client, int maxTokens = 16000)
+    // telemetryDb wraps the database of the telemetry service only, so a test can fail its writes.
+    public KernelServiceHarness(
+        IAnthropicClient client,
+        int maxTokens = 16000,
+        Func<IDbContextFactory<HomelabDbContext>, IDbContextFactory<HomelabDbContext>>? telemetryDb = null)
     {
         // A file, not the shared in-memory connection of DatabaseFixture: ConversationService
         // saves messages in the background while the telemetry row is written.
@@ -284,7 +288,7 @@ internal sealed class KernelServiceHarness : IDisposable
             Logger,
             NullLogger<TelemetryFunctionFilter>.Instance,
             Conversations,
-            new TelemetryService(DbFactory, NullLogger<TelemetryService>.Instance),
+            new TelemetryService(telemetryDb?.Invoke(DbFactory) ?? DbFactory, NullLogger<TelemetryService>.Instance),
             plugins =>
             {
                 plugins.AddFromObject(Plugin, "Test");
@@ -306,6 +310,34 @@ internal sealed class KernelServiceHarness : IDisposable
     {
         Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
         File.Delete(_dbPath);
+    }
+}
+
+// The caller gives up while the first context is opened: what a cancel during the telemetry
+// write at the start of a turn looks like. Later contexts open as usual.
+internal sealed class CancelOnFirstContextFactory : IDbContextFactory<HomelabDbContext>
+{
+    private readonly IDbContextFactory<HomelabDbContext> _inner;
+    private readonly CancellationTokenSource _caller;
+    private int _created;
+
+    public CancelOnFirstContextFactory(IDbContextFactory<HomelabDbContext> inner, CancellationTokenSource caller)
+    {
+        _inner = inner;
+        _caller = caller;
+    }
+
+    public HomelabDbContext CreateDbContext() => _inner.CreateDbContext();
+
+    public Task<HomelabDbContext> CreateDbContextAsync(CancellationToken cancellationToken = default)
+    {
+        if (Interlocked.Increment(ref _created) == 1)
+        {
+            _caller.Cancel();
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+
+        return _inner.CreateDbContextAsync(cancellationToken);
     }
 }
 
