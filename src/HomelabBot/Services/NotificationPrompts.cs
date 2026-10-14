@@ -36,6 +36,12 @@ internal static class NotificationPrompts
     internal const string TagSilent = "[SILENT]";
     internal const int MaxTokens = 4096;
 
+    // Follows a [NOTIFY] decision whose DM failed. Without it, a later evaluation in the daily
+    // thread reads the decision as "the owner knows" and can stay silent on a repeat.
+    internal static string BuildNotDeliveredNote(string source, string summary) =>
+        $"[Notification not delivered] The owner did not get the notification for {source}: {summary}. " +
+        "The DM failed, so he does not know about this finding. If it comes up again, decide as if he was never told.";
+
     internal static string BuildDecisionOnlyPrompt(string summary, string rawData, string preferences)
     {
         return $"""

@@ -58,9 +58,14 @@ public sealed class SecurityAuditService : ScheduledBackgroundService
         {
             var report = await RunAuditAsync(ct);
 
-            await DiscordBot.SendDmSplitAsync(userId, report);
-
-            _logger.LogInformation("Security audit delivered to user {UserId}", userId);
+            if (await DiscordBot.SendDmSplitAsync(userId, report))
+            {
+                _logger.LogInformation("Security audit delivered to user {UserId}", userId);
+            }
+            else
+            {
+                _logger.LogWarning("Security audit not delivered to user {UserId}: no DM channel", userId);
+            }
         }
         catch (Exception ex)
         {
