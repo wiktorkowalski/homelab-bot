@@ -115,7 +115,7 @@ public sealed class LokiPlugin
     }
 
     [KernelFunction]
-    [McpServerTool(Name = "QueryLoki")]
+    [McpServerTool(Name = "QueryLoki", ReadOnly = true)]
     [Description("Executes a LogQL query against Loki over a time range (default last hour, max 7d). Returns matching log entries. Use ListLabels first to discover available labels.")]
     public async Task<string> QueryLogs(
         [Description("LogQL query expression (e.g., '{compose_service=\"traefik\"}' or '{container_name=~\".*traefik.*\"}')")] string query,
@@ -218,7 +218,7 @@ public sealed class LokiPlugin
     }
 
     [KernelFunction]
-    [McpServerTool(Name = "GetContainerLogs")]
+    [McpServerTool(Name = "GetContainerLogs", ReadOnly = true)]
     [Description("Gets historical logs for a Docker container from Loki with time-range filtering. Best for searching logs over a specific period (e.g. last 1h, 6h). For real-time tail of the latest output, use Docker's GetContainerLogsFromDocker instead.")]
     public async Task<string> GetContainerLogsFromLoki(
         [Description("Container name (will try multiple label patterns like compose_service, container_name)")] string containerName,
@@ -484,7 +484,7 @@ public sealed class LokiPlugin
     }
 
     [KernelFunction]
-    [McpServerTool(Name = "CountErrors")]
+    [McpServerTool(Name = "CountErrors", ReadOnly = true)]
     [Description("Counts level-tagged error lines (log level error/fatal/critical/panic, e.g. [ERR], ERROR, level=error, \"level\":\"error\") per container over a time window. Lines that only mention error words in their text are not counted. Returns container name and error count.")]
     public async Task<string> CountErrorsByContainer(
         [Description("Time range like '1h', '6h', '24h' (default 1h, max 7d)")] string since = "1h",
@@ -646,7 +646,7 @@ public sealed class LokiPlugin
     }
 
     [KernelFunction]
-    [McpServerTool]
+    [McpServerTool(ReadOnly = true)]
     [Description("Searches all logs for specific text (grep-style search).")]
     public async Task<string> SearchLogs(
         [Description("Text to search for in logs")] string searchText,

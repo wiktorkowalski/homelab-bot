@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using HomelabBot.Models;
+using HomelabBot.Plugins;
 using HomelabBot.Services;
 using ModelContextProtocol.Server;
 
@@ -25,7 +26,7 @@ public sealed class HomelabMcpTools
         _conversationService = conversationService;
     }
 
-    [McpServerTool]
+    [McpServerTool(ReadOnly = true)]
     [Description("Get current health score with breakdown")]
     public async Task<string> GetHealthScore()
     {
@@ -34,7 +35,7 @@ public sealed class HomelabMcpTools
         return $"Health Score: {result.Score}/100 (Alerts: -{result.AlertDeductions}, Containers: -{result.ContainerDeductions}, Pools: -{result.PoolDeductions}, Monitoring: -{result.MonitoringDeductions}, Connectivity: -{result.ConnectivityDeductions})";
     }
 
-    [McpServerTool]
+    [McpServerTool(ReadOnly = true)]
     [Description("Search past conversations")]
     public async Task<string> SearchConversations(string query)
     {
@@ -47,7 +48,7 @@ public sealed class HomelabMcpTools
         return ConversationSearchResult.FormatResults(results);
     }
 
-    [McpServerTool]
+    [McpServerTool(ReadOnly = true)]
     [Description("List all remediation patterns with their success rates")]
     public async Task<string> ListPatterns()
     {
@@ -61,7 +62,8 @@ public sealed class HomelabMcpTools
             $"#{p.Id} | {p.TriggerCondition} | {p.SuccessRate:F0}% success | {p.OccurrenceCount}x seen"));
     }
 
-    [McpServerTool]
+    [ChangesState]
+    [McpServerTool(ReadOnly = false, Destructive = true)]
     [Description("Delete a remediation pattern by ID")]
     public async Task<string> DeletePattern(int patternId)
     {

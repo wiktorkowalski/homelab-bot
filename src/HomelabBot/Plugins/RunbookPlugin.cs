@@ -59,7 +59,7 @@ public sealed class RunbookPlugin
     }
 
     [KernelFunction]
-    [McpServerTool]
+    [McpServerTool(ReadOnly = true)]
     [Description("List all runbooks with their status, trigger conditions, and execution stats.")]
     public async Task<string> ListRunbooks()
     {

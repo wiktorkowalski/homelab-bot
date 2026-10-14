@@ -22,7 +22,7 @@ public class DockerPlugin
     }
 
     [KernelFunction]
-    [McpServerTool]
+    [McpServerTool(ReadOnly = true)]
     [Description("Lists all Docker containers with their status. Returns container name, status, and image.")]
     public async Task<string> ListContainers()
     {
@@ -65,7 +65,7 @@ public class DockerPlugin
     }
 
     [KernelFunction]
-    [McpServerTool]
+    [McpServerTool(ReadOnly = true)]
     [Description("Gets detailed status information for a specific container by name or ID.")]
     public virtual async Task<string> GetContainerStatus([Description("Container name or ID")] string containerName)
     {

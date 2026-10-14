@@ -90,7 +90,7 @@ public sealed class PrometheusPlugin
     }
 
     [KernelFunction]
-    [McpServerTool]
+    [McpServerTool(ReadOnly = true)]
     [Description("Executes a PromQL query against Prometheus. Returns the current value of the expression.")]
     public async Task<string> QueryPrometheus([Description("PromQL query expression")] string query)
     {
@@ -122,7 +122,7 @@ public sealed class PrometheusPlugin
     }
 
     [KernelFunction]
-    [McpServerTool]
+    [McpServerTool(ReadOnly = true)]
     [Description("Gets current CPU, memory, and disk usage for the node (Ubuntu VM).")]
     public async Task<string> GetNodeStats()
     {

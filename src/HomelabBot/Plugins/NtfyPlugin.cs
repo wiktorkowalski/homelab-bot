@@ -29,7 +29,7 @@ public sealed class NtfyPlugin
 
     [KernelFunction]
     [ChangesState]
-    [McpServerTool]
+    [McpServerTool(ReadOnly = false, Destructive = false)]
     [Description("Sends a push notification via ntfy. Can specify topic, title, and priority.")]
     public async Task<string> SendNotification(
         [Description("The notification message content")] string message,

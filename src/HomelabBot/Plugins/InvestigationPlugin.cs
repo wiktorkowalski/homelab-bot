@@ -177,7 +177,7 @@ public sealed class InvestigationPlugin
     }
 
     [KernelFunction]
-    [McpServerTool]
+    [McpServerTool(ReadOnly = true)]
     [Description("Search past incidents for similar issues. Use this to check history before starting a new investigation.")]
     public async Task<string> SearchPastIncidents(
         [Description("Symptom or keywords to search for")] string symptom)

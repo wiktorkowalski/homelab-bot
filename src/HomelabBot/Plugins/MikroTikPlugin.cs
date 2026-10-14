@@ -28,7 +28,7 @@ public sealed class MikroTikPlugin
     }
 
     [KernelFunction]
-    [McpServerTool]
+    [McpServerTool(ReadOnly = true)]
     [Description("Gets the current status of the MikroTik router including uptime, CPU, memory usage, and temperature.")]
     public async Task<string> GetRouterStatus()
     {
