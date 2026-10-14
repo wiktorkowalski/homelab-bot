@@ -522,9 +522,6 @@ public sealed class DiscordBotService : BackgroundService
                 conversationId = newThread.Id;
             }
 
-            // Show typing indicator
-            await responseChannel.TriggerTypingAsync();
-
             // Strip bot mention from message
             var content = e.Message.Content;
             foreach (var mention in e.Message.MentionedUsers.Where(u => u.Id == client.CurrentUser.Id))
@@ -540,8 +537,12 @@ public sealed class DiscordBotService : BackgroundService
                 return;
             }
 
-            // Process with Semantic Kernel
-            var response = await _kernelService.ProcessMessageAsync(conversationId, content, e.Author.Id);
+            // Stopped before the send: a trigger right after the reply would show "typing" for 10 s more.
+            string response;
+            await using (TypingIndicator.Start(responseChannel.TriggerTypingAsync, _logger))
+            {
+                response = await _kernelService.ProcessMessageAsync(conversationId, content, e.Author.Id);
+            }
 
             // Send response (split if too long)
             await SendResponseAsync(responseChannel, response);
@@ -577,10 +578,13 @@ public sealed class DiscordBotService : BackgroundService
 
         try
         {
-            await e.Channel.TriggerTypingAsync();
-
-            var response = await _kernelService.ProcessMessageAsync(
-                HomelabOwner.DmThreadId, content, e.Author.Id);
+            // Stopped before the send: a trigger right after the reply would show "typing" for 10 s more.
+            string response;
+            await using (TypingIndicator.Start(e.Channel.TriggerTypingAsync, _logger))
+            {
+                response = await _kernelService.ProcessMessageAsync(
+                    HomelabOwner.DmThreadId, content, e.Author.Id);
+            }
 
             await SendToChannelSplitAsync(e.Channel, response);
         }
