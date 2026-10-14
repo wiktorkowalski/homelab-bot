@@ -281,7 +281,7 @@ public sealed class KernelService
         var sw = Stopwatch.StartNew();
         var systemPrompt = systemPromptOverride ?? SystemPrompt;
         var history = await _conversationService.GetOrCreateHistoryAsync(threadId, systemPrompt, ct);
-        _conversationService.AddUserMessage(threadId, userMessage);
+        await _conversationService.AddUserMessageAsync(threadId, userMessage);
 
         var historyJson = JsonSerializer.Serialize(history.Select(m => new { m.Role, Content = TelemetryText(m) }));
         var interaction = await _telemetryService.LogInteractionStartAsync(
@@ -345,7 +345,7 @@ public sealed class KernelService
             // Also when there is no real answer: without an assistant reply the user message (and
             // any tool turns the model ran) stays open and breaks user/assistant alternation on
             // the next request.
-            _conversationService.AddAssistantMessage(threadId, responseText);
+            await _conversationService.AddAssistantMessageAsync(threadId, responseText);
 
             await _telemetryService.LogInteractionCompleteAsync(
                 interaction.Id, responseText, ResolveUsage(usageScope, response), sw.ElapsedMilliseconds, ct);
@@ -411,7 +411,7 @@ public sealed class KernelService
             _logger.LogWarning(ex, "Could not read the tool calls of failed interaction {InteractionId}", interactionId);
         }
 
-        _conversationService.AddAssistantMessage(threadId, text);
+        await _conversationService.AddAssistantMessageAsync(threadId, text);
         return text;
 
         static string Cap(string? value) =>

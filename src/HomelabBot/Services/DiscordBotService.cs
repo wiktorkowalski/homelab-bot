@@ -576,7 +576,7 @@ public sealed class DiscordBotService : BackgroundService
             _logger.LogError(ex, "Error handling DM message");
             const string failure = "Something went wrong while processing your message. Please try again later.";
             await e.Channel.SendMessageAsync(failure);
-            RecordForOwner(e.Author.Id, failure);
+            _ = RecordForOwnerAsync(failure);
         }
     }
 
@@ -606,23 +606,8 @@ public sealed class DiscordBotService : BackgroundService
     // The text an embed shows: title, fields, description. Colors and timestamps are left out.
     internal static string EmbedText(DiscordEmbed embed)
     {
-        var lines = new List<string>();
-        if (!string.IsNullOrWhiteSpace(embed.Title))
-        {
-            lines.Add(embed.Title);
-        }
-
-        if (embed.Fields is { } fields)
-        {
-            lines.AddRange(fields.Select(f => $"{f.Name}: {f.Value}"));
-        }
-
-        if (!string.IsNullOrWhiteSpace(embed.Description))
-        {
-            lines.Add(embed.Description);
-        }
-
-        return string.Join("\n", lines);
+        string?[] parts = [embed.Title, .. (embed.Fields ?? []).Select(f => $"{f.Name}: {f.Value}"), embed.Description];
+        return string.Join("\n", parts.Where(p => !string.IsNullOrWhiteSpace(p)));
     }
 
     private static async Task SendResponseAsync(DiscordChannel channel, string response)
@@ -650,41 +635,15 @@ public sealed class DiscordBotService : BackgroundService
         return TimeSpan.FromSeconds(seconds);
     }
 
-    public async Task SendDmAsync(ulong userId, DiscordEmbed embed)
-    {
-        var dm = await GetDmChannelAsync(userId);
-        if (dm != null)
-        {
-            await dm.SendMessageAsync(embed: embed);
-            RecordForOwner(userId, EmbedText(embed));
-        }
-    }
+    public Task SendDmAsync(ulong userId, DiscordEmbed embed) =>
+        SendDmMessageAsync(userId, new DiscordMessageBuilder().WithEmbed(embed), EmbedText(embed));
 
-    public async Task SendDmAsync(ulong userId, string message)
-    {
-        var dm = await GetDmChannelAsync(userId);
-        if (dm != null)
-        {
-            await dm.SendMessageAsync(message);
-            RecordForOwner(userId, message);
-        }
-    }
+    public Task SendDmAsync(ulong userId, string message) =>
+        SendDmMessageAsync(userId, new DiscordMessageBuilder().WithContent(message), message);
 
-    public async Task SendDmWithComponentsAsync(ulong userId, DiscordEmbed embed, List<DiscordComponent> components)
-    {
-        var dm = await GetDmChannelAsync(userId);
-        if (dm == null)
-        {
-            return;
-        }
-
-        var builder = new DiscordMessageBuilder()
-            .WithEmbed(embed)
-            .AddComponents(components);
-
-        await dm.SendMessageAsync(builder);
-        RecordForOwner(userId, EmbedText(embed));
-    }
+    public Task SendDmWithComponentsAsync(ulong userId, DiscordEmbed embed, List<DiscordComponent> components) =>
+        SendDmMessageAsync(
+            userId, new DiscordMessageBuilder().WithEmbed(embed).AddComponents(components), EmbedText(embed));
 
     public async Task SendDmSplitAsync(ulong userId, string content)
     {
@@ -708,28 +667,22 @@ public sealed class DiscordBotService : BackgroundService
         RecordForOwner(userId, content);
     }
 
-    public async Task SendDmNotificationFeedbackAsync(ulong userId, string issueHash)
-    {
-        var dm = await GetDmChannelAsync(userId);
-        if (dm == null)
-        {
-            return;
-        }
-
-        var builder = new DiscordMessageBuilder()
-            .WithContent("Was this notification useful?")
-            .AddComponents(
-                new DiscordButtonComponent(
-                    ButtonStyle.Secondary,
-                    $"{SmartNotificationService.ButtonPrefixNormal}{issueHash}",
-                    "Normal, ignore in future"),
-                new DiscordButtonComponent(
-                    ButtonStyle.Primary,
-                    $"{SmartNotificationService.ButtonPrefixInvestigate}{issueHash}",
-                    "Investigate further"));
-
-        await dm.SendMessageAsync(builder);
-    }
+    // Buttons only, nothing the owner would ask about: not recorded.
+    public Task SendDmNotificationFeedbackAsync(ulong userId, string issueHash) =>
+        SendDmMessageAsync(
+            userId,
+            new DiscordMessageBuilder()
+                .WithContent("Was this notification useful?")
+                .AddComponents(
+                    new DiscordButtonComponent(
+                        ButtonStyle.Secondary,
+                        $"{SmartNotificationService.ButtonPrefixNormal}{issueHash}",
+                        "Normal, ignore in future"),
+                    new DiscordButtonComponent(
+                        ButtonStyle.Primary,
+                        $"{SmartNotificationService.ButtonPrefixInvestigate}{issueHash}",
+                        "Investigate further")),
+            recordText: null);
 
     public async Task<(ulong ThreadId, ulong MessageId)?> CreateThreadInChannelAsync(
         ulong channelId, string name, string initialMessage)
@@ -794,16 +747,24 @@ public sealed class DiscordBotService : BackgroundService
 
     public async Task SendDmFileAsync(ulong userId, string content, string filename)
     {
+        using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(content));
+        await SendDmMessageAsync(userId, new DiscordMessageBuilder().AddFile(filename, stream), recordText: null);
+    }
+
+    // Sends one DM. A record text goes into the owner's DM thread once the send worked.
+    private async Task SendDmMessageAsync(ulong userId, DiscordMessageBuilder message, string? recordText)
+    {
         var dm = await GetDmChannelAsync(userId);
         if (dm == null)
         {
             return;
         }
 
-        using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(content));
-        var message = new DiscordMessageBuilder()
-            .AddFile(filename, stream);
         await dm.SendMessageAsync(message);
+        if (recordText is not null)
+        {
+            RecordForOwner(userId, recordText);
+        }
     }
 
     private async Task<DiscordDmChannel?> GetDmChannelAsync(ulong userId)

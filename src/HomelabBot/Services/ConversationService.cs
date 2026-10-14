@@ -128,13 +128,7 @@ public sealed class ConversationService
 
         using (await LockThreadAsync(threadId, ct))
         {
-            if (_histories.TryGetValue(threadId, out var history))
-            {
-                history.AddUserMessage(record);
-                TrimHistoryIfNeeded(history);
-            }
-
-            await PersistMessageAsync(threadId, BotMessageRole, record, ct);
+            await AppendAsync(threadId, AuthorRole.User, BotMessageRole, record, ct);
         }
 
         _logger.LogInformation("Recorded a sent bot message ({Chars} chars) in thread {ThreadId}", record.Length, threadId);
@@ -147,49 +141,11 @@ public sealed class ConversationService
         return record.Length > MaxToolResultChars ? Truncate(record, MaxToolResultChars) : record;
     }
 
-    public async Task AddUserMessageAsync(ulong threadId, string message, CancellationToken ct = default)
-    {
-        if (_histories.TryGetValue(threadId, out var history))
-        {
-            history.AddUserMessage(message);
-            TrimHistoryIfNeeded(history);
-        }
+    public Task AddUserMessageAsync(ulong threadId, string message, CancellationToken ct = default) =>
+        AppendAsync(threadId, AuthorRole.User, "user", message, ct);
 
-        await PersistMessageAsync(threadId, "user", message, ct);
-    }
-
-    public void AddUserMessage(ulong threadId, string message)
-    {
-        if (_histories.TryGetValue(threadId, out var history))
-        {
-            history.AddUserMessage(message);
-            TrimHistoryIfNeeded(history);
-        }
-
-        _ = PersistMessageAsync(threadId, "user", message);
-    }
-
-    public async Task AddAssistantMessageAsync(ulong threadId, string message, CancellationToken ct = default)
-    {
-        if (_histories.TryGetValue(threadId, out var history))
-        {
-            history.AddAssistantMessage(message);
-            TrimHistoryIfNeeded(history);
-        }
-
-        await PersistMessageAsync(threadId, "assistant", message, ct);
-    }
-
-    public void AddAssistantMessage(ulong threadId, string message)
-    {
-        if (_histories.TryGetValue(threadId, out var history))
-        {
-            history.AddAssistantMessage(message);
-            TrimHistoryIfNeeded(history);
-        }
-
-        _ = PersistMessageAsync(threadId, "assistant", message);
-    }
+    public Task AddAssistantMessageAsync(ulong threadId, string message, CancellationToken ct = default) =>
+        AppendAsync(threadId, AuthorRole.Assistant, "assistant", message, ct);
 
     public async Task UpdateTitleAsync(ulong threadId, string title, CancellationToken ct = default)
     {
@@ -303,12 +259,19 @@ public sealed class ConversationService
         }
     }
 
+    private async Task AppendAsync(ulong threadId, AuthorRole role, string storedRole, string message, CancellationToken ct)
+    {
+        if (_histories.TryGetValue(threadId, out var history))
+        {
+            history.AddMessage(role, message);
+            TrimHistoryIfNeeded(history);
+        }
+
+        await PersistMessageAsync(threadId, storedRole, message, ct);
+    }
+
     private async Task PersistMessageAsync(ulong threadId, string role, string content, CancellationToken ct = default)
     {
-        // Taken before the first await: a background save of the previous message can finish
-        // after this one starts, and the load orders rows by this time.
-        var timestamp = DateTime.UtcNow;
-
         try
         {
             await using var db = await _dbFactory.CreateDbContextAsync(ct);
@@ -330,11 +293,11 @@ public sealed class ConversationService
                 ConversationId = conversation.Id,
                 Role = role,
                 Content = content,
-                Timestamp = timestamp
+                Timestamp = DateTime.UtcNow
             };
 
             db.ConversationMessages.Add(msg);
-            conversation.LastMessageAt = timestamp;
+            conversation.LastMessageAt = DateTime.UtcNow;
 
             // Auto-set title from first user message
             if (role == "user" && string.IsNullOrEmpty(conversation.Title))

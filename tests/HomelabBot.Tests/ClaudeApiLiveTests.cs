@@ -91,7 +91,7 @@ public class ClaudeApiLiveTests
     public async Task ConsecutiveUserMessages_AreAcceptedByTheApi()
     {
         var kernel = ClaudeTestKernel.Build(
-            AnthropicChatClientFactory.CreateApiClient(ApiKey!), new PingPlugin(), new RecordingLogger<ClaudeApiLiveTests>(), maxTokens: 1024);
+            AnthropicChatClientFactory.CreateApiClient(ApiKey!), new PingPlugin(), new RecordingLogger<ClaudeApiLiveTests>(), maxTokens: 4096);
         var history = new ChatHistory();
         history.AddSystemMessage("You are a test bot for a homelab. Answer in one short sentence.");
         history.AddUserMessage("[Bot message sent to the owner at 2026-10-14 06:00 UTC]\nDisk usage on the NAS pool is 81%.");
