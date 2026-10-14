@@ -103,7 +103,7 @@ internal static class ClaudeResponses
 // Answers every request from a script and keeps what was sent.
 internal sealed class ScriptedClaudeHandler : HttpMessageHandler
 {
-    private readonly Queue<Func<HttpResponseMessage>> _script = new();
+    private readonly Queue<Func<Task<HttpResponseMessage>>> _script = new();
 
     public List<string> RequestBodies { get; } = [];
 
@@ -115,7 +115,19 @@ internal sealed class ScriptedClaudeHandler : HttpMessageHandler
 
     public ScriptedClaudeHandler Enqueue(string json)
     {
-        _script.Enqueue(() => Json(HttpStatusCode.OK, json));
+        _script.Enqueue(() => Task.FromResult(Json(HttpStatusCode.OK, json)));
+        return this;
+    }
+
+    // Holds the answer until the test opens the gate; arrived completes when the request is here.
+    public ScriptedClaudeHandler EnqueueGated(string json, TaskCompletionSource arrived, Task gate)
+    {
+        _script.Enqueue(async () =>
+        {
+            arrived.TrySetResult();
+            await gate;
+            return Json(HttpStatusCode.OK, json);
+        });
         return this;
     }
 
@@ -131,7 +143,7 @@ internal sealed class ScriptedClaudeHandler : HttpMessageHandler
 
                 // Keeps the SDK retry backoff out of the test run time.
                 response.Headers.TryAddWithoutValidation("retry-after-ms", "1");
-                return response;
+                return Task.FromResult(response);
             });
         }
 
@@ -174,7 +186,7 @@ internal sealed class ScriptedClaudeHandler : HttpMessageHandler
             throw new InvalidOperationException($"No scripted response left for request {RequestBodies.Count}");
         }
 
-        return _script.Dequeue()();
+        return await _script.Dequeue()();
     }
 
     private static HttpResponseMessage Json(HttpStatusCode status, string json) =>
@@ -264,12 +276,13 @@ internal sealed class KernelServiceHarness : IDisposable
             db.Database.EnsureCreated();
         }
 
+        Conversations = new ConversationService(DbFactory, NullLogger<ConversationService>.Instance);
         Service = new KernelService(
             new BotConfiguration { DiscordToken = "x", AnthropicApiKey = "test-key", MaxTokens = maxTokens },
             client,
             Logger,
             NullLogger<TelemetryFunctionFilter>.Instance,
-            new ConversationService(DbFactory, NullLogger<ConversationService>.Instance),
+            Conversations,
             new TelemetryService(DbFactory, NullLogger<TelemetryService>.Instance),
             plugins =>
             {
@@ -285,6 +298,8 @@ internal sealed class KernelServiceHarness : IDisposable
     public DatabaseFixture.TestDbContextFactory DbFactory { get; }
 
     public KernelService Service { get; }
+
+    public ConversationService Conversations { get; }
 
     public void Dispose()
     {

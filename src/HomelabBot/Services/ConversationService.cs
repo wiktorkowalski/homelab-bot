@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Globalization;
 using HomelabBot.Data;
 using HomelabBot.Data.Entities;
 using HomelabBot.Models;
@@ -29,9 +30,15 @@ public sealed class ConversationService
     // during the turn that produced it; later turns only need the gist.
     internal const int MaxToolResultChars = 8_000;
 
+    // A message the bot sent to the owner, stored in the owner's DM thread. The model gets it as a
+    // user message with this marker: it is not the owner's text and not the model's own answer.
+    internal const string BotMessageRole = "notification";
+
     // Ceiling on how many keyword-matched conversations get loaded and scored in memory.
     private const int MaxScoredConversations = 200;
     private const string LikeEscapeChar = "\\";
+
+    private readonly ConcurrentDictionary<ulong, SemaphoreSlim> _threadLocks = new();
 
     public ConversationService(
         IDbContextFactory<HomelabDbContext> dbFactory,
@@ -49,22 +56,31 @@ public sealed class ConversationService
         }
 
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
-        var conversation = await db.Conversations
-            .Include(c => c.Messages.OrderBy(m => m.Timestamp))
-            .FirstOrDefaultAsync(c => c.ThreadId == threadId, ct);
+        var conversation = await db.Conversations.FirstOrDefaultAsync(c => c.ThreadId == threadId, ct);
 
         var history = new ChatHistory();
         history.AddSystemMessage(systemPrompt);
 
         if (conversation is not null)
         {
-            foreach (var msg in conversation.Messages)
+            // The owner's DM thread is never reset, so read only the newest rows the window can hold.
+            var rows = await db.ConversationMessages
+                .AsNoTracking()
+                .Where(m => m.ConversationId == conversation.Id)
+                .OrderByDescending(m => m.Timestamp)
+                .ThenByDescending(m => m.Id)
+                .Take(HistoryLimit.Messages)
+                .ToListAsync(ct);
+            rows.Reverse();
+
+            // The cut can land inside a turn; history must not open with an answer.
+            foreach (var msg in rows)
             {
-                if (msg.Role == "user")
+                if (msg.Role is "user" or BotMessageRole)
                 {
                     history.AddUserMessage(msg.Content);
                 }
-                else if (msg.Role == "assistant")
+                else if (msg.Role == "assistant" && history.Count > 1)
                 {
                     history.AddAssistantMessage(msg.Content);
                 }
@@ -75,7 +91,7 @@ public sealed class ConversationService
 
             _logger.LogInformation(
                 "Loaded {Count} messages for thread {ThreadId}, kept {KeptCount} in history",
-                conversation.Messages.Count, threadId, history.Count - 1);
+                rows.Count, threadId, history.Count - 1);
         }
         else
         {
@@ -94,9 +110,41 @@ public sealed class ConversationService
         return history;
     }
 
-    public ChatHistory GetOrCreateHistory(ulong threadId, string systemPrompt)
+    // One writer per thread at a time. KernelService holds it for a whole turn: the tool loop
+    // appends to the cached history while it runs, and a message added in between would split a
+    // tool call from its result. Not reentrant: nothing that runs inside a turn may take it again.
+    public async Task<IDisposable> LockThreadAsync(ulong threadId, CancellationToken ct = default)
     {
-        return GetOrCreateHistoryAsync(threadId, systemPrompt).GetAwaiter().GetResult();
+        var gate = _threadLocks.GetOrAdd(threadId, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(ct);
+        return new ThreadLock(gate);
+    }
+
+    // Adds a message the bot already sent to the owner, so the owner can ask about it. It waits
+    // for a running turn on the thread to end, then becomes one user message of its own.
+    public async Task RecordBotMessageAsync(ulong threadId, string text, CancellationToken ct = default)
+    {
+        var record = FormatBotMessage(DateTime.UtcNow, text);
+
+        using (await LockThreadAsync(threadId, ct))
+        {
+            if (_histories.TryGetValue(threadId, out var history))
+            {
+                history.AddUserMessage(record);
+                TrimHistoryIfNeeded(history);
+            }
+
+            await PersistMessageAsync(threadId, BotMessageRole, record, ct);
+        }
+
+        _logger.LogInformation("Recorded a sent bot message ({Chars} chars) in thread {ThreadId}", record.Length, threadId);
+    }
+
+    // The stored text is the text the model sees, so a reload builds the same request bytes.
+    internal static string FormatBotMessage(DateTime sentAtUtc, string text)
+    {
+        var record = $"[Bot message sent to the owner at {sentAtUtc.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture)} UTC]\n{text}";
+        return record.Length > MaxToolResultChars ? Truncate(record, MaxToolResultChars) : record;
     }
 
     public async Task AddUserMessageAsync(ulong threadId, string message, CancellationToken ct = default)
@@ -257,6 +305,10 @@ public sealed class ConversationService
 
     private async Task PersistMessageAsync(ulong threadId, string role, string content, CancellationToken ct = default)
     {
+        // Taken before the first await: a background save of the previous message can finish
+        // after this one starts, and the load orders rows by this time.
+        var timestamp = DateTime.UtcNow;
+
         try
         {
             await using var db = await _dbFactory.CreateDbContextAsync(ct);
@@ -278,11 +330,11 @@ public sealed class ConversationService
                 ConversationId = conversation.Id,
                 Role = role,
                 Content = content,
-                Timestamp = DateTime.UtcNow
+                Timestamp = timestamp
             };
 
             db.ConversationMessages.Add(msg);
-            conversation.LastMessageAt = DateTime.UtcNow;
+            conversation.LastMessageAt = timestamp;
 
             // Auto-set title from first user message
             if (role == "user" && string.IsNullOrEmpty(conversation.Title))
@@ -461,4 +513,13 @@ public sealed class ConversationService
     // Auto-invoked results are stored as strings already; ToString covers anything else without
     // the serializer throwing on an odd object graph.
     private static string? ResultText(FunctionResultContent result) => result.Result?.ToString();
+
+    private sealed class ThreadLock : IDisposable
+    {
+        private SemaphoreSlim? _gate;
+
+        public ThreadLock(SemaphoreSlim gate) => _gate = gate;
+
+        public void Dispose() => Interlocked.Exchange(ref _gate, null)?.Release();
+    }
 }

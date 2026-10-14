@@ -560,25 +560,69 @@ public sealed class DiscordBotService : BackgroundService
             return;
         }
 
-        var threadId = SmartNotification.CurrentDailyThreadId;
-        SmartNotification.MarkConversationActive();
-
-        _logger.LogInformation("Processing DM from owner, using daily cycle threadId={ThreadId}", threadId);
+        _logger.LogInformation("Processing DM from owner on thread {ThreadId}", HomelabOwner.DmThreadId);
 
         try
         {
             await e.Channel.TriggerTypingAsync();
 
             var response = await _kernelService.ProcessMessageAsync(
-                threadId, content, e.Author.Id);
+                HomelabOwner.DmThreadId, content, e.Author.Id);
 
             await SendToChannelSplitAsync(e.Channel, response);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error handling DM message");
-            await e.Channel.SendMessageAsync("Something went wrong while processing your message. Please try again later.");
+            const string failure = "Something went wrong while processing your message. Please try again later.";
+            await e.Channel.SendMessageAsync(failure);
+            RecordForOwner(e.Author.Id, failure);
         }
+    }
+
+    // Every message the owner gets in DMs goes into the DM thread, so the owner can ask about it.
+    // Called after a send worked. Not awaited: the alert webhook waits on the send, and the record
+    // waits for a running turn on the thread.
+    private void RecordForOwner(ulong userId, string text)
+    {
+        if (userId == HomelabOwner.DiscordUserId && !string.IsNullOrWhiteSpace(text))
+        {
+            _ = RecordForOwnerAsync(text);
+        }
+    }
+
+    private async Task RecordForOwnerAsync(string text)
+    {
+        try
+        {
+            await _conversationService.RecordBotMessageAsync(HomelabOwner.DmThreadId, text);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not record a sent message in the owner DM thread");
+        }
+    }
+
+    // The text an embed shows: title, fields, description. Colors and timestamps are left out.
+    internal static string EmbedText(DiscordEmbed embed)
+    {
+        var lines = new List<string>();
+        if (!string.IsNullOrWhiteSpace(embed.Title))
+        {
+            lines.Add(embed.Title);
+        }
+
+        if (embed.Fields is { } fields)
+        {
+            lines.AddRange(fields.Select(f => $"{f.Name}: {f.Value}"));
+        }
+
+        if (!string.IsNullOrWhiteSpace(embed.Description))
+        {
+            lines.Add(embed.Description);
+        }
+
+        return string.Join("\n", lines);
     }
 
     private static async Task SendResponseAsync(DiscordChannel channel, string response)
@@ -612,6 +656,7 @@ public sealed class DiscordBotService : BackgroundService
         if (dm != null)
         {
             await dm.SendMessageAsync(embed: embed);
+            RecordForOwner(userId, EmbedText(embed));
         }
     }
 
@@ -621,6 +666,7 @@ public sealed class DiscordBotService : BackgroundService
         if (dm != null)
         {
             await dm.SendMessageAsync(message);
+            RecordForOwner(userId, message);
         }
     }
 
@@ -637,6 +683,7 @@ public sealed class DiscordBotService : BackgroundService
             .AddComponents(components);
 
         await dm.SendMessageAsync(builder);
+        RecordForOwner(userId, EmbedText(embed));
     }
 
     public async Task SendDmSplitAsync(ulong userId, string content)
@@ -656,6 +703,9 @@ public sealed class DiscordBotService : BackgroundService
                 await Task.Delay(100); // Small delay between messages
             }
         }
+
+        // One record for the whole text: the split is only Discord's length limit.
+        RecordForOwner(userId, content);
     }
 
     public async Task SendDmNotificationFeedbackAsync(ulong userId, string issueHash)

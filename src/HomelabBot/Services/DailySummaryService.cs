@@ -36,8 +36,8 @@ public sealed class DailySummaryService : ScheduledBackgroundService
     {
         _logger.LogInformation("Starting daily healthcheck cycle");
 
-        // Start a new notification cycle (learns from previous day, clears old context)
-        await _smartNotification.StartNewCycleAsync(ct);
+        // Start a new notification cycle (clears the old daily context)
+        _smartNotification.StartNewCycle();
 
         // Run the full healthcheck investigation and route through smart notification
         try
