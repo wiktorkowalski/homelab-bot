@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using HomelabBot.Plugins;
 using HomelabBot.Services;
@@ -36,8 +37,44 @@ public sealed class ToolConfirmationTests : IDisposable
 
         Assert.Equal("restarted", answer);
         Assert.Equal(1, _harness.Plugin.RestartCalls);
-        Assert.Equal(["Test.Restart(container: plex)"], _asked);
+        Assert.Equal(["""Test.Restart {"container":"plex"}"""], _asked);
         Assert.Equal("container restarted", ToolResultSentInRound(1));
+    }
+
+    // Padding, a line break or a backtick must not hide the rest of the call from the owner.
+    [Fact]
+    public async Task ArgumentsAreShownInFull_WithLineBreaksAndBackticksEscaped()
+    {
+        var hidden = $"plex{new string(' ', 300)}\n\n```\nand-also-db";
+        _handler
+            .Enqueue(ClaudeResponses.ToolUseWithInput("Test_Restart", JsonSerializer.Serialize(new { container = hidden })))
+            .Enqueue(ClaudeResponses.Text("restarted"));
+        using var scope = AnswerWith(ToolConfirmationDecision.Approved);
+
+        await _harness.Service.ProcessMessageAsync(ThreadId, "restart it");
+
+        var shown = Assert.Single(_asked);
+        Assert.DoesNotContain('\n', shown);
+        Assert.DoesNotContain('`', shown);
+        Assert.EndsWith("\\n\\n\\u0060\\u0060\\u0060\\nand-also-db\"}", shown, StringComparison.Ordinal);
+        Assert.Contains(new string(' ', 300), shown, StringComparison.Ordinal);
+    }
+
+    // Text too long for one Discord message cannot be shown in full, so nobody is asked.
+    [Fact]
+    public async Task ArgumentsTooLongToShow_TheToolDoesNotRun_AndNobodyIsAsked()
+    {
+        var longName = new string('a', ConfirmationService.MaxActionChars);
+        _handler
+            .Enqueue(ClaudeResponses.ToolUseWithInput("Test_Restart", JsonSerializer.Serialize(new { container = longName })))
+            .Enqueue(ClaudeResponses.Text("too long"));
+        using var scope = AnswerWith(ToolConfirmationDecision.Approved);
+
+        await _harness.Service.ProcessMessageAsync(ThreadId, "restart it");
+
+        Assert.Equal(0, _harness.Plugin.RestartCalls);
+        Assert.Empty(_asked);
+        Assert.Equal(ToolConfirmationFilter.TooLongResult, ToolResultSentInRound(1));
     }
 
     // The enum is internal, so the theory takes a flag.

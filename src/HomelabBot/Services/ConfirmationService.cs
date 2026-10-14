@@ -19,6 +19,9 @@ public sealed class ConfirmationService
     internal const string ApprovePrefix = "toolconfirm_approve_";
     internal const string RejectPrefix = "toolconfirm_reject_";
 
+    // Discord allows 2000 chars per message; the rest is room for the prompt and outcome lines.
+    internal const int MaxActionChars = 1800;
+
     internal static readonly TimeSpan Timeout = TimeSpan.FromMinutes(5);
 
     private readonly ConcurrentDictionary<string, PendingConfirmation> _pending = new(StringComparer.Ordinal);
@@ -87,6 +90,12 @@ public sealed class ConfirmationService
     internal async Task<ToolConfirmationDecision> AskAsync(
         DiscordChannel channel, ulong userId, string action, Action<string>? onSent, CancellationToken ct)
     {
+        // The owner approves the text as shown: refuse what cannot be shown in full and unchanged.
+        if (action.Length > MaxActionChars || action.Contains('`', StringComparison.Ordinal))
+        {
+            throw new ArgumentException("The action text is too long or holds a backtick; it cannot be shown for confirmation.", nameof(action));
+        }
+
         var pending = Register(userId, action);
         var prompt = PromptText(action);
 
@@ -94,7 +103,10 @@ public sealed class ConfirmationService
         try
         {
             message = await channel.SendMessageAsync(
-                new DiscordMessageBuilder().WithContent(prompt).AddComponents(Buttons(pending.Id, disabled: false)));
+                new DiscordMessageBuilder()
+                    .WithContent(prompt)
+                    .WithAllowedMentions(Mentions.None)
+                    .AddComponents(Buttons(pending.Id, disabled: false)));
         }
         catch
         {
@@ -180,8 +192,9 @@ public sealed class ConfirmationService
             _ => $"⌛ **No answer within {Timeout.TotalMinutes:0} minutes**, did not run\n{Code(action)}",
         };
 
-    // A backtick in an argument would end the code span early.
-    private static string Code(string action) => $"`{action.Replace('`', '\'')}`";
+    // A code block: Discord renders no markdown and pings no one inside it. AskAsync takes no
+    // backtick, so the text cannot end the block early.
+    private static string Code(string action) => $"```\n{action}\n```";
 
     private static DiscordComponent[] Buttons(string id, bool disabled) =>
     [

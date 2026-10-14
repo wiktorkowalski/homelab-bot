@@ -58,6 +58,18 @@ public sealed class ConfirmationServiceTests
         Assert.Equal(ConfirmationClick.Unknown, _service.Answer(pending.Id, Owner, approve: true).Click);
     }
 
+    // The owner must see exactly what runs: no cut, and no backtick that could end the code block.
+    [Theory]
+    [InlineData("Docker.StopContainer {\"name\":\"a`b\"}")]
+    [InlineData(null)]
+    public async Task ActionThatCannotBeShownUnchanged_IsRefusedBeforeAnythingIsSent(string? action)
+    {
+        action ??= new string('a', ConfirmationService.MaxActionChars + 1);
+
+        await Assert.ThrowsAsync<ArgumentException>(
+            () => _service.AskAsync(channel: null!, Owner, action, onSent: null, CancellationToken.None));
+    }
+
     [Fact]
     public void UnknownId_IsUnknown()
     {
