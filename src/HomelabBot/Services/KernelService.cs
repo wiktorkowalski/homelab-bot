@@ -277,6 +277,8 @@ public sealed class KernelService
         var sw = Stopwatch.StartNew();
         var systemPrompt = systemPromptOverride ?? SystemPrompt;
         var history = await _conversationService.GetOrCreateHistoryAsync(threadId, systemPrompt, ct);
+
+        // No ct on the Add* calls: the message is in the in-memory history already, so the row must follow.
         await _conversationService.AddUserMessageAsync(threadId, userMessage);
 
         var historyJson = JsonSerializer.Serialize(history.Select(m => new { m.Role, Content = TelemetryText(m) }));
