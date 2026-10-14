@@ -247,7 +247,7 @@ public sealed class KernelService
 
     public Kernel GetKernel() => _kernel;
 
-    public async Task<string> ProcessMessageAsync(
+    public Task<string> ProcessMessageAsync(
         ulong threadId,
         string userMessage,
         ulong? userId = null,
@@ -256,10 +256,42 @@ public sealed class KernelService
         string? systemPromptOverride = null,
         IReadOnlyList<string>? pluginAllowList = null,
         bool allowToolUse = true,
-        CancellationToken ct = default)
+        CancellationToken ct = default) =>
+        ProcessTurnAsync(
+            threadId, userMessage, userId, traceType, maxTokens, systemPromptOverride, pluginAllowList, allowToolUse, forgetHistory: false, ct);
+
+    // One answer, no memory: a fresh thread, and its cached history is dropped when the call
+    // ends. Pass threadId only to tie the stored rows and investigations to a known id.
+    public Task<string> ProcessOneShotAsync(
+        string userMessage,
+        ulong? userId = null,
+        TraceType traceType = TraceType.Chat,
+        int? maxTokens = null,
+        string? systemPromptOverride = null,
+        IReadOnlyList<string>? pluginAllowList = null,
+        bool allowToolUse = true,
+        ulong? threadId = null,
+        CancellationToken ct = default) =>
+        ProcessTurnAsync(
+            threadId ?? (ulong)Random.Shared.NextInt64(1, long.MaxValue),
+            userMessage, userId, traceType, maxTokens, systemPromptOverride, pluginAllowList, allowToolUse, forgetHistory: true, ct);
+
+    private async Task<string> ProcessTurnAsync(
+        ulong threadId,
+        string userMessage,
+        ulong? userId,
+        TraceType traceType,
+        int? maxTokens,
+        string? systemPromptOverride,
+        IReadOnlyList<string>? pluginAllowList,
+        bool allowToolUse,
+        bool forgetHistory,
+        CancellationToken ct)
     {
         // Held to the end of the method, so the error paths that close the turn are covered too.
-        using var threadLock = await _conversationService.LockThreadAsync(threadId, ct);
+        // A one-shot history is cleared under the lock: a second caller on the same id must not
+        // take the cached history that is about to be dropped.
+        using var threadLock = await _conversationService.LockThreadAsync(threadId, ct, clearHistoryOnRelease: forgetHistory);
 
         var (traceName, traceTags) = TraceConfig[traceType];
         var tagsJson = JsonSerializer.Serialize(traceTags);
@@ -399,31 +431,6 @@ public sealed class KernelService
         finally
         {
             _telemetryService.SetActiveInteraction(null);
-        }
-    }
-
-    // One answer, no memory: a fresh thread, and its cached history is dropped when the call
-    // ends. Pass threadId only to tie the stored rows and investigations to a known id.
-    public async Task<string> ProcessOneShotAsync(
-        string userMessage,
-        ulong? userId = null,
-        TraceType traceType = TraceType.Chat,
-        int? maxTokens = null,
-        string? systemPromptOverride = null,
-        IReadOnlyList<string>? pluginAllowList = null,
-        bool allowToolUse = true,
-        ulong? threadId = null,
-        CancellationToken ct = default)
-    {
-        var id = threadId ?? (ulong)Random.Shared.NextInt64(1, long.MaxValue);
-        try
-        {
-            return await ProcessMessageAsync(
-                id, userMessage, userId, traceType, maxTokens, systemPromptOverride, pluginAllowList, allowToolUse, ct);
-        }
-        finally
-        {
-            _conversationService.ClearHistory(id);
         }
     }
 

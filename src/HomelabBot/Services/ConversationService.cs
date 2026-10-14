@@ -123,11 +123,12 @@ public sealed class ConversationService
     // One writer per thread at a time. KernelService holds it for a whole turn: the tool loop
     // appends to the cached history while it runs, and a message added in between would split a
     // tool call from its result. Not reentrant: nothing that runs inside a turn may take it again.
-    public async Task<IDisposable> LockThreadAsync(ulong threadId, CancellationToken ct = default)
+    // clearHistoryOnRelease drops the cached history before the next waiter can take it.
+    public async Task<IDisposable> LockThreadAsync(ulong threadId, CancellationToken ct = default, bool clearHistoryOnRelease = false)
     {
         var gate = _threadLocks.GetOrAdd(threadId, _ => new SemaphoreSlim(1, 1));
         await gate.WaitAsync(ct);
-        return new ThreadLock(gate);
+        return new ThreadLock(gate, clearHistoryOnRelease ? () => ClearHistory(threadId) : null);
     }
 
     // Adds a message the bot already sent to the owner, so the owner can ask about it. It waits
@@ -477,10 +478,31 @@ public sealed class ConversationService
 
     private sealed class ThreadLock : IDisposable
     {
+        private readonly Action? _beforeRelease;
         private SemaphoreSlim? _gate;
 
-        public ThreadLock(SemaphoreSlim gate) => _gate = gate;
+        public ThreadLock(SemaphoreSlim gate, Action? beforeRelease)
+        {
+            _gate = gate;
+            _beforeRelease = beforeRelease;
+        }
 
-        public void Dispose() => Interlocked.Exchange(ref _gate, null)?.Release();
+        public void Dispose()
+        {
+            var gate = Interlocked.Exchange(ref _gate, null);
+            if (gate is null)
+            {
+                return;
+            }
+
+            try
+            {
+                _beforeRelease?.Invoke();
+            }
+            finally
+            {
+                gate.Release();
+            }
+        }
     }
 }
