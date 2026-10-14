@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Runtime.CompilerServices;
 using System.Text;
 using HomelabBot.Models;
 using HomelabBot.Services;
@@ -10,6 +11,9 @@ namespace HomelabBot.Plugins;
 [McpServerToolType]
 public sealed class InvestigationPlugin
 {
+    private const string NoThreadError =
+        "Error: No conversation thread for this call. Investigation tools work only inside a chat turn.";
+
     private readonly InvestigationService _memoryService;
     private readonly ConversationService _conversationService;
     private readonly IncidentSimilarityService _similarityService;
@@ -33,9 +37,13 @@ public sealed class InvestigationPlugin
     [KernelFunction]
     [Description("Start tracking an investigation for a problem. Call this when beginning to diagnose an issue. Returns past similar incidents if any.")]
     public async Task<string> StartInvestigation(
-        [Description("Thread/channel ID for this conversation")] ulong threadId,
         [Description("Brief description of the symptom or problem (e.g., 'network slow', 'container crashed')")] string symptom)
     {
+        if (CurrentThread() is not { } threadId)
+        {
+            return NoThreadError;
+        }
+
         _logger.LogInformation("Starting investigation for '{Symptom}' in thread {ThreadId}", symptom, threadId);
 
         // Recent only: an investigation nobody resolved must not block a new one days later.
@@ -112,11 +120,15 @@ public sealed class InvestigationPlugin
     [KernelFunction]
     [Description("Record a diagnostic step taken during investigation. Call this after each check or action.")]
     public async Task<string> RecordStep(
-        [Description("Thread/channel ID")] ulong threadId,
         [Description("What action was taken (e.g., 'checked router CPU', 'listed containers')")] string action,
         [Description("Plugin/tool used (e.g., 'MikroTik', 'Docker')")] string? plugin = null,
         [Description("Brief summary of the result (e.g., 'CPU at 45%', '3 containers stopped')")] string? result = null)
     {
+        if (CurrentThread() is not { } threadId)
+        {
+            return NoThreadError;
+        }
+
         if (!_activeInvestigations.TryGetValue(threadId, out var investigationId))
         {
             var active = await _memoryService.GetActiveInvestigationAsync(threadId);
@@ -136,9 +148,13 @@ public sealed class InvestigationPlugin
     [KernelFunction]
     [Description("Resolve and close the current investigation. Call this when the issue is fixed or root cause identified.")]
     public async Task<string> ResolveInvestigation(
-        [Description("Thread/channel ID")] ulong threadId,
         [Description("What fixed the issue or what was the root cause")] string resolution)
     {
+        if (CurrentThread() is not { } threadId)
+        {
+            return NoThreadError;
+        }
+
         if (!_activeInvestigations.TryGetValue(threadId, out var investigationId))
         {
             var active = await _memoryService.GetActiveInvestigationAsync(threadId);
@@ -236,9 +252,13 @@ public sealed class InvestigationPlugin
 
     [KernelFunction]
     [Description("Get the current investigation status for this thread.")]
-    public async Task<string> GetInvestigationStatus(
-        [Description("Thread/channel ID")] ulong threadId)
+    public async Task<string> GetInvestigationStatus()
     {
+        if (CurrentThread() is not { } threadId)
+        {
+            return NoThreadError;
+        }
+
         var active = await _memoryService.GetActiveInvestigationAsync(threadId);
 
         if (active == null)
@@ -269,5 +289,18 @@ public sealed class InvestigationPlugin
         }
 
         return sb.ToString();
+    }
+
+    // The thread comes from the turn that runs the tool, never from the model. A runbook or
+    // healing chain that a background service runs has no turn, so it gets no thread.
+    private ulong? CurrentThread([CallerMemberName] string tool = "")
+    {
+        var threadId = ConversationThreadScope.Current;
+        if (threadId is null)
+        {
+            _logger.LogWarning("{Tool} was called outside a conversation turn; no thread to attach the investigation to", tool);
+        }
+
+        return threadId;
     }
 }

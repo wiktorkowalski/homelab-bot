@@ -88,11 +88,11 @@ public sealed class KernelService
 
         Investigation & Troubleshooting:
         When diagnosing issues (something broken, slow, not working):
-        1. Call StartInvestigation(threadId, symptom) - this checks for similar past issues
+        1. Call StartInvestigation(symptom) - this checks for similar past issues
         2. Check the most likely cause first based on past patterns
         3. Call RecordStep() after each diagnostic check
         4. Cross-reference related services (if Docker issue, check Loki logs too)
-        5. Call ResolveInvestigation(threadId, resolution) when fixed - this saves the pattern
+        5. Call ResolveInvestigation(resolution) when fixed - this saves the pattern
 
         Messages the bot sent to the owner:
         - A user message that starts with "[Bot message sent to the owner at ...]" is a copy of an alert, report or notification this bot sent to the owner earlier. The owner did not write it.
@@ -301,6 +301,7 @@ public sealed class KernelService
 
         // Sums usage of every billed LLM request in this interaction: tool rounds, retries, nested tool calls.
         using var usageScope = TokenUsageScope.Begin();
+        using var threadScope = ConversationThreadScope.Begin(threadId);
 
         // The user message is already in the history, so the start is inside the try: a cancel or
         // a database failure here must close the turn too.
