@@ -127,7 +127,7 @@ namespace HomelabBot.Data.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("ConversationId");
+                    b.HasIndex("ConversationId", "Timestamp");
 
                     b.ToTable("ConversationMessages");
                 });

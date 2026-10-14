@@ -1,5 +1,10 @@
+using System.Collections.Concurrent;
+using HomelabBot.Data;
 using HomelabBot.Data.Entities;
 using HomelabBot.Services;
+using Microsoft.Data.Sqlite;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace HomelabBot.Tests;
@@ -144,6 +149,148 @@ public class ConversationSearchTests : IClassFixture<DatabaseFixture>
         var results = await SearchAsync($"nosuchterm{Random.Shared.NextInt64()}");
 
         Assert.Empty(results);
+    }
+
+    [Fact]
+    public async Task Search_LongConversation_ReturnsOnlyTheMatchingMessagesInTimeOrder()
+    {
+        var marker = $"oomkill{Random.Shared.NextInt64()}";
+        var start = new DateTime(2022, 2, 1, 0, 0, 0, DateTimeKind.Utc);
+
+        await SeedLongConversationAsync(
+            _fixture.DbContextFactory, (ulong)Random.Shared.NextInt64(), start, 300, i => i is 40 or 150 or 290 ? $"container {marker} at step {i}" : $"routine chat {i}");
+
+        var results = await SearchAsync(marker);
+
+        var hit = Assert.Single(results);
+        Assert.Equal(1, hit.Score);
+        Assert.Equal(
+            [$"container {marker} at step 40", $"container {marker} at step 150", $"container {marker} at step 290"],
+            hit.RelevantMessages.Select(m => m.Content));
+    }
+
+    [Fact]
+    public async Task Search_LongConversation_CapsRelevantMessagesAtTheFiveOldestMatches()
+    {
+        var marker = $"diskfull{Random.Shared.NextInt64()}";
+        var start = new DateTime(2022, 3, 1, 0, 0, 0, DateTimeKind.Utc);
+
+        await SeedLongConversationAsync(
+            _fixture.DbContextFactory, (ulong)Random.Shared.NextInt64(), start, 200, i => i % 20 == 0 ? $"{marker} #{i}" : $"noise {i}");
+
+        var results = await SearchAsync(marker);
+
+        var hit = Assert.Single(results);
+        Assert.Equal(
+            [$"{marker} #0", $"{marker} #20", $"{marker} #40", $"{marker} #60", $"{marker} #80"],
+            hit.RelevantMessages.Select(m => m.Content));
+    }
+
+    [Fact]
+    public async Task Search_TwoKeywords_ReturnsMessagesMatchingEitherKeyword()
+    {
+        var first = $"alpha{Random.Shared.NextInt64()}";
+        var second = $"beta{Random.Shared.NextInt64()}";
+        var start = new DateTime(2022, 4, 1, 0, 0, 0, DateTimeKind.Utc);
+
+        await SeedLongConversationAsync(
+            _fixture.DbContextFactory, (ulong)Random.Shared.NextInt64(), start, 50, i => i switch
+            {
+                10 => $"only {first} here",
+                20 => $"only {second} here",
+                _ => $"noise {i}",
+            });
+
+        var results = await SearchAsync($"{first} {second}");
+
+        var hit = Assert.Single(results);
+        Assert.Equal(2, hit.Score);
+        Assert.Equal([$"only {first} here", $"only {second} here"], hit.RelevantMessages.Select(m => m.Content));
+    }
+
+    [Fact]
+    public async Task Search_MatchesCaseInsensitively()
+    {
+        var stamp = Random.Shared.NextInt64();
+        var now = new DateTime(2022, 5, 1, 0, 0, 0, DateTimeKind.Utc);
+
+        await SeedAsync(((ulong)Random.Shared.NextInt64(), $"Traefik{stamp} returned 502", now));
+
+        var results = await SearchAsync($"TRAEFIK{stamp}");
+
+        var hit = Assert.Single(results);
+        Assert.Equal($"Traefik{stamp} returned 502", Assert.Single(hit.RelevantMessages).Content);
+    }
+
+    [Fact]
+    public async Task FormatResults_KeepsTheTitleAndRolePreviewLayout()
+    {
+        var marker = $"certexpiry{Random.Shared.NextInt64()}";
+        var start = new DateTime(2022, 6, 1, 0, 0, 0, DateTimeKind.Utc);
+        var longText = $"{marker} {new string('x', 200)}";
+
+        await SeedLongConversationAsync(
+            _fixture.DbContextFactory, (ulong)Random.Shared.NextInt64(), start, 30, i => i == 5 ? longText : $"noise {i}");
+
+        var results = await SearchAsync(marker);
+        var hit = Assert.Single(results);
+
+        var expected =
+            "Found 1 relevant conversation(s):\n" + Environment.NewLine
+            + $"**[{hit.TimeAgo}] Untitled**" + Environment.NewLine
+            + $"  user: {longText[..147]}..." + Environment.NewLine
+            + Environment.NewLine;
+        Assert.Equal(expected, Models.ConversationSearchResult.FormatResults(results));
+    }
+
+    [Fact]
+    public async Task Search_NeverReadsMessagesWithoutAMatchFilter()
+    {
+        // A long conversation (the owner's permanent DM thread) must not be pulled into memory
+        // whole: every query that touches the message table has to filter by the search text.
+        var commands = new ConcurrentQueue<string>();
+        using var connection = new SqliteConnection("DataSource=:memory:");
+        connection.Open();
+        var options = new DbContextOptionsBuilder<HomelabDbContext>()
+            .UseSqlite(connection)
+            .LogTo(commands.Enqueue, [RelationalEventId.CommandExecuted])
+            .Options;
+        await using (var context = new HomelabDbContext(options))
+        {
+            await context.Database.EnsureCreatedAsync();
+        }
+
+        var factory = new DatabaseFixture.TestDbContextFactory(options);
+        var marker = $"kernelpanic{Random.Shared.NextInt64()}";
+        await SeedLongConversationAsync(
+            factory, 42, new DateTime(2022, 7, 1, 0, 0, 0, DateTimeKind.Utc), 100, i => i == 50 ? marker : $"noise {i}");
+        commands.Clear();
+
+        var service = new ConversationService(factory, NullLogger<ConversationService>.Instance);
+        var results = await service.SearchConversationsAsync(marker);
+
+        Assert.Single(results);
+        var messageReads = commands.Where(c => c.Contains("\"ConversationMessages\"", StringComparison.Ordinal)).ToList();
+        Assert.NotEmpty(messageReads);
+        Assert.All(messageReads, sql => Assert.Contains("LIKE", sql, StringComparison.Ordinal));
+    }
+
+    private static async Task SeedLongConversationAsync(
+        IDbContextFactory<HomelabDbContext> factory, ulong threadId, DateTime start, int count, Func<int, string> content)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.Conversations.Add(new Conversation
+        {
+            ThreadId = threadId,
+            LastMessageAt = start.AddMinutes(count - 1),
+            Messages = [.. Enumerable.Range(0, count).Select(i => new ConversationMessage
+            {
+                Role = "user",
+                Content = content(i),
+                Timestamp = start.AddMinutes(i),
+            })],
+        });
+        await db.SaveChangesAsync();
     }
 
     private Task<List<Models.ConversationSearchResult>> SearchAsync(string query) =>

@@ -73,6 +73,10 @@ public sealed class HomelabDbContext : DbContext
                 .WithMany(c => c.Messages)
                 .HasForeignKey(m => m.ConversationId)
                 .OnDelete(DeleteBehavior.Cascade);
+
+            // History load and search read one conversation newest-first or oldest-first. The
+            // composite also covers the foreign key, so EF drops the ConversationId-only index.
+            entity.HasIndex(m => new { m.ConversationId, m.Timestamp });
         });
 
         modelBuilder.Entity<LlmInteraction>(entity =>
