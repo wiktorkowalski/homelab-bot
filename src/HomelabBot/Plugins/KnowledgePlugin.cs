@@ -43,7 +43,7 @@ public sealed class KnowledgePlugin
     }
 
     [KernelFunction]
-    [McpServerTool(Name = "SearchKnowledge")]
+    [McpServerTool(Name = "SearchKnowledge", ReadOnly = true)]
     [Description("Recall what you know about one specific topic. Call this BEFORE taking actions to check existing knowledge. Always pass a topic; for broad or fuzzy questions use SmartRecallKnowledge instead.")]
     public async Task<string> RecallKnowledge(
         [Description("Topic to recall (e.g., 'docker', 'loki', 'network', 'alias'). Required in practice: an empty topic returns only the top facts, not the whole knowledge base.")] string? topic = null)

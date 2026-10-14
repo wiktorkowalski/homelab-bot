@@ -34,7 +34,7 @@ public sealed class TrueNASPlugin
     }
 
     [KernelFunction]
-    [McpServerTool]
+    [McpServerTool(ReadOnly = true)]
     [Description("Gets the health status of all ZFS pools on TrueNAS.")]
     public async Task<string> GetPoolStatus()
     {

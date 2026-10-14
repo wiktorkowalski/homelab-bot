@@ -38,7 +38,7 @@ public sealed class GrafanaPlugin
     }
 
     [KernelFunction]
-    [McpServerTool(Name = "ListGrafanaDashboards")]
+    [McpServerTool(Name = "ListGrafanaDashboards", ReadOnly = true)]
     [Description("Lists all available Grafana dashboards with their UIDs and titles.")]
     public async Task<string> ListDashboards()
     {

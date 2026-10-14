@@ -28,7 +28,7 @@ public sealed class AlertmanagerPlugin
     }
 
     [KernelFunction]
-    [McpServerTool(Name = "GetAlerts")]
+    [McpServerTool(Name = "GetAlerts", ReadOnly = true)]
     [Description("Gets all currently firing alerts from Alertmanager.")]
     public async Task<string> GetActiveAlerts()
     {
