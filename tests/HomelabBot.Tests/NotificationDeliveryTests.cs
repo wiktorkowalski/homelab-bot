@@ -81,8 +81,23 @@ public sealed class NotificationDeliveryTests : IDisposable
     }
 
     [Fact]
+    public async Task NoDmChannel_DailyThreadSaysTheOwnerWasNotTold()
+    {
+        _discordBot.SendDmSplitAsync(Arg.Any<ulong>(), Arg.Any<string>()).Returns(false);
+
+        var sent = await _service.EvaluateAndNotifyAsync(_candidate, CancellationToken.None);
+
+        Assert.False(sent);
+        var history = await _harness.Conversations.GetOrCreateHistoryAsync(_service.CurrentDailyThreadId, "unused");
+        Assert.StartsWith(NotDeliveredMarker, history[^1].Content, StringComparison.Ordinal);
+        await _discordBot.DidNotReceive().SendDmNotificationFeedbackAsync(Arg.Any<ulong>(), Arg.Any<string>());
+    }
+
+    [Fact]
     public async Task DmSent_DailyThreadEndsWithTheDecision()
     {
+        _discordBot.SendDmSplitAsync(Arg.Any<ulong>(), Arg.Any<string>()).Returns(true);
+
         var sent = await _service.EvaluateAndNotifyAsync(_candidate, CancellationToken.None);
 
         Assert.True(sent);

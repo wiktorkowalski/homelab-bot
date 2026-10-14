@@ -755,12 +755,13 @@ public class DiscordBotService : BackgroundService
         SendDmMessageAsync(
             userId, new DiscordMessageBuilder().WithEmbed(embed).AddComponents(components), EmbedText(embed));
 
-    public virtual async Task SendDmSplitAsync(ulong userId, string content)
+    // False when there is no DM channel (client not connected, user in no guild); the lookup logs why.
+    public virtual async Task<bool> SendDmSplitAsync(ulong userId, string content)
     {
         var dm = await GetDmChannelAsync(userId);
         if (dm == null)
         {
-            return;
+            return false;
         }
 
         var chunks = MessageSplitService.SplitIntoSections(content);
@@ -775,6 +776,7 @@ public class DiscordBotService : BackgroundService
 
         // One record for the whole text: the split is only Discord's length limit.
         RecordForOwner(userId, content);
+        return true;
     }
 
     // Buttons only, nothing the owner would ask about: not recorded.

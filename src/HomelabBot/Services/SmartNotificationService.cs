@@ -293,7 +293,11 @@ public sealed class SmartNotificationService
 
         try
         {
-            await _discordBot.SendDmSplitAsync(userId, report);
+            if (!await _discordBot.SendDmSplitAsync(userId, report))
+            {
+                _logger.LogWarning("Failed to send notification for {Source}: no DM channel", candidate.Source);
+                return false;
+            }
         }
         catch (Exception ex)
         {
