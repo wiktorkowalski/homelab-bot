@@ -66,6 +66,8 @@ internal sealed class McpTestHost : IAsyncDisposable
         return (result.IsError == true, Assert.IsType<TextContentBlock>(Assert.Single(result.Content)).Text);
     }
 
+    public async Task<IList<McpClientTool>> ListToolsAsync() => await _client.ListToolsAsync();
+
     public async ValueTask DisposeAsync()
     {
         await _client.DisposeAsync();
