@@ -78,6 +78,8 @@ public class ClaudeOutputRedactorTests
     [InlineData("DB_PASSWORD=" + "hunter2", "DB_PASSWORD=[redacted]")]
     [InlineData("api_key: abc123", "api_key: [redacted]")]
     [InlineData("apiKey: abc123", "apiKey: [redacted]")]
+    [InlineData("password: hunter " + "two", "password: [redacted]")]
+    [InlineData("API_KEY=abc " + "def", "API_KEY=[redacted]")]
     [InlineData("DB_PASSWORD=\"my pass\"", "DB_PASSWORD=[redacted]")]
     [InlineData("  export GITHUB_TOKEN=" + "xyz", "  export GITHUB_TOKEN=[redacted]")]
     [InlineData("SECRET_KEY=sk-" + "ant-api03-AbCdEfGhIjKlMnOpQrSt", "SECRET_KEY=[redacted]")]

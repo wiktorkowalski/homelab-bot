@@ -11,11 +11,18 @@ internal static class ClaudeOutputRedactor
     // Up to the matching END line, or to the end of a text that was cut inside the block.
     private static readonly Regex PrivateKeyBlock = new(@"-----BEGIN ([A-Z0-9 ]*)PRIVATE KEY-----.*?(?:-----END \1PRIVATE KEY-----|\z)", RegexOptions.Singleline | RegexOptions.Compiled);
 
-    // NAME=value or NAME: value on a line of its own (env file, YAML, export, list item). The secret word
-    // is a whole part of the name and the value one token or a quoted string, so "Key: the disk" and
-    // "Tokens: 1234" stay.
+    // NAME=value or NAME: value on a line of its own (env file, YAML, export, list item), where the secret
+    // word is a whole part of the name. A password or secret loses the rest of the line, and so does any NAME=.
     private static readonly Regex SecretAssignmentLine = new(
-        @"^(?<name>[ \t]*(?:export[ \t]+|-[ \t]+)?[""']?(?:\w+[_.\-])*(?:PASSWORD|PASSWD|SECRET|TOKEN|KEY|APIKEY|ACCESSTOKEN|AUTHTOKEN|CLIENTSECRET)(?:[_.\-]\w+)*[""']?[ \t]*[:=][ \t]*)(?:""[^""\n]*""|'[^'\n]*'|\S+)[ \t]*$",
+        @"^(?<name>[ \t]*(?:export[ \t]+|-[ \t]+)?[""']?(?:\w+[_.\-])*" +
+        @"(?:(?:PASSWORD|PASSWD|SECRET|CLIENTSECRET)(?:[_.\-]\w+)*[""']?[ \t]*[:=]|(?:TOKEN|KEY|APIKEY|ACCESSTOKEN|AUTHTOKEN)(?:[_.\-]\w+)*[""']?[ \t]*=)" +
+        @"[ \t]*)\S.*$",
+        RegexOptions.Multiline | RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    // KEY: value or TOKEN: value: only a one-token or quoted value, so prose like "Key: the disk is full" stays.
+    private static readonly Regex KeyColonLine = new(
+        @"^(?<name>[ \t]*(?:-[ \t]+)?[""']?(?:\w+[_.\-])*(?:TOKEN|KEY|APIKEY|ACCESSTOKEN|AUTHTOKEN)(?:[_.\-]\w+)*[""']?[ \t]*:[ \t]*)" +
+        @"(?:""[^""\n]*""|'[^'\n]*'|\S+)[ \t]*$",
         RegexOptions.Multiline | RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     // NAME=value inside a line, e.g. a docker run -e argument. Upper case only: "primary_key=id" is no secret.
@@ -35,6 +42,7 @@ internal static class ClaudeOutputRedactor
     {
         text = PrivateKeyBlock.Replace(text, Redacted);
         text = SecretAssignmentLine.Replace(text, m => m.Groups["name"].Value + Redacted);
+        text = KeyColonLine.Replace(text, m => m.Groups["name"].Value + Redacted);
         text = SecretAssignmentInline.Replace(text, m => m.Groups["name"].Value + Redacted);
         text = AuthorizationValue.Replace(text, m => m.Groups["scheme"].Value + Redacted);
         text = UrlCredentials.Replace(text, m => m.Groups["scheme"].Value + Redacted + "@");
