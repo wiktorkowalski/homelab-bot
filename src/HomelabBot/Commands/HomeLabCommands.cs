@@ -1,6 +1,7 @@
 using DSharpPlus.Entities;
 using DSharpPlus.SlashCommands;
 using HomelabBot.Configuration;
+using HomelabBot.Data.Entities;
 using HomelabBot.Models;
 using HomelabBot.Plugins;
 using HomelabBot.Services;
@@ -9,6 +10,12 @@ namespace HomelabBot.Commands;
 
 public class HomeLabCommands : ApplicationCommandModule
 {
+    // Discord allows 100 characters in a thread name.
+    private const int MaxThreadNameChars = 90;
+
+    // The "working" message quotes the task; the rest of a 2000-char message is the status line.
+    private const int MaxClaudeQuoteChars = 1500;
+
     private readonly DockerPlugin _dockerPlugin;
     private readonly KnowledgePlugin _knowledgePlugin;
     private readonly LokiPlugin _lokiPlugin;
@@ -20,6 +27,8 @@ public class HomeLabCommands : ApplicationCommandModule
     private readonly AutoRemediationService _autoRemediationService;
     private readonly InvestigationService _memoryService;
     private readonly SmartNotificationService _smartNotification;
+    private readonly ClaudeRunnerService _claudeRunner;
+    private readonly DiscordBotService _discordBot;
     private readonly ILogger<HomeLabCommands> _logger;
 
     public HomeLabCommands(
@@ -34,8 +43,12 @@ public class HomeLabCommands : ApplicationCommandModule
         AutoRemediationService autoRemediationService,
         InvestigationService memoryService,
         SmartNotificationService smartNotification,
+        ClaudeRunnerService claudeRunner,
+        DiscordBotService discordBot,
         ILogger<HomeLabCommands> logger)
     {
+        _claudeRunner = claudeRunner;
+        _discordBot = discordBot;
         _dockerPlugin = dockerPlugin;
         _knowledgePlugin = knowledgePlugin;
         _lokiPlugin = lokiPlugin;
@@ -800,6 +813,83 @@ public class HomeLabCommands : ApplicationCommandModule
                 .WithContent($"Error listing preferences: {ex.Message}"));
         }
     }
+
+    // Manual-run parity: the message goes to Claude as written, with no plan or confirm step.
+    [SlashCommand("claude", "Run Claude Code on the homelab host (owner only)")]
+    public async Task ClaudeCommand(
+        InteractionContext ctx,
+        [Option("message", "What Claude should do")] string message)
+    {
+        // The result goes out as normal messages: the interaction token lives 15 minutes, a run up to 30.
+        await ctx.DeferAsync(ephemeral: true);
+
+        try
+        {
+            if (ClaudeCommandRefusal(ctx.User.Id, _claudeRunner.Enabled, ctx.Channel.IsThread) is { } refusal)
+            {
+                _logger.LogInformation("Claude command refused for {User}: {Refusal}", ctx.User.Username, refusal);
+                await ctx.EditResponseAsync(new DiscordWebhookBuilder().WithContent(refusal));
+                return;
+            }
+
+            var slot = _claudeRunner.TryReserve();
+            if (slot is null)
+            {
+                await ctx.EditResponseAsync(new DiscordWebhookBuilder().WithContent(ClaudeRunnerService.BusyText));
+                return;
+            }
+
+            var sessionId = Guid.NewGuid();
+            var working = $"> {ConversationSearchResult.Truncate(message, MaxClaudeQuoteChars).ReplaceLineEndings("\n> ")}\n⏳ Claude is working on it (session `{sessionId}`).";
+            ulong? channelId = null;
+            try
+            {
+                if (ctx.Channel.IsPrivate)
+                {
+                    await _discordBot.SendDmAsync(HomelabOwner.DiscordUserId, working);
+                }
+                else
+                {
+                    var thread = await ctx.Channel.CreateThreadAsync(
+                        ConversationSearchResult.Truncate($"Claude: {message.ReplaceLineEndings(" ")}", MaxThreadNameChars),
+                        DSharpPlus.AutoArchiveDuration.Day,
+                        DSharpPlus.ChannelType.PublicThread);
+                    await _claudeRunner.LinkAsync([thread.Id], sessionId);
+                    await thread.SendMessageAsync(
+                        new DiscordMessageBuilder().WithContent(working).WithAllowedMentions(Mentions.None));
+                    channelId = thread.Id;
+                }
+            }
+            catch
+            {
+                slot.Dispose();
+                throw;
+            }
+
+            _ = _claudeRunner.LaunchAsync(slot, new ClaudeRunRequest
+            {
+                Origin = ClaudeRunOrigin.Owner,
+                Task = message,
+                SessionId = sessionId,
+                ChannelId = channelId,
+            });
+
+            await ctx.EditResponseAsync(new DiscordWebhookBuilder().WithContent(
+                channelId is { } id ? $"Started Claude session `{sessionId}` in <#{id}>." : $"Started Claude session `{sessionId}`."));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in claude command");
+            await ctx.EditResponseAsync(new DiscordWebhookBuilder().WithContent($"Could not start Claude: {ex.Message}"));
+        }
+    }
+
+    // Null when this user may start /claude here, else the text for the caller.
+    internal static string? ClaudeCommandRefusal(ulong userId, bool enabled, bool inThread) =>
+        userId != HomelabOwner.DiscordUserId ? "Only the owner can run Claude."
+        : !enabled ? ClaudeRunnerService.DisabledText
+        : inThread ? "Use /claude in a channel or in the DM; it opens a thread of its own."
+        : null;
 
     private static async Task EditResponseWithContentOrSplitAsync(
         InteractionContext ctx, string content, string preamble = "")

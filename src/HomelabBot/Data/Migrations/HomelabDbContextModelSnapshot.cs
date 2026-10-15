@@ -52,6 +52,82 @@ namespace HomelabBot.Data.Migrations
                     b.ToTable("AnomalyEvents");
                 });
 
+            modelBuilder.Entity("HomelabBot.Data.Entities.ClaudeRun", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<ulong?>("ChannelId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long?>("DurationMs")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("EndedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool?>("IsError")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("NumTurns")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Origin")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("PermissionDenialsJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("Resume")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<Guid>("SessionId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("StartedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("State")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Task")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<double?>("TotalCostUsd")
+                        .HasColumnType("REAL");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("State", "StartedAt");
+
+                    b.ToTable("ClaudeRuns");
+                });
+
+            modelBuilder.Entity("HomelabBot.Data.Entities.ClaudeSessionLink", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<ulong>("DiscordId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<Guid>("SessionId")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DiscordId")
+                        .IsUnique();
+
+                    b.ToTable("ClaudeSessionLinks");
+                });
+
             modelBuilder.Entity("HomelabBot.Data.Entities.ContainerCriticality", b =>
                 {
                     b.Property<int>("Id")

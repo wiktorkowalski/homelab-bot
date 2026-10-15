@@ -25,9 +25,15 @@ internal sealed class ChangesStateAttribute : Attribute
     // the memory tools unusable.
     public bool RequiresConfirmation { get; set; } = true;
 
+    // Only the owner may ask for it: a turn of another user gets a refusal before any button.
+    public bool OwnerOnly { get; set; }
+
     public static bool IsOn(KernelFunction function) =>
         function.UnderlyingMethod?.IsDefined(typeof(ChangesStateAttribute), inherit: true) == true;
 
     public static bool NeedsConfirmation(KernelFunction function) =>
         function.UnderlyingMethod?.GetCustomAttribute<ChangesStateAttribute>(inherit: true) is { RequiresConfirmation: true };
+
+    public static bool IsOwnerOnly(KernelFunction function) =>
+        function.UnderlyingMethod?.GetCustomAttribute<ChangesStateAttribute>(inherit: true) is { OwnerOnly: true };
 }

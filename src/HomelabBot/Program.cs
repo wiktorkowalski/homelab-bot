@@ -100,6 +100,9 @@ try
     builder.Services.AddOptions<McpServerConfiguration>()
         .Bind(builder.Configuration.GetSection(McpServerConfiguration.SectionName));
 
+    builder.Services.AddOptions<ClaudeRunnerConfiguration>()
+        .Bind(builder.Configuration.GetSection(ClaudeRunnerConfiguration.SectionName));
+
     // MCP Server
     var mcpConfig = builder.Configuration.GetSection(McpServerConfiguration.SectionName).Get<McpServerConfiguration>();
     if (mcpConfig is { Enabled: true, ApiKey.Length: > 0 })
@@ -170,6 +173,7 @@ try
     builder.Services.AddSingleton<KnowledgePlugin>();
     builder.Services.AddSingleton<InvestigationPlugin>();
     builder.Services.AddSingleton<RunbookPlugin>();
+    builder.Services.AddSingleton<ClaudePlugin>();
 
     // Services
     builder.Services.AddSingleton<IncidentSimilarityService>();
@@ -190,6 +194,10 @@ try
     builder.Services.AddSingleton<KernelService>();
     builder.Services.AddSingleton<DiscordBotService>();
     builder.Services.AddHostedService(sp => sp.GetRequiredService<DiscordBotService>());
+    builder.Services.AddSingleton<IClaudeChat>(sp => sp.GetRequiredService<DiscordBotService>());
+    builder.Services.AddSingleton<IClaudeProcessRunner, SshClaudeProcessRunner>();
+    builder.Services.AddSingleton<ClaudeRunnerService>();
+    builder.Services.AddHostedService(sp => sp.GetRequiredService<ClaudeRunnerService>());
     builder.Services.AddSingleton<HealthScoreService>();
     builder.Services.AddSingleton<ServiceStateStore>();
     builder.Services.AddSingleton<SummaryDataAggregator>();

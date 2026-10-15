@@ -1,4 +1,5 @@
 using System.Text.Json;
+using HomelabBot.Configuration;
 using HomelabBot.Helpers;
 using HomelabBot.Plugins;
 using Microsoft.SemanticKernel;
@@ -19,6 +20,9 @@ internal sealed class ToolConfirmationFilter : IAutoFunctionInvocationFilter
     internal static readonly string NoChannelResult = ToolResult.Failure(
         "This action needs the owner's approval with a Discord button, and this conversation has no Discord chat to ask in. " +
         "It did not run. The owner can ask for it in a DM or a bot thread.");
+
+    internal static readonly string OwnerOnlyResult = ToolResult.Failure(
+        "Only the owner can ask for this action; it did not run. Tell the user so.");
 
     internal static readonly string TooLongResult = ToolResult.Failure(
         "The arguments are too long to show the owner in full for confirmation, so the action did not run. Use shorter arguments.");
@@ -47,6 +51,14 @@ internal sealed class ToolConfirmationFilter : IAutoFunctionInvocationFilter
             _logger.LogWarning(
                 "Tool {Plugin}.{Function} needs confirmation, but the turn has no chat to ask in; it did not run", plugin, function);
             context.Result = new FunctionResult(context.Function, NoChannelResult);
+            return;
+        }
+
+        if (ChangesStateAttribute.IsOwnerOnly(context.Function)
+            && ToolConfirmationScope.CurrentChat?.UserId != HomelabOwner.DiscordUserId)
+        {
+            _logger.LogWarning("Tool {Plugin}.{Function} is for the owner only; refused for another user without asking", plugin, function);
+            context.Result = new FunctionResult(context.Function, OwnerOnlyResult);
             return;
         }
 

@@ -21,8 +21,8 @@ RUN dotnet publish -c Release -o /app/publish /p:UseAppHost=false
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
 WORKDIR /app
 
-# Install curl for healthcheck
-RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
+# curl for the healthcheck, openssh-client for Claude runs on the host (ClaudeRunner)
+RUN apt-get update && apt-get install -y curl openssh-client && rm -rf /var/lib/apt/lists/*
 
 EXPOSE 8080
 

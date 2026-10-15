@@ -178,7 +178,7 @@ public class KernelToolSurfaceTests
     {
         string[] expected =
         [
-            "AlertmanagerPlugin.SilenceAlert", "DockerPlugin.RestartContainer", "DockerPlugin.StartContainer",
+            "AlertmanagerPlugin.SilenceAlert", "ClaudePlugin.AskClaude", "DockerPlugin.RestartContainer", "DockerPlugin.StartContainer",
             "DockerPlugin.StopContainer", "HomeAssistantPlugin.TriggerAutomation", "HomeAssistantPlugin.TurnOff",
             "HomeAssistantPlugin.TurnOn", "KnowledgePlugin.InvalidateKnowledge", "KnowledgePlugin.LearnCorrection",
             "KnowledgePlugin.RememberFact", "KnowledgePlugin.StoreAlias", "MikroTikPlugin.WakeOnLan",
@@ -201,7 +201,7 @@ public class KernelToolSurfaceTests
     {
         string[] expected =
         [
-            "AlertmanagerPlugin.SilenceAlert", "DockerPlugin.RestartContainer", "DockerPlugin.StartContainer",
+            "AlertmanagerPlugin.SilenceAlert", "ClaudePlugin.AskClaude", "DockerPlugin.RestartContainer", "DockerPlugin.StartContainer",
             "DockerPlugin.StopContainer", "HomeAssistantPlugin.TriggerAutomation", "HomeAssistantPlugin.TurnOff",
             "HomeAssistantPlugin.TurnOn", "MikroTikPlugin.WakeOnLan", "RunbookPlugin.CreateRunbook",
             "RunbookPlugin.ExecuteRunbook",

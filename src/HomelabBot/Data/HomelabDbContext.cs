@@ -40,6 +40,10 @@ public sealed class HomelabDbContext : DbContext
 
     public DbSet<ServiceState> ServiceStates => Set<ServiceState>();
 
+    public DbSet<ClaudeRun> ClaudeRuns => Set<ClaudeRun>();
+
+    public DbSet<ClaudeSessionLink> ClaudeSessionLinks => Set<ClaudeSessionLink>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<Knowledge>(entity =>
@@ -145,6 +149,17 @@ public sealed class HomelabDbContext : DbContext
         modelBuilder.Entity<ServiceState>(entity =>
         {
             entity.HasIndex(s => new { s.ServiceName, s.Key }).IsUnique();
+        });
+
+        modelBuilder.Entity<ClaudeRun>(entity =>
+        {
+            // Startup looks for runs still Running that started before this process.
+            entity.HasIndex(r => new { r.State, r.StartedAt });
+        });
+
+        modelBuilder.Entity<ClaudeSessionLink>(entity =>
+        {
+            entity.HasIndex(l => l.DiscordId).IsUnique();
         });
     }
 }
