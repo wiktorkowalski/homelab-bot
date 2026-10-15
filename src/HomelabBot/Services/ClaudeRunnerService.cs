@@ -68,8 +68,8 @@ public sealed class ClaudeRunnerService : BackgroundService
     private const int MaxDenialInputChars = 200;
     private const int MaxLoggedStderrChars = 500;
 
-    // claude -p reports the subscription limit in its result text.
-    private static readonly Regex UsageLimit = new(@"usage limit|hit your (?:usage )?limit|limit reached|rate.?limit", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    // claude -p reports the subscription limit in its result text. An API rate limit is a different cause.
+    private static readonly Regex UsageLimit = new(@"usage limit|hit your (?:\w+ )?limit|limit (?:will )?resets?", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly ClaudeRunnerConfiguration _config;

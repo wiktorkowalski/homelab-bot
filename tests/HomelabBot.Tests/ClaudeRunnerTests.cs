@@ -34,11 +34,11 @@ public class ClaudeCliResultTests
         Assert.Empty(result.PermissionDenials);
     }
 
-    // claude -p prints a warning line before the JSON when stdin is empty.
+    // claude -p prints a warning line before the JSON when stdin is empty; claude-run prints empty heartbeat lines.
     [Fact]
-    public void Parse_SkipsAWarningLineBeforeTheJson()
+    public void Parse_SkipsAWarningLineAndHeartbeatLinesBeforeTheJson()
     {
-        var result = ClaudeCliResult.Parse("Warning: no stdin data received in 3s, proceeding without it.\n" + Json);
+        var result = ClaudeCliResult.Parse("\n\nWarning: no stdin data received in 3s, proceeding without it.\n\n" + Json);
 
         Assert.Equal("OK", result?.Result);
     }
@@ -77,6 +77,8 @@ public class ClaudeOutputRedactorTests
     [InlineData("bot MTA5ODc2NTQzMjEwOTg3NjU0" + ".GaBcDe." + "abcdefghijklmnopqrstuvwxyz0123456789", "bot [redacted]")]
     [InlineData("DB_PASSWORD=" + "hunter2", "DB_PASSWORD=[redacted]")]
     [InlineData("api_key: abc123", "api_key: [redacted]")]
+    [InlineData("apiKey: abc123", "apiKey: [redacted]")]
+    [InlineData("DB_PASSWORD=\"my pass\"", "DB_PASSWORD=[redacted]")]
     [InlineData("  export GITHUB_TOKEN=" + "xyz", "  export GITHUB_TOKEN=[redacted]")]
     [InlineData("SECRET_KEY=sk-" + "ant-api03-AbCdEfGhIjKlMnOpQrSt", "SECRET_KEY=[redacted]")]
     [InlineData("docker run -e POSTGRES_PASSWORD=" + "s3cret image", "docker run -e POSTGRES_PASSWORD=[redacted] image")]
@@ -93,7 +95,9 @@ public class ClaudeOutputRedactorTests
     [Fact]
     public void Redact_LeavesNormalTextAlone()
     {
-        const string text = "Disk tank is 81% full.\nBasic configuration is fine; primary_key=id stays.\nKey findings below.";
+        const string text =
+            "Disk tank is 81% full.\nBasic configuration is fine; primary_key=id stays.\nKey findings below.\n" +
+            "Key: the container restarted\n- Tokens: 1234\nmonkey: banana";
 
         Assert.Equal(text, ClaudeOutputRedactor.Redact(text));
     }

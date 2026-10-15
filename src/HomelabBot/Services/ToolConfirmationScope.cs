@@ -32,7 +32,7 @@ internal sealed class ToolConfirmationScope : IDisposable
     // Gets the action text, shows it to the user, and returns the user's answer.
     public static Func<string, CancellationToken, Task<ToolConfirmationDecision>>? Current => CurrentState.Value?.Ask;
 
-    // The chat the ask goes to. A tool that answers later (ask_claude) posts there.
+    // The chat the ask goes to. A tool that answers later (AskClaude) posts there.
     public static TurnChat? CurrentChat => CurrentState.Value?.Chat;
 
     // Synchronous on purpose: an AsyncLocal set inside an async method does not flow back to

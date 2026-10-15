@@ -1,6 +1,6 @@
 namespace HomelabBot.Data.Entities;
 
-// One claude -p run on the host, started by /claude, a follow-up of the owner, or ask_claude.
+// One claude -p run on the host, started by /claude, a follow-up of the owner, or AskClaude.
 public sealed class ClaudeRun
 {
     public int Id { get; set; }

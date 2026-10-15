@@ -722,7 +722,8 @@ public class DiscordBotService : BackgroundService, IClaudeChat
     // other users there are ignored. False sends it on to the bot's own LLM.
     private async Task<bool> TryRouteToClaudeAsync(DiscordMessage message, ulong? discordId, ulong? channelId)
     {
-        if (!_claudeRunner.Enabled || discordId is null)
+        // With the flag off a Claude thread or Reply still goes here: it gets the "disabled" answer, not the bot.
+        if (discordId is null)
         {
             return false;
         }

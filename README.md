@@ -63,14 +63,51 @@ Do these steps before `ClaudeRunner__Enabled=true` reaches the host `.env`.
    mode=${cmd%% *}
    id=${cmd#* }
    echo "$id" | grep -Eq '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' || { echo "bad id" >&2; exit 64; }
-   cd /home/ubuntu/docker
-   export CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1
    case "$mode" in
-     new)    exec /home/ubuntu/.local/bin/claude -p --output-format json --session-id "$id" ;;
-     resume) exec /home/ubuntu/.local/bin/claude -p --output-format json --resume "$id" ;;
+     new)    flag=--session-id ;;
+     resume) flag=--resume ;;
      *)      echo "bad mode" >&2; exit 64 ;;
    esac
+
+   cd /home/ubuntu/docker
+   export CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1
+   msg=$(mktemp)
+   out=$(mktemp)
+   trap 'rm -f "$msg" "$out"' EXIT
+   cat >"$msg"
+
+   # claude and every process below it. Its Bash tool starts shells in sessions of their own,
+   # so a process group does not reach them.
+   tree() {
+     echo "$1"
+     for child in $(pgrep -P "$1"); do tree "$child"; done
+   }
+
+   # Without a pty, sshd sends no SIGHUP when the bot drops the connection (time limit, restart),
+   # and claude -p writes only at the end. So an empty line goes out every 2 s; when that write
+   # fails, the bot is gone: stop the whole tree.
+   /home/ubuntu/.local/bin/claude -p --output-format json "$flag" "$id" <"$msg" >"$out" &
+   pid=$!
+   trap '' PIPE HUP
+   while kill -0 "$pid" 2>/dev/null; do
+     sleep 2
+     if ! printf '\n' 2>/dev/null; then
+       pids=$(tree "$pid")
+       kill -TERM $pids 2>/dev/null || true
+       sleep 5
+       kill -KILL $pids 2>/dev/null || true
+       exit 1
+     fi
+   done
+   rc=0
+   wait "$pid" || rc=$?
+   cat "$out"
+   exit "$rc"
    ```
+
+   The empty lines on stdout are a heartbeat: when the bot drops the connection (time limit, restart), the next
+   write fails and the script stops `claude` and everything it started. Without it the run would go on (no pty, so
+   no SIGHUP). The bot reads the last stdout line that starts with `{`.
 
    Add no other `claude` flags: each one moves the behavior away from a manual run. Do not put the Claude API key
    into the environment of `ubuntu`: the CLI would bill the runs to it.

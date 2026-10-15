@@ -48,10 +48,10 @@ internal sealed record ClaudeCliResult
 
             return new ClaudeCliResult
             {
-                Result = String(root, "result") ?? "",
-                SessionId = String(root, "session_id"),
+                Result = StringProperty(root, "result") ?? "",
+                SessionId = StringProperty(root, "session_id"),
                 IsError = root.TryGetProperty("is_error", out var isError) && isError.ValueKind == JsonValueKind.True,
-                Subtype = String(root, "subtype"),
+                Subtype = StringProperty(root, "subtype"),
                 NumTurns = root.TryGetProperty("num_turns", out var turns) && turns.TryGetInt32(out var t) ? t : null,
                 DurationMs = root.TryGetProperty("duration_ms", out var duration) && duration.TryGetInt64(out var d) ? d : null,
                 TotalCostUsd = root.TryGetProperty("total_cost_usd", out var cost) && cost.TryGetDouble(out var c) ? c : null,
@@ -64,7 +64,7 @@ internal sealed record ClaudeCliResult
         }
     }
 
-    private static string? String(JsonElement root, string name) =>
+    private static string? StringProperty(JsonElement root, string name) =>
         root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
 
     // A Bash denial shows its command; other tools show their input as JSON.
@@ -80,10 +80,10 @@ internal sealed record ClaudeCliResult
             .Select(d =>
             {
                 var input = d.TryGetProperty("tool_input", out var i) ? i : default;
-                var text = input.ValueKind == JsonValueKind.Object && String(input, "command") is { } command
+                var text = input.ValueKind == JsonValueKind.Object && StringProperty(input, "command") is { } command
                     ? command
                     : input.ValueKind == JsonValueKind.Undefined ? "" : input.GetRawText();
-                return new ClaudePermissionDenial { ToolName = String(d, "tool_name") ?? "?", Input = text };
+                return new ClaudePermissionDenial { ToolName = StringProperty(d, "tool_name") ?? "?", Input = text };
             })
             .ToList();
     }

@@ -7,7 +7,7 @@ using Microsoft.SemanticKernel;
 namespace HomelabBot.Plugins;
 
 // The bot's escalation to Claude Code on the host. Kernel only, never on the MCP surface: Claude on
-// the host uses this bot's MCP server, and ask_bot → ask_claude would start Claude again.
+// the host uses this bot's MCP server, and ask_bot → AskClaude would start Claude again.
 // [ChangesState] gives the guards: the owner approves each call with a button, scheduled runs never
 // see the tool, and an ask_bot turn has no chat to ask in, so the call fails closed.
 public sealed class ClaudePlugin(ClaudeRunnerService runner)

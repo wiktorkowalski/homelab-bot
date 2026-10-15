@@ -11,9 +11,11 @@ internal static class ClaudeOutputRedactor
     // Up to the matching END line, or to the end of a text that was cut inside the block.
     private static readonly Regex PrivateKeyBlock = new(@"-----BEGIN ([A-Z0-9 ]*)PRIVATE KEY-----.*?(?:-----END \1PRIVATE KEY-----|\z)", RegexOptions.Singleline | RegexOptions.Compiled);
 
-    // NAME=value or NAME: value on a line of its own (env file, YAML, export, list item).
+    // NAME=value or NAME: value on a line of its own (env file, YAML, export, list item). The secret word
+    // is a whole part of the name and the value one token or a quoted string, so "Key: the disk" and
+    // "Tokens: 1234" stay.
     private static readonly Regex SecretAssignmentLine = new(
-        @"^(?<name>[ \t]*(?:export[ \t]+|-[ \t]+)?[""']?[\w.\-]*(?:PASSWORD|SECRET|TOKEN|KEY)[\w.\-]*[""']?[ \t]*[:=][ \t]*)\S.*$",
+        @"^(?<name>[ \t]*(?:export[ \t]+|-[ \t]+)?[""']?(?:\w+[_.\-])*(?:PASSWORD|PASSWD|SECRET|TOKEN|KEY|APIKEY|ACCESSTOKEN|AUTHTOKEN|CLIENTSECRET)(?:[_.\-]\w+)*[""']?[ \t]*[:=][ \t]*)(?:""[^""\n]*""|'[^'\n]*'|\S+)[ \t]*$",
         RegexOptions.Multiline | RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     // NAME=value inside a line, e.g. a docker run -e argument. Upper case only: "primary_key=id" is no secret.
