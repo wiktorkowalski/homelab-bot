@@ -18,10 +18,11 @@ internal static class ClaudeOutputRedactor
         RegexOptions.Multiline | RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     // KEY and TOKEN are common words, so only as a whole part of the name: after a separator or a
-    // camelCase hump (API_KEY, refreshToken), never inside a word (monkey, Tokens). Case-sensitive on purpose.
+    // camelCase hump (API_KEY, refreshToken), never inside a word (monkey, Tokens). Case-sensitive on purpose;
+    // the known compounds (apikey, accesstoken) match in any case.
     private static readonly Regex KeyOrTokenLine = new(
         @"^(?<name>[ \t]*(?:export[ \t]+|-[ \t]+)?[""']?(?:[\w.\-]*[_.\-]|[\w.\-]*[a-z0-9](?=Key|Token))?" +
-        @"(?:KEY|TOKEN|Key|Token|key|token)(?:[_.\-A-Z][\w.\-]*)?[""']?[ \t]*[:=][ \t]*)\S.*$",
+        @"(?:KEY|TOKEN|Key|Token|key|token|(?i:(?:api|access|auth|private|refresh|session|signing)[_.\-]?(?:key|token)))(?:[_.\-A-Z][\w.\-]*)?[""']?[ \t]*[:=][ \t]*)\S.*$",
         RegexOptions.Multiline | RegexOptions.Compiled);
 
     // NAME=value inside a line, e.g. a docker run -e argument. Upper case only: "primary_key=id" is no secret.

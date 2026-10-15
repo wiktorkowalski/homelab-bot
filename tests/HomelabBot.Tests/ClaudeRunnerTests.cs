@@ -85,6 +85,8 @@ public class ClaudeOutputRedactorTests
     [InlineData("Langfuse__SecretKey=" + "abc", "Langfuse__SecretKey=[redacted]")]
     [InlineData("refreshToken: " + "abc", "refreshToken: [redacted]")]
     [InlineData("privateKey: " + "abc", "privateKey: [redacted]")]
+    [InlineData("apikey: " + "abc", "apikey: [redacted]")]
+    [InlineData("Accesstoken=" + "abc", "Accesstoken=[redacted]")]
     [InlineData("db_password: " + "abc  # prod", "db_password: [redacted]")]
     [InlineData("API_KEY=abc " + "def", "API_KEY=[redacted]")]
     [InlineData("DB_PASSWORD=\"my pass\"", "DB_PASSWORD=[redacted]")]
