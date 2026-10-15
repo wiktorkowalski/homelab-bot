@@ -24,7 +24,7 @@ public sealed class BotConfiguration
     // Claude Console API key (https://platform.claude.com/settings/keys).
     public required string AnthropicApiKey { get; init; }
 
-    public string AnthropicModel { get; init; } = "claude-sonnet-5-5";
+    public string AnthropicModel { get; init; } = "claude-haiku-5-5";
 
     // output_config.effort: how much the model thinks and spends per request. The API default is
     // High; Medium is the documented starting point for tool loops. None is rejected at startup.

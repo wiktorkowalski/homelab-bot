@@ -18,7 +18,7 @@ public class BotConfigurationBindingTests
             .GetSection(BotConfiguration.SectionName)
             .Get<BotConfiguration>()!;
 
-        Assert.Equal("claude-sonnet-5-5", config.AnthropicModel);
+        Assert.Equal("claude-haiku-5-5", config.AnthropicModel);
         Assert.Equal(ReasoningEffort.Medium, config.AnthropicEffort);
         Assert.Equal("", config.AnthropicApiKey);
     }
@@ -33,12 +33,12 @@ public class BotConfigurationBindingTests
         {
             ["Bot:DiscordToken"] = "x",
             ["Bot:AnthropicApiKey"] = "sk-ant-test",
-            ["Bot:AnthropicModel"] = "claude-haiku-5-5",
+            ["Bot:AnthropicModel"] = "claude-sonnet-5-5",
             ["Bot:AnthropicEffort"] = effort,
         });
 
         Assert.Equal("sk-ant-test", config.AnthropicApiKey);
-        Assert.Equal("claude-haiku-5-5", config.AnthropicModel);
+        Assert.Equal("claude-sonnet-5-5", config.AnthropicModel);
         Assert.Equal(expected, config.AnthropicEffort);
     }
 
@@ -47,7 +47,7 @@ public class BotConfigurationBindingTests
     {
         var config = Bind(new() { ["Bot:DiscordToken"] = "x", ["Bot:AnthropicApiKey"] = "k" });
 
-        Assert.Equal("claude-sonnet-5-5", config.AnthropicModel);
+        Assert.Equal("claude-haiku-5-5", config.AnthropicModel);
         Assert.Equal(ReasoningEffort.Medium, config.AnthropicEffort);
         Assert.Equal(50000, config.MaxTokens);
     }
