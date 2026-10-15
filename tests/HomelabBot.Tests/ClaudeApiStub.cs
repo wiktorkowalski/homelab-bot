@@ -307,7 +307,8 @@ internal sealed class KernelServiceHarness : IDisposable
         IAnthropicClient client,
         int maxTokens = 16000,
         Action<IKernelBuilderPlugins, KernelServiceHarness>? morePlugins = null,
-        Func<IDbContextFactory<HomelabDbContext>, IDbContextFactory<HomelabDbContext>>? telemetryDb = null)
+        Func<IDbContextFactory<HomelabDbContext>, IDbContextFactory<HomelabDbContext>>? telemetryDb = null,
+        bool claudeDelegation = false)
     {
         // A file of its own, not the shared in-memory connection of DatabaseFixture: each test
         // starts from an empty database, and the row asserts expect only that test's rows.
@@ -331,7 +332,8 @@ internal sealed class KernelServiceHarness : IDisposable
                 plugins.AddFromObject(Plugin, "Test");
                 plugins.AddFromObject(new PingPlugin(), "Other");
                 morePlugins?.Invoke(plugins, this);
-            });
+            },
+            claudeDelegation);
     }
 
     public PingPlugin Plugin { get; } = new();

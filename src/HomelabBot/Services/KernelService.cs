@@ -53,6 +53,7 @@ public sealed class KernelService
     private readonly string _modelId;
     private readonly int _maxAttempts;
     private readonly int _maxTokens;
+    private readonly string _systemPrompt;
 
     public const string SystemPrompt = """
         You are HomeLabBot, a chill and helpful assistant for managing a homelab infrastructure.
@@ -110,6 +111,15 @@ public sealed class KernelService
         Important: Only perform actions the user explicitly asks for. Don't volunteer to do things.
         """;
 
+    // Added to SystemPrompt only when the Claude plugin is registered (ClaudeRunner:Enabled).
+    internal const string ClaudeDelegationPrompt = """
+        Delegating to Claude Code:
+        - AskClaude hands a task to a stronger model on the homelab host that has a shell. Use it when the work needs many steps across logs, metrics and config, a root-cause analysis your tools cannot finish, a shell, or a change on the host that none of your tools does.
+        - Do not delegate a question that one or two of your tools answer.
+        - Keep the task short (at most about 1500 characters). The call returns at once; tell the user that the result arrives as a separate message.
+        - To continue an earlier Claude session, pass the session id from the footer of its result message.
+        """;
+
     public KernelService(
         IOptions<BotConfiguration> config,
         IAnthropicClient anthropicClient,
@@ -128,7 +138,9 @@ public sealed class KernelService
         NtfyPlugin ntfyPlugin,
         KnowledgePlugin knowledgePlugin,
         InvestigationPlugin investigationPlugin,
-        RunbookPlugin runbookPlugin)
+        RunbookPlugin runbookPlugin,
+        ClaudePlugin claudePlugin,
+        IOptions<ClaudeRunnerConfiguration> claudeRunnerConfig)
         : this(
             config.Value,
             anthropicClient,
@@ -150,7 +162,12 @@ public sealed class KernelService
                 plugins.AddFromObject(knowledgePlugin, "Knowledge");
                 plugins.AddFromObject(investigationPlugin, "Investigation");
                 plugins.AddFromObject(runbookPlugin, "Runbook");
-            })
+                if (claudeRunnerConfig.Value.Enabled)
+                {
+                    plugins.AddFromObject(claudePlugin, "Claude");
+                }
+            },
+            claudeDelegation: claudeRunnerConfig.Value.Enabled)
     {
     }
 
@@ -162,8 +179,10 @@ public sealed class KernelService
         ILogger<TelemetryFunctionFilter> filterLogger,
         ConversationService conversationService,
         TelemetryService telemetryService,
-        Action<IKernelBuilderPlugins> addPlugins)
+        Action<IKernelBuilderPlugins> addPlugins,
+        bool claudeDelegation = false)
     {
+        _systemPrompt = claudeDelegation ? $"{SystemPrompt}\n\n{ClaudeDelegationPrompt}" : SystemPrompt;
         _logger = logger;
         _conversationService = conversationService;
         _telemetryService = telemetryService;
@@ -321,7 +340,7 @@ public sealed class KernelService
         }
 
         var sw = Stopwatch.StartNew();
-        var systemPrompt = systemPromptOverride ?? SystemPrompt;
+        var systemPrompt = systemPromptOverride ?? _systemPrompt;
         var history = await _conversationService.GetOrCreateHistoryAsync(threadId, systemPrompt, ct);
 
         // No ct on the Add* calls: the message is in the in-memory history already, so the row must follow.

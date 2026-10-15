@@ -5,13 +5,14 @@ using DSharpPlus.EventArgs;
 using DSharpPlus.SlashCommands;
 using HomelabBot.Commands;
 using HomelabBot.Configuration;
+using HomelabBot.Data.Entities;
 using HomelabBot.Models;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 
 namespace HomelabBot.Services;
 
-public class DiscordBotService : BackgroundService
+public class DiscordBotService : BackgroundService, IClaudeChat
 {
     internal const string QuoteStart = "[Quote of the message the owner replied to]";
     internal const string QuoteEnd = "[End of quote]";
@@ -28,6 +29,7 @@ public class DiscordBotService : BackgroundService
     private readonly ConfirmationService _confirmationService;
     private readonly InvestigationService _memoryService;
     private readonly AutoRemediationService _autoRemediationService;
+    private readonly ClaudeRunnerService _claudeRunner;
     private readonly IServiceProvider _serviceProvider;
     private readonly Lazy<SmartNotificationService> _smartNotification;
     private DiscordClient? _client;
@@ -49,6 +51,7 @@ public class DiscordBotService : BackgroundService
         ConfirmationService confirmationService,
         InvestigationService memoryService,
         AutoRemediationService autoRemediationService,
+        ClaudeRunnerService claudeRunner,
         IServiceProvider serviceProvider)
     {
         _config = config.Value;
@@ -58,6 +61,7 @@ public class DiscordBotService : BackgroundService
         _confirmationService = confirmationService;
         _memoryService = memoryService;
         _autoRemediationService = autoRemediationService;
+        _claudeRunner = claudeRunner;
         _serviceProvider = serviceProvider;
         _smartNotification = new Lazy<SmartNotificationService>(
             () => _serviceProvider.GetRequiredService<SmartNotificationService>());
@@ -556,6 +560,12 @@ public class DiscordBotService : BackgroundService
         var isOwnThread = e.Channel is DiscordThreadChannel threadChannel
             && threadChannel.CreatorId == client.CurrentUser.Id;
 
+        // A /claude thread belongs to its Claude session, also though the bot created it.
+        if (isOwnThread && await TryRouteToClaudeAsync(e.Message, e.Channel.Id, e.Channel.Id))
+        {
+            return;
+        }
+
         // Respond in: mentions anywhere, dedicated channels, or threads we created
         if (!isMentioned && !isDedicatedChannel && !isOwnThread)
         {
@@ -603,7 +613,8 @@ public class DiscordBotService : BackgroundService
             await using (TypingIndicator.Start(responseChannel.TriggerTypingAsync, _logger))
             {
                 using var confirmation = ToolConfirmationScope.Begin(
-                    _confirmationService.AskIn(responseChannel, e.Author.Id, onSent: null));
+                    _confirmationService.AskIn(responseChannel, e.Author.Id, onSent: null),
+                    new TurnChat { UserId = e.Author.Id, ChannelId = responseChannel.Id });
                 response = await _kernelService.ProcessMessageAsync(conversationId, content, e.Author.Id);
             }
 
@@ -645,6 +656,14 @@ public class DiscordBotService : BackgroundService
             return;
         }
 
+        // A Reply to a Claude result continues that session. The reference has the id also when the
+        // replied message is not cached.
+        var repliedId = e.Message.Reference?.Message?.Id ?? e.Message.ReferencedMessage?.Id;
+        if (await TryRouteToClaudeAsync(e.Message, repliedId, channelId: null))
+        {
+            return;
+        }
+
         _logger.LogInformation("Processing DM from owner on thread {ThreadId}", HomelabOwner.DmThreadId);
 
         if (e.Message.ReferencedMessage is { } replied)
@@ -659,7 +678,8 @@ public class DiscordBotService : BackgroundService
             await using (TypingIndicator.Start(e.Channel.TriggerTypingAsync, _logger))
             {
                 using var confirmation = ToolConfirmationScope.Begin(
-                    _confirmationService.AskIn(e.Channel, e.Author.Id, onSent: text => RecordForOwner(e.Author.Id, text)));
+                    _confirmationService.AskIn(e.Channel, e.Author.Id, onSent: text => RecordForOwner(e.Author.Id, text)),
+                    new TurnChat { UserId = e.Author.Id });
                 response = await _kernelService.ProcessMessageAsync(
                     HomelabOwner.DmThreadId, content, e.Author.Id);
             }
@@ -696,6 +716,82 @@ public class DiscordBotService : BackgroundService
         {
             _logger.LogWarning(ex, "Could not record a sent message in the owner DM thread");
         }
+    }
+
+    // True when the message belongs to a Claude session: the owner's text resumes it, and messages of
+    // other users there are ignored. False sends it on to the bot's own LLM.
+    private async Task<bool> TryRouteToClaudeAsync(DiscordMessage message, ulong? discordId, ulong? channelId)
+    {
+        // With the flag off a Claude thread or Reply still goes here: it gets the "disabled" answer, not the bot.
+        if (discordId is null)
+        {
+            return false;
+        }
+
+        ClaudeRoute route;
+        Guid sessionId;
+        try
+        {
+            (route, sessionId) = await _claudeRunner.RouteAsync(discordId, message.Author.Id);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Could not look up the Claude session of a message; the bot answers it");
+            return false;
+        }
+
+        if (route == ClaudeRoute.Bot)
+        {
+            return false;
+        }
+
+        if (route == ClaudeRoute.Ignore)
+        {
+            _logger.LogDebug("Ignored a message of {UserId} in Claude session {SessionId}", message.Author.Id, sessionId);
+            return true;
+        }
+
+        try
+        {
+            var text = message.Content.Trim();
+            var refusal = string.IsNullOrWhiteSpace(text)
+                ? "Claude reads text only. Please write your message as text."
+                : _claudeRunner.TryStart(new ClaudeRunRequest
+                {
+                    Origin = ClaudeRunOrigin.Owner,
+                    Task = text,
+                    SessionId = sessionId,
+                    Resume = true,
+                    ChannelId = channelId,
+                });
+
+            if (refusal is null)
+            {
+                await message.CreateReactionAsync(DiscordEmoji.FromUnicode("⏳"));
+            }
+            else
+            {
+                await SendClaudeMessageAsync(channelId, refusal, refusal);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Could not continue Claude session {SessionId}", sessionId);
+        }
+
+        return true;
+    }
+
+    // Claude's output can hold "@everyone": nothing it posts pings anyone.
+    public async Task<IReadOnlyList<ulong>> SendClaudeMessageAsync(ulong? channelId, string text, string recordText)
+    {
+        if (channelId is null)
+        {
+            return await SendDmChunksAsync(HomelabOwner.DiscordUserId, text, recordText) ?? [];
+        }
+
+        var client = _client ?? throw new InvalidOperationException("Discord client is not connected");
+        return await SendChunksAsync(await client.GetChannelAsync(channelId.Value), text);
     }
 
     // The owner replied to an earlier message: the model gets that message as a quote before the
@@ -756,27 +852,39 @@ public class DiscordBotService : BackgroundService
             userId, new DiscordMessageBuilder().WithEmbed(embed).AddComponents(components), EmbedText(embed));
 
     // False when there is no DM channel (client not connected, user in no guild); the lookup logs why.
-    public virtual async Task<bool> SendDmSplitAsync(ulong userId, string content)
+    public virtual async Task<bool> SendDmSplitAsync(ulong userId, string content) =>
+        await SendDmChunksAsync(userId, content, content) is not null;
+
+    // Null when there is no DM channel. One record for the whole text: the split is only Discord's length limit.
+    private async Task<IReadOnlyList<ulong>?> SendDmChunksAsync(ulong userId, string content, string recordText)
     {
         var dm = await GetDmChannelAsync(userId);
         if (dm == null)
         {
-            return false;
+            return null;
         }
 
+        var ids = await SendChunksAsync(dm, content);
+        RecordForOwner(userId, recordText);
+        return ids;
+    }
+
+    private static async Task<List<ulong>> SendChunksAsync(DiscordChannel channel, string content)
+    {
         var chunks = MessageSplitService.SplitIntoSections(content);
+        List<ulong> ids = [];
         foreach (var chunk in chunks)
         {
-            await dm.SendMessageAsync(chunk);
+            var sent = await channel.SendMessageAsync(
+                new DiscordMessageBuilder().WithContent(chunk).WithAllowedMentions(Mentions.None));
+            ids.Add(sent.Id);
             if (chunks.Count > 1)
             {
                 await Task.Delay(100); // Small delay between messages
             }
         }
 
-        // One record for the whole text: the split is only Discord's length limit.
-        RecordForOwner(userId, content);
-        return true;
+        return ids;
     }
 
     // Buttons only, nothing the owner would ask about: not recorded.

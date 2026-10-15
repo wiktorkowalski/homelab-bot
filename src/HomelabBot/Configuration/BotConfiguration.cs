@@ -225,6 +225,30 @@ public sealed class AutoRemediationConfiguration
     public int VerificationDelaySeconds { get; init; } = 30;
 }
 
+// claude -p on the homelab host over SSH (ClaudeRunnerService). The key may only start
+// /home/ubuntu/bin/claude-run through a forced command in authorized_keys.
+public sealed class ClaudeRunnerConfiguration
+{
+    public const string SectionName = "ClaudeRunner";
+
+    public bool Enabled { get; init; }
+
+    public string Host { get; init; } = "host.docker.internal";
+
+    public string User { get; init; } = "ubuntu";
+
+    public string KeyPath { get; init; } = "/app/ssh/id_ed25519";
+
+    public string KnownHostsPath { get; init; } = "/app/ssh/known_hosts";
+
+    public int OwnerTimeoutMinutes { get; init; } = 30;
+
+    public int LlmTimeoutMinutes { get; init; } = 10;
+
+    // The owner DM history keeps 20 messages / 15 000 estimated tokens; one long result would push out the rest.
+    public int RecordedResultMaxChars { get; init; } = 8000;
+}
+
 public sealed class McpServerConfiguration
 {
     public const string SectionName = "McpServer";

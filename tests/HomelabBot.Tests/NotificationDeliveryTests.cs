@@ -39,6 +39,7 @@ public sealed class NotificationDeliveryTests : IDisposable
             null,
             null,
             null,
+            null,
             null);
 
         var config = Substitute.For<IOptionsMonitor<DailySummaryConfiguration>>();
