@@ -67,22 +67,22 @@ public class ClaudeCliResultTests
 
 public class ClaudeOutputRedactorTests
 {
-    // Split literals: a whole fake token in the source trips GitHub push protection.
+    // Split literals: a whole fake token in the source trips secret scanners (push protection, GitGuardian).
     [Theory]
-    [InlineData("token sk-ant-api03-AbCdEfGhIjKlMnOpQrSt end", "token [redacted] end")]
+    [InlineData("token sk-" + "ant-api03-AbCdEfGhIjKlMnOpQrSt end", "token [redacted] end")]
     [InlineData("ghp_" + "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8", "[redacted]")]
     [InlineData("pat github_pat_" + "11ABCDEFG0123456789_abcdefghijklmnop", "pat [redacted]")]
     [InlineData("slack xoxb-" + "1234567890-abcdefghij", "slack [redacted]")]
-    [InlineData("jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U", "jwt [redacted]")]
+    [InlineData("jwt eyJhbGciOiJIUzI1NiJ9" + ".eyJzdWIiOiIxMjM0NTY3ODkwIn0." + "dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U", "jwt [redacted]")]
     [InlineData("bot MTA5ODc2NTQzMjEwOTg3NjU0" + ".GaBcDe." + "abcdefghijklmnopqrstuvwxyz0123456789", "bot [redacted]")]
-    [InlineData("DB_PASSWORD=hunter2", "DB_PASSWORD=[redacted]")]
+    [InlineData("DB_PASSWORD=" + "hunter2", "DB_PASSWORD=[redacted]")]
     [InlineData("api_key: abc123", "api_key: [redacted]")]
-    [InlineData("  export GITHUB_TOKEN=xyz", "  export GITHUB_TOKEN=[redacted]")]
-    [InlineData("SECRET_KEY=sk-ant-api03-AbCdEfGhIjKlMnOpQrSt", "SECRET_KEY=[redacted]")]
-    [InlineData("docker run -e POSTGRES_PASSWORD=s3cret image", "docker run -e POSTGRES_PASSWORD=[redacted] image")]
+    [InlineData("  export GITHUB_TOKEN=" + "xyz", "  export GITHUB_TOKEN=[redacted]")]
+    [InlineData("SECRET_KEY=sk-" + "ant-api03-AbCdEfGhIjKlMnOpQrSt", "SECRET_KEY=[redacted]")]
+    [InlineData("docker run -e POSTGRES_PASSWORD=" + "s3cret image", "docker run -e POSTGRES_PASSWORD=[redacted] image")]
     [InlineData("Authorization: Bearer abcdef123456", "Authorization: Bearer [redacted]")]
     [InlineData("curl -H 'Authorization: Basic dXNlcjpwYXNz' x", "curl -H 'Authorization: Basic [redacted]' x")]
-    [InlineData("postgres://admin:s3cret@db:5432/app", "postgres://[redacted]@db:5432/app")]
+    [InlineData("postgres://admin" + ":s3cret@db:5432/app", "postgres://[redacted]@db:5432/app")]
     [InlineData("before\n-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaA\n-----END OPENSSH PRIVATE KEY-----\nafter", "before\n[redacted]\nafter")]
     [InlineData("-----BEGIN RSA PRIVATE KEY-----\nMIIEow cut here", "[redacted]")]
     public void Redact_ReplacesEachSecretShape(string input, string expected)
@@ -292,7 +292,7 @@ public sealed class ClaudeRunnerServiceTests : IDisposable
     [Fact]
     public void Evaluate_RedactsTheResult()
     {
-        var outcome = CreateRunner().Evaluate(FakeClaudeProcess.Result("the key is DB_PASSWORD=hunter2"), Guid.NewGuid());
+        var outcome = CreateRunner().Evaluate(FakeClaudeProcess.Result("the key is DB_PASSWORD=" + "hunter2"), Guid.NewGuid());
 
         Assert.Equal("the key is DB_PASSWORD=[redacted]", outcome.Body);
     }
