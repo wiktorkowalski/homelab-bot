@@ -247,7 +247,16 @@ public sealed class ClaudeRunnerService : BackgroundService
             var outcome = await RunProcessAsync(request);
             var durationMs = stopwatch.ElapsedMilliseconds;
 
-            await StoreEndAsync(runId, outcome, durationMs);
+            // A bookkeeping failure must not lose a result the owner may have waited 30 minutes for.
+            try
+            {
+                await StoreEndAsync(runId, outcome, durationMs);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Could not store the end of Claude run {RunId}", runId);
+            }
+
             _logger.LogInformation(
                 "Claude run {RunId} ended: {State}, origin {Origin}, session {SessionId}, {DurationMs} ms, cost {CostUsd} USD, error {IsError}",
                 runId, outcome.State, request.Origin, request.SessionId, durationMs, outcome.Cli?.TotalCostUsd, outcome.State != ClaudeRunState.Completed);

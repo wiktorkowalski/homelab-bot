@@ -79,6 +79,13 @@ public class ClaudeOutputRedactorTests
     [InlineData("api_key: abc123", "api_key: [redacted]")]
     [InlineData("apiKey: abc123", "apiKey: [redacted]")]
     [InlineData("password: hunter " + "two", "password: [redacted]")]
+    [InlineData("dbPassword: " + "hunter2", "dbPassword: [redacted]")]
+    [InlineData("  \"AdminPassword\": \"" + "hunter2\",", "  \"AdminPassword\": [redacted]")]
+    [InlineData("SecretKey: " + "abc", "SecretKey: [redacted]")]
+    [InlineData("Langfuse__SecretKey=" + "abc", "Langfuse__SecretKey=[redacted]")]
+    [InlineData("refreshToken: " + "abc", "refreshToken: [redacted]")]
+    [InlineData("privateKey: " + "abc", "privateKey: [redacted]")]
+    [InlineData("db_password: " + "abc  # prod", "db_password: [redacted]")]
     [InlineData("API_KEY=abc " + "def", "API_KEY=[redacted]")]
     [InlineData("DB_PASSWORD=\"my pass\"", "DB_PASSWORD=[redacted]")]
     [InlineData("  export GITHUB_TOKEN=" + "xyz", "  export GITHUB_TOKEN=[redacted]")]
@@ -99,7 +106,7 @@ public class ClaudeOutputRedactorTests
     {
         const string text =
             "Disk tank is 81% full.\nBasic configuration is fine; primary_key=id stays.\nKey findings below.\n" +
-            "Key: the container restarted\n- Tokens: 1234\nmonkey: banana";
+            "- Tokens: 1234\nmonkey: banana\nkeyboard: us";
 
         Assert.Equal(text, ClaudeOutputRedactor.Redact(text));
     }

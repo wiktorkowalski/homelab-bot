@@ -11,19 +11,18 @@ internal static class ClaudeOutputRedactor
     // Up to the matching END line, or to the end of a text that was cut inside the block.
     private static readonly Regex PrivateKeyBlock = new(@"-----BEGIN ([A-Z0-9 ]*)PRIVATE KEY-----.*?(?:-----END \1PRIVATE KEY-----|\z)", RegexOptions.Singleline | RegexOptions.Compiled);
 
-    // NAME=value or NAME: value on a line of its own (env file, YAML, export, list item), where the secret
-    // word is a whole part of the name. A password or secret loses the rest of the line, and so does any NAME=.
-    private static readonly Regex SecretAssignmentLine = new(
-        @"^(?<name>[ \t]*(?:export[ \t]+|-[ \t]+)?[""']?(?:\w+[_.\-])*" +
-        @"(?:(?:PASSWORD|PASSWD|SECRET|CLIENTSECRET)(?:[_.\-]\w+)*[""']?[ \t]*[:=]|(?:TOKEN|KEY|APIKEY|ACCESSTOKEN|AUTHTOKEN)(?:[_.\-]\w+)*[""']?[ \t]*=)" +
-        @"[ \t]*)\S.*$",
+    // NAME=value or NAME: value on a line of its own (env file, YAML, JSON, export, list item): the rest
+    // of the line goes. Any name that holds PASSWORD or SECRET, also in camelCase.
+    private static readonly Regex PasswordLine = new(
+        @"^(?<name>[ \t]*(?:export[ \t]+|-[ \t]+)?[""']?[\w.\-]*(?:PASSWORD|PASSWD|SECRET)[\w.\-]*[""']?[ \t]*[:=][ \t]*)\S.*$",
         RegexOptions.Multiline | RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
-    // KEY: value or TOKEN: value: only a one-token or quoted value, so prose like "Key: the disk is full" stays.
-    private static readonly Regex KeyColonLine = new(
-        @"^(?<name>[ \t]*(?:-[ \t]+)?[""']?(?:\w+[_.\-])*(?:TOKEN|KEY|APIKEY|ACCESSTOKEN|AUTHTOKEN)(?:[_.\-]\w+)*[""']?[ \t]*:[ \t]*)" +
-        @"(?:""[^""\n]*""|'[^'\n]*'|\S+)[ \t]*$",
-        RegexOptions.Multiline | RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    // KEY and TOKEN are common words, so only as a whole part of the name: after a separator or a
+    // camelCase hump (API_KEY, refreshToken), never inside a word (monkey, Tokens). Case-sensitive on purpose.
+    private static readonly Regex KeyOrTokenLine = new(
+        @"^(?<name>[ \t]*(?:export[ \t]+|-[ \t]+)?[""']?(?:[\w.\-]*[_.\-]|[\w.\-]*[a-z0-9](?=Key|Token))?" +
+        @"(?:KEY|TOKEN|Key|Token|key|token)(?:[_.\-A-Z][\w.\-]*)?[""']?[ \t]*[:=][ \t]*)\S.*$",
+        RegexOptions.Multiline | RegexOptions.Compiled);
 
     // NAME=value inside a line, e.g. a docker run -e argument. Upper case only: "primary_key=id" is no secret.
     private static readonly Regex SecretAssignmentInline = new(@"(?<name>\b[A-Z0-9_]*(?:PASSWORD|SECRET|TOKEN|KEY)[A-Z0-9_]*=)[^\s""'`]+", RegexOptions.Compiled);
@@ -41,8 +40,8 @@ internal static class ClaudeOutputRedactor
     public static string Redact(string text)
     {
         text = PrivateKeyBlock.Replace(text, Redacted);
-        text = SecretAssignmentLine.Replace(text, m => m.Groups["name"].Value + Redacted);
-        text = KeyColonLine.Replace(text, m => m.Groups["name"].Value + Redacted);
+        text = PasswordLine.Replace(text, m => m.Groups["name"].Value + Redacted);
+        text = KeyOrTokenLine.Replace(text, m => m.Groups["name"].Value + Redacted);
         text = SecretAssignmentInline.Replace(text, m => m.Groups["name"].Value + Redacted);
         text = AuthorizationValue.Replace(text, m => m.Groups["scheme"].Value + Redacted);
         text = UrlCredentials.Replace(text, m => m.Groups["scheme"].Value + Redacted + "@");
