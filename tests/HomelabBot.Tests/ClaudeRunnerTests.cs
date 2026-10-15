@@ -86,6 +86,8 @@ public class ClaudeOutputRedactorTests
     [InlineData("refreshToken: " + "abc", "refreshToken: [redacted]")]
     [InlineData("privateKey: " + "abc", "privateKey: [redacted]")]
     [InlineData("apikey: " + "abc", "apikey: [redacted]")]
+    [InlineData("    \"ApiKey\": \"" + "abc\",", "    \"ApiKey\": [redacted]")]
+    [InlineData("    \"AccessToken\": \"" + "abc\",", "    \"AccessToken\": [redacted]")]
     [InlineData("Accesstoken=" + "abc", "Accesstoken=[redacted]")]
     [InlineData("db_password: " + "abc  # prod", "db_password: [redacted]")]
     [InlineData("API_KEY=abc " + "def", "API_KEY=[redacted]")]
