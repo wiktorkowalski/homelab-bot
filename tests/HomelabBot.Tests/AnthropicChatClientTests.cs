@@ -86,7 +86,7 @@ public class AnthropicChatClientTests
             Assert.Equal("adaptive", (string?)request["thinking"]!["type"]);
             Assert.Null(request["thinking"]!["budget_tokens"]);
 
-            // Each of these is a 400 on claude-sonnet-5-5.
+            // Each of these is a 400 on the current Claude models.
             Assert.Null(request["temperature"]);
             Assert.Null(request["top_p"]);
             Assert.Null(request["top_k"]);
@@ -281,8 +281,8 @@ public class AnthropicChatClientTests
         var lines = _logger.Entries.Where(e => e.Level == LogLevel.Information).Select(e => e.Message).ToList();
         Assert.Equal(
             [
-                "Claude round usage for claude-sonnet-5-5: 100 input, 0 cache read, 900 cache write, 20 output, stop reason tool_use",
-                "Claude round usage for claude-sonnet-5-5: 120 input, 900 cache read, 0 cache write, 50 output, stop reason end_turn",
+                $"Claude round usage for {ClaudeResponses.Model}: 100 input, 0 cache read, 900 cache write, 20 output, stop reason tool_use",
+                $"Claude round usage for {ClaudeResponses.Model}: 120 input, 900 cache read, 0 cache write, 50 output, stop reason end_turn",
             ],
             lines);
     }

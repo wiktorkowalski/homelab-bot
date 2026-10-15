@@ -87,7 +87,7 @@ public class TelemetryUsagePersistenceTests : IClassFixture<DatabaseFixture>
     }
 
     private async Task<int> StartAsync() =>
-        (await _telemetry.LogInteractionStartAsync(1, "anthropic/claude-sonnet-5.5", "hi", null)).Id;
+        (await _telemetry.LogInteractionStartAsync(1, ClaudeResponses.Model, "hi", null)).Id;
 
     private async Task<HomelabBot.Data.Entities.LlmInteraction> LoadAsync(int id)
     {

@@ -23,7 +23,7 @@ namespace HomelabBot.Tests;
 // Canned Messages API responses in the wire format of https://api.anthropic.com/v1/messages.
 internal static class ClaudeResponses
 {
-    public const string Model = "claude-sonnet-5-5";
+    public const string Model = "claude-haiku-5-5";
     public const string Signature = "SIG_ABC";
 
     // Round 1 of a tool loop: an (empty, signed) thinking block followed by one or more tool calls.
