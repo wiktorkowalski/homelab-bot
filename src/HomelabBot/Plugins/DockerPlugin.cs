@@ -142,7 +142,7 @@ public class DockerPlugin
 
     [KernelFunction]
     [ChangesState]
-    [Description("Starts a stopped container. This is a safe operation.")]
+    [Description("Starts a stopped container. It changes state: in a Discord chat the owner approves the call with a button before it runs.")]
     public virtual async Task<string> StartContainer([Description("Container name or ID")] string containerName)
     {
         _logger.LogInformation("Starting container {Container}...", containerName);
@@ -168,7 +168,7 @@ public class DockerPlugin
 
     [KernelFunction]
     [ChangesState]
-    [Description("Stops a running container. DANGEROUS: Ask for confirmation before executing.")]
+    [Description("Stops a running container; its service stays down until it is started again. It changes state: in a Discord chat the owner approves the call with a button before it runs.")]
     public async Task<string> StopContainer([Description("Container name or ID")] string containerName)
     {
         _logger.LogWarning("Stopping container {Container}...", containerName);
@@ -197,7 +197,7 @@ public class DockerPlugin
 
     [KernelFunction]
     [ChangesState]
-    [Description("Restarts a container. DANGEROUS: Ask for confirmation before executing.")]
+    [Description("Restarts a container; its service is briefly down. It changes state: in a Discord chat the owner approves the call with a button before it runs.")]
     public virtual async Task<string> RestartContainer([Description("Container name or ID")] string containerName)
     {
         _logger.LogWarning("Restarting container {Container}...", containerName);
