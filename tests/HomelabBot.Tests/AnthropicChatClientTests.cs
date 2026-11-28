@@ -608,6 +608,26 @@ public class AnthropicChatClientTests
         Assert.Equal(sent, Assert.Single(spans.Snapshot()).GetTagItem(AnthropicRequestChatClient.EffortTag));
     }
 
+    // The API joins its exported spans to the bot's trace through traceparent (sampled only with
+    // -01) and puts baggage user.id on them as the end user.
+    [Theory]
+    [InlineData("123456789012345678", "user.id=123456789012345678")]
+    [InlineData(null, null)]
+    public async Task Request_CarriesTheTraceContextAndTheUserOfTheTurn(string? userId, string? expectedBaggage)
+    {
+        using var root = new Activity("test-root").Start();
+        root.SetTag(TelemetryConstants.UserIdTag, userId);
+        using var spans = new SpanCollector(root.TraceId, s => s.Name == TelemetryConstants.LlmActivitySourceName);
+        _handler.Enqueue(ClaudeResponses.Text());
+
+        await _chat.GetChatMessageContentAsync(NewHistory(), NoTools, _kernel);
+
+        var headers = _handler.RequestHeaders[0];
+        var chatSpan = Assert.Single(spans.Snapshot());
+        Assert.Equal($"00-{root.TraceId}-{chatSpan.SpanId}-01", headers["traceparent"]);
+        Assert.Equal(expectedBaggage, headers.GetValueOrDefault("baggage"));
+    }
+
     [Fact]
     public async Task EffortTag_WithoutAnLlmSpan_StaysOffTheCallersSpan()
     {

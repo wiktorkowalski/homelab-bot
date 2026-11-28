@@ -232,7 +232,7 @@ public sealed class KernelService
         activity?.SetTag("langfuse.trace.input", userMessage);
         if (userId.HasValue)
         {
-            activity?.SetTag("langfuse.user.id", userId.Value.ToString());
+            activity?.SetTag(TelemetryConstants.UserIdTag, userId.Value.ToString());
         }
 
         try
@@ -336,7 +336,7 @@ public sealed class KernelService
         activity?.SetTag("langfuse.trace.input", userMessage);
         if (userId.HasValue)
         {
-            activity?.SetTag("langfuse.user.id", userId.Value.ToString());
+            activity?.SetTag(TelemetryConstants.UserIdTag, userId.Value.ToString());
         }
 
         var sw = Stopwatch.StartNew();
