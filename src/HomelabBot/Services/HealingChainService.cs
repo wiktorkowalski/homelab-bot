@@ -150,6 +150,7 @@ public sealed class HealingChainService
                 maxTokens: 1024,
                 systemPromptOverride: "You are a recovery planning assistant. Output only valid JSON arrays of recovery steps. No explanation, no markdown fences.",
                 allowToolUse: false,
+                job: "healing-chain",
                 ct: ct);
 
             var steps = ParseStepsFromResponse(response);

@@ -37,6 +37,7 @@ public sealed class SecurityAuditService : ScheduledBackgroundService
             userMessage: SecurityAuditPrompts.Investigation,
             traceType: TraceType.Scheduled,
             systemPromptOverride: SecurityAuditPrompts.System,
+            job: "security-audit",
             ct: ct);
 
         _logger.LogInformation("Security audit completed, report length: {Length}", report.Length);

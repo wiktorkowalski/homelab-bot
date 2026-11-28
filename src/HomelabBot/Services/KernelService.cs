@@ -282,9 +282,10 @@ public sealed class KernelService
         string? systemPromptOverride = null,
         IReadOnlyList<string>? pluginAllowList = null,
         bool allowToolUse = true,
+        string? job = null,
         CancellationToken ct = default) =>
         ProcessTurnAsync(
-            threadId, userMessage, userId, traceType, maxTokens, systemPromptOverride, pluginAllowList, allowToolUse, forgetHistory: false, ct);
+            threadId, userMessage, userId, traceType, maxTokens, systemPromptOverride, pluginAllowList, allowToolUse, forgetHistory: false, job, ct);
 
     // One answer, no memory: a fresh thread, and its cached history is dropped when the call
     // ends. Pass threadId only to tie the stored rows and investigations to a known id.
@@ -297,10 +298,11 @@ public sealed class KernelService
         IReadOnlyList<string>? pluginAllowList = null,
         bool allowToolUse = true,
         ulong? threadId = null,
+        string? job = null,
         CancellationToken ct = default) =>
         ProcessTurnAsync(
             threadId ?? (ulong)Random.Shared.NextInt64(1, long.MaxValue),
-            userMessage, userId, traceType, maxTokens, systemPromptOverride, pluginAllowList, allowToolUse, forgetHistory: true, ct);
+            userMessage, userId, traceType, maxTokens, systemPromptOverride, pluginAllowList, allowToolUse, forgetHistory: true, job, ct);
 
     // A turn that fails still answers with text, so a caller that must report failure apart
     // from an answer (an MCP client) needs this check.
@@ -318,6 +320,7 @@ public sealed class KernelService
         IReadOnlyList<string>? pluginAllowList,
         bool allowToolUse,
         bool forgetHistory,
+        string? job,
         CancellationToken ct)
     {
         // Held to the end of the method, so the error paths that close the turn are covered too.
@@ -332,6 +335,7 @@ public sealed class KernelService
         using var activity = ActivitySource.StartActivity(traceName, ActivityKind.Server);
         activity?.SetTag("langfuse.trace.name", traceName);
         activity?.SetTag(TelemetryConstants.SessionIdTag, threadId.ToString());
+        activity?.SetTag(TelemetryConstants.JobTag, job);
         activity?.SetTag("langfuse.trace.tags", tagsJson);
         activity?.SetTag("langfuse.trace.input", userMessage);
         if (userId.HasValue)

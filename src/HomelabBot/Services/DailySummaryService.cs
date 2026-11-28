@@ -61,6 +61,7 @@ public sealed class DailySummaryService : ScheduledBackgroundService
                 userMessage: HealthcheckPrompts.Investigation,
                 traceType: TraceType.Scheduled,
                 systemPromptOverride: HealthcheckPrompts.System,
+                job: "daily-summary",
                 ct: ct);
 
             // Route through smart notification — it will decide whether to notify

@@ -133,6 +133,7 @@ public sealed class SmartNotificationService
                 systemPromptOverride: NotificationPrompts.InvestigationSystem,
                 pluginAllowList: NotificationPrompts.InvestigationPlugins,
                 allowToolUse: !candidate.AlreadyInvestigated,
+                job: "smart-notification",
                 ct: ct);
         }
         catch (Exception ex)
