@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Text.Json.Nodes;
 using HomelabBot.Data.Entities;
 using HomelabBot.Services;
@@ -522,6 +523,23 @@ public sealed class KernelServiceClaudeTests : IDisposable
         var tool = Assert.Single(spans.Snapshot(), TelemetryConstants.IsToolSpan);
         Assert.Equal("execute_tool Test_Ping", tool.DisplayName);
         Assert.Equal("Test_Ping", tool.GetTagItem("gen_ai.tool.name"));
+    }
+
+    // A background job has no user: its Claude API spans group into one session per job and UTC day.
+    [Theory]
+    [InlineData(null)]
+    [InlineData(7UL)]
+    public async Task OneShot_WithAJob_SendsTheJobSessionUnlessAUserIsSet(ulong? userId)
+    {
+        using var root = new Activity("test-root").Start();
+        using var spans = new SpanCollector(root.TraceId, s => s.Name.StartsWith("HomelabBot", StringComparison.Ordinal));
+        _handler.Enqueue(ClaudeResponses.Text());
+
+        await _service.ProcessOneShotAsync("audit", userId, TraceType.Scheduled, threadId: ThreadId, job: "security-audit");
+
+        var today = DateTime.UtcNow.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        var expected = userId is null ? $"bot:security-audit-{today}" : $"{userId}:{ThreadId}";
+        Assert.Equal($"user.id={expected}", _handler.RequestHeaders[0]["baggage"]);
     }
 
     // Synchronous: the scope must be set in the test's own flow (see TokenUsageScope).

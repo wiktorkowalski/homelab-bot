@@ -12,6 +12,9 @@ public static class TelemetryConstants
     public const string UserIdTag = "langfuse.user.id";
     public const string SessionIdTag = "langfuse.session.id";
 
+    // The background job of a turn that has no user, such as "security-audit".
+    public const string JobTag = "homelab.job";
+
     public static readonly ActivitySource ChatActivitySource = new("HomelabBot.Chat");
 
     // The value of the tag on the span or on its nearest ancestor that has one.

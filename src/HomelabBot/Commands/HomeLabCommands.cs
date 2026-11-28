@@ -443,7 +443,7 @@ public class HomeLabCommands : ApplicationCommandModule
             _logger.LogInformation("Summary command invoked by {User}", ctx.User.Username);
 
             var data = await _summaryAggregator.AggregateAsync();
-            var analysis = await GenerateSummaryAnalysisAsync(data);
+            var analysis = await GenerateSummaryAnalysisAsync(data, ctx.User.Id);
             var embed = SummaryEmbedBuilder.Build(data, analysis);
 
             await ctx.EditResponseAsync(new DiscordWebhookBuilder().AddEmbed(embed));
@@ -915,7 +915,7 @@ public class HomeLabCommands : ApplicationCommandModule
         }
     }
 
-    private async Task<string?> GenerateSummaryAnalysisAsync(DailySummaryData data)
+    private async Task<string?> GenerateSummaryAnalysisAsync(DailySummaryData data, ulong userId)
     {
         try
         {
@@ -936,7 +936,7 @@ public class HomeLabCommands : ApplicationCommandModule
                 - Monitoring: {(data.Monitoring != null ? $"{data.Monitoring.UpTargets}/{data.Monitoring.TotalTargets} targets up" : "unavailable")}
                 """;
 
-            return await _kernelService.ProcessOneShotAsync(prompt);
+            return await _kernelService.ProcessOneShotAsync(prompt, userId);
         }
         catch (Exception ex)
         {

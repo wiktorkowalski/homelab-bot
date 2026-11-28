@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 
 namespace HomelabBot.Services;
 
@@ -28,7 +29,10 @@ internal sealed class AnthropicTraceContextHandler : DelegatingHandler
     {
         if (TelemetryConstants.FindTag(activity, TelemetryConstants.UserIdTag) is not { } userId)
         {
-            return null;
+            // A background job has no user. One session per job and UTC day keeps the runs of different days apart.
+            return TelemetryConstants.FindTag(activity, TelemetryConstants.JobTag) is { } job
+                ? $"bot:{Uri.EscapeDataString(job)}-{DateTime.UtcNow.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}"
+                : null;
         }
 
         var user = Uri.EscapeDataString(userId);
