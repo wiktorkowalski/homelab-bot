@@ -609,14 +609,17 @@ public class AnthropicChatClientTests
     }
 
     // The API joins its exported spans to the bot's trace through traceparent (sampled only with
-    // -01) and puts baggage user.id on them as the end user.
+    // -01) and copies baggage user.id onto them; the owner's collector splits it at the ':'.
     [Theory]
-    [InlineData("123456789012345678", "user.id=123456789012345678")]
-    [InlineData(null, null)]
-    public async Task Request_CarriesTheTraceContextAndTheUserOfTheTurn(string? userId, string? expectedBaggage)
+    [InlineData("123456789012345678", "777", "user.id=123456789012345678:777")]
+    [InlineData("123456789012345678", null, "user.id=123456789012345678")]
+    [InlineData("a:b", "c,d", "user.id=a%3Ab:c%2Cd")]
+    [InlineData(null, "777", null)]
+    public async Task Request_CarriesTheTraceContextAndTheUserOfTheTurn(string? userId, string? sessionId, string? expectedBaggage)
     {
         using var root = new Activity("test-root").Start();
         root.SetTag(TelemetryConstants.UserIdTag, userId);
+        root.SetTag(TelemetryConstants.SessionIdTag, sessionId);
         using var spans = new SpanCollector(root.TraceId, s => s.Name == TelemetryConstants.LlmActivitySourceName);
         _handler.Enqueue(ClaudeResponses.Text());
 

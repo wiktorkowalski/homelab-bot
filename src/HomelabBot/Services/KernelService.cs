@@ -227,7 +227,7 @@ public sealed class KernelService
     {
         using var activity = ActivitySource.StartActivity("Generate Title", ActivityKind.Internal);
         activity?.SetTag("langfuse.trace.name", "Generate Title");
-        activity?.SetTag("langfuse.session.id", threadId.ToString());
+        activity?.SetTag(TelemetryConstants.SessionIdTag, threadId.ToString());
         activity?.SetTag("langfuse.trace.tags", "[\"internal\"]");
         activity?.SetTag("langfuse.trace.input", userMessage);
         if (userId.HasValue)
@@ -331,7 +331,7 @@ public sealed class KernelService
         // Start root activity with Langfuse attributes
         using var activity = ActivitySource.StartActivity(traceName, ActivityKind.Server);
         activity?.SetTag("langfuse.trace.name", traceName);
-        activity?.SetTag("langfuse.session.id", threadId.ToString());
+        activity?.SetTag(TelemetryConstants.SessionIdTag, threadId.ToString());
         activity?.SetTag("langfuse.trace.tags", tagsJson);
         activity?.SetTag("langfuse.trace.input", userMessage);
         if (userId.HasValue)

@@ -28,7 +28,7 @@ public sealed class LangfuseEnrichmentProcessor : BaseProcessor<Activity>
     {
         try
         {
-            PropagateFromAncestor(activity, "langfuse.session.id");
+            PropagateFromAncestor(activity, TelemetryConstants.SessionIdTag);
             PropagateFromAncestor(activity, TelemetryConstants.UserIdTag);
 
             // Our custom traces and spans (Chat, Generate Title, SmartRecall, etc.)

@@ -7,8 +7,10 @@ public static class TelemetryConstants
     // Source of the per-request "chat <model>" spans of the LLM client.
     public const string LlmActivitySourceName = "HomelabBot.Llm";
 
-    // The Discord user of a turn, set on the turn span. Langfuse reads it; it also goes to the Claude API as baggage user.id.
+    // The Discord user and the conversation (thread id) of a turn, set on the turn span. Langfuse reads them;
+    // they also go to the Claude API as baggage user.id=<user>:<conversation>.
     public const string UserIdTag = "langfuse.user.id";
+    public const string SessionIdTag = "langfuse.session.id";
 
     public static readonly ActivitySource ChatActivitySource = new("HomelabBot.Chat");
 
