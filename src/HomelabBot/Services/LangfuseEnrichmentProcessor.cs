@@ -29,7 +29,7 @@ public sealed class LangfuseEnrichmentProcessor : BaseProcessor<Activity>
         try
         {
             PropagateFromAncestor(activity, "langfuse.session.id");
-            PropagateFromAncestor(activity, "langfuse.user.id");
+            PropagateFromAncestor(activity, TelemetryConstants.UserIdTag);
 
             // Our custom traces and spans (Chat, Generate Title, SmartRecall, etc.)
             if (activity.Source.Name == "HomelabBot.Chat")
@@ -204,19 +204,9 @@ public sealed class LangfuseEnrichmentProcessor : BaseProcessor<Activity>
 
     private static void PropagateFromAncestor(Activity activity, string key)
     {
-        if (activity.GetTagItem(key) != null)
+        if (activity.GetTagItem(key) == null && TelemetryConstants.FindTag(activity.Parent, key) is { } value)
         {
-            return;
-        }
-
-        for (var ancestor = activity.Parent; ancestor != null; ancestor = ancestor.Parent)
-        {
-            var value = ancestor.GetTagItem(key)?.ToString();
-            if (!string.IsNullOrEmpty(value))
-            {
-                activity.SetTag(key, value);
-                return;
-            }
+            activity.SetTag(key, value);
         }
     }
 

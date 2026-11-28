@@ -26,7 +26,7 @@ internal static class AnthropicChatClientFactory
             ApiKey = apiKey,
             BaseUrl = EnvironmentUrl.Production,
             Timeout = RequestTimeout,
-            Handlers = [new AnthropicAttemptLogHandler(logger ?? NullLogger.Instance)],
+            Handlers = [new AnthropicAttemptLogHandler(logger ?? NullLogger.Instance), new AnthropicTraceContextHandler()],
         };
 
         return httpClient is null ? client : (AnthropicClient)client.WithOptions(options => options with { HttpClient = httpClient });
